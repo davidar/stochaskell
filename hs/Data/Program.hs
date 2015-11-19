@@ -4,7 +4,7 @@ module Data.Program where
 import Control.Applicative
 import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
-import Data.Expression (R,ExprType,Expr,DExpr,fromExpr,fromDExpr,exprType)
+import Data.Expression (R,ExprType,Expr,DExpr,fromExpr,fromDExpr,typeDExpr)
 import qualified Data.Expression as Expr
 import Data.List
 import Data.Ratio
@@ -21,7 +21,7 @@ data PNode = Dist { dName :: Expr.Id
                   , dArgs :: [Expr.NodeRef]
                   , dType :: Expr.Type
                   }
-           | Loop { lShape :: [Expr.NodeRef]
+           | Loop { lShape :: [Interval Expr.NodeRef]
                   , lBody  :: PBlock
                   , lRet   :: Expr.NodeRef
                   , lRetTy :: Expr.Type
@@ -47,7 +47,7 @@ fromProgE :: Prog (Expr t) -> State PBlock (Expr.NodeRef, Expr.Type)
 fromProgE p = do
     e <- fromProg p
     j <- liftExprBlock $ fromExpr e
-    return (j, exprType $ Expr.erase e)
+    return (j, typeDExpr $ Expr.erase e)
 
 instance Functor Prog where
     fmap = liftM
@@ -62,39 +62,6 @@ instance Monad Prog where
 
 
 ------------------------------------------------------------------------------
--- DEBUGGING OUTPUT                                                         --
-------------------------------------------------------------------------------
-
-instance Show PBlock where
-    show (PBlock block revrefs) =
-        edefs ++ (if edefs == "" then "" else "\n")
-              ++ (indent . unlines $ pdefs)
-      where refs = reverse revrefs
-            depth = Expr.dagLevel $ head block
-            pdefs = zipWith f [0..] refs
-              where f i n = "~" ++ show depth ++ "." ++
-                                   show i ++ " <- " ++ show n
-            edefs = show (head block)
-            indent = intercalate "\n" . map ("    " ++) . lines
-
-instance Show PNode where
-    show (Dist f args t) =
-        f ++ " " ++ intercalate " " (map show args) ++ " :: " ++ show t
-    show (Loop sh body r t) =
-        "(" ++ intercalate ", " (zipWith g [0..] sh) ++ ") " ++
-        "[ " ++ "do\n" ++ show body ++ "\n" ++
-        "    return "  ++ show r ++ " :: " ++ show t ++ " ]"
-      where g i b = Expr.inputs ldag !! i ++ " < " ++ show b
-            (PBlock (ldag:_) _) = body
-
-instance Show (Prog (Expr t)) where
-    show p = "main = " ++ ret ++ " where\n" ++ show pblock
-      where ((r,t), pblock) = runState (fromProgE p) emptyPBlock
-            (PBlock block _) = pblock
-            ret = show r ++ " :: " ++ show t
-
-
-------------------------------------------------------------------------------
 -- PRIMITIVE DISTRIBUTIONS                                                  --
 ------------------------------------------------------------------------------
 
@@ -104,18 +71,20 @@ dist s = Prog $ do
     put $ PBlock block (d:rhs)
     let depth = Expr.dagLevel $ head block
         k = length rhs
-    return . fromString $ "~" ++ show depth ++ "." ++ show k
+        name = Expr.Id (Expr.Volatile depth) (show k)
+        v = Expr.expr . return $ Expr.External name
+    return v
 
 normal :: Expr R -> Expr R -> Prog (Expr R)
 normal m s = dist $ do
     i <- fromExpr m
     j <- fromExpr s
-    return $ Dist "normal" [i,j] Expr.RealT
+    return $ Dist (Expr.Id Expr.Builtin "normal") [i,j] Expr.RealT
 
 bernoulliLogit :: Expr R -> Prog (Expr Bool)
 bernoulliLogit l = dist $ do
     i <- fromExpr l
-    return $ Dist "bernoulliLogit" [i] t
+    return $ Dist (Expr.Id Expr.Builtin "bernoulliLogit") [i] t
   where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
 
 
@@ -125,23 +94,27 @@ bernoulliLogit l = dist $ do
 
 makeLoop shape body = do
     (r,t) <- fromProgE body
-    sh <- liftExprBlock . Expr.liftBlock . sequence $ map fromExpr shape
+    sh <- liftExprBlock . Expr.liftBlock $ sequence shape'
     block <- get
     return $ Loop sh block r t
+  where shape' = flip map shape $ \interval -> do
+            i <- fromExpr $ lowerBound  interval
+            z <- fromExpr $ cardinality interval
+            return $ Interval i z
 
 joint :: forall r f. (ExprType r, ExprType f)
       => (AbstractArray (Expr Integer)       (Expr r)  ->       Expr f)
       ->  AbstractArray (Expr Integer) (Prog (Expr r)) -> Prog (Expr f)
-joint transf ar = Prog $ do
+joint _ ar = Prog $ do
     PBlock block dists <- get
     let ashape = shape ar
         depth = Expr.dagLevel $ head block
-        ids = [ "%" ++ show (depth+1) ++ "." ++ show i
-              | i <- [1..length ashape] ]
-        p = apply ar [fromString i | i <- ids]
+        ids = [ Expr.Id (Expr.Dummy $ depth + 1) (show i) | i <- [1..length ashape] ]
+        p = apply ar [Expr.expr . return $ Expr.External i | i <- ids]
         loop = evalState (makeLoop ashape p) $
             PBlock (Expr.DAG (depth + 1) ids Bimap.empty : block) []
-        name = "~" ++ show depth ++ "." ++ show (length dists)
+        name = Expr.Id (Expr.Volatile depth) $ show (length dists)
+        ref = Expr.expr . return $ Expr.External name :: Expr f
     put $ let (PBlock (_:block') _) = lBody loop
            in PBlock block' (loop:dists)
-    return . transf . AArr ashape $ Expr.index (fromString name :: Expr f)
+    return ref

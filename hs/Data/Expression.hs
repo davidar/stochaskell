@@ -15,7 +15,6 @@ import Control.Monad.State
 instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
     m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
 
-type Id = String
 type Nat = Int
 type R = Double
 
@@ -27,6 +26,13 @@ type R = Double
 type Pointer = Nat
 type Level = Nat
 
+data Scope = Builtin
+           | Dummy Level
+           | Volatile Level
+           deriving (Eq, Ord)
+data Id = Id Scope String
+        deriving (Eq, Ord)
+
 data NodeRef = Internal Level Pointer
              | External Id
              | Constant Rational
@@ -34,13 +40,13 @@ data NodeRef = Internal Level Pointer
              deriving (Eq, Ord)
 data Node = Apply { fName :: Id
                   , fArgs :: [NodeRef]
-                  , fRetT :: Type
+                  , typeNode :: Type
                   }
           | Array { aLevel :: Level
-                  , aShape :: [NodeRef]
+                  , aShape :: [AA.Interval NodeRef]
                   , aDefs  :: DAG
                   , aHead  :: NodeRef
-                  , aHeadT :: Type
+                  , typeNode :: Type
                   }
           deriving (Eq, Ord)
 
@@ -53,14 +59,17 @@ emptyDAG = DAG 0 [] Bimap.empty
 type Block = [DAG]
 emptyBlock = [emptyDAG]
 
-data DExpr = DExpr { exprType  :: Type
+data DExpr = DExpr { typeDExpr  :: Type
                    , fromDExpr :: State Block NodeRef }
 runDExpr e = runState (fromDExpr e) emptyBlock
 instance Eq DExpr where e == f = runDExpr e == runDExpr f
+instance Ord DExpr where
+    e `compare` f = runDExpr e `compare` runDExpr f
 
 newtype Expr t = Expr { erase :: DExpr }
 expr :: forall t. (ExprType t) => State Block NodeRef -> Expr t
 expr = Expr . DExpr t     where (TypeIs t) = typeOf :: TypeOf t
+typeExpr = typeDExpr . erase
 fromExpr = fromDExpr . erase
 runExpr  =  runDExpr . erase
 
@@ -72,8 +81,8 @@ runExpr  =  runDExpr . erase
 data Type
     = IntT
     | RealT
-    | ConstrainedT Type (Maybe NodeRef) (Maybe NodeRef)
-    | ArrayT Int Type
+    | SubrangeT Type (Maybe NodeRef) (Maybe NodeRef)
+    | ArrayT [AA.Interval NodeRef] Type
     deriving (Eq, Ord)
 
 newtype TypeOf t = TypeIs Type
@@ -84,53 +93,21 @@ instance ExprType Integer where
     typeOf = TypeIs IntT
 instance ExprType Bool where
     typeOf = TypeIs $
-        ConstrainedT IntT (Just $ Constant 0) (Just $ Constant 1)
+        SubrangeT IntT (Just $ Constant 0) (Just $ Constant 1)
 instance ExprType R where
     typeOf = TypeIs RealT
 instance forall a b. (ExprType b) => ExprType (a -> b) where
-    typeOf = TypeIs $ case t of (ArrayT n r) -> ArrayT (n+1) r
-                                r            -> ArrayT 1 r
+    typeOf = TypeIs $
+        case t of
+            (ArrayT n r) -> ArrayT (error "undefined array bounds") r
+            r            -> ArrayT (error "undefined array bounds") r
       where (TypeIs t) = typeOf :: TypeOf b
 
-
-------------------------------------------------------------------------------
--- DEBUGGING OUTPUT                                                         --
-------------------------------------------------------------------------------
-
-instance Show Node where
-    show (Apply f js t) =
-        f ++ " " ++ intercalate " " (map show js) ++ " :: " ++ show t
-    show (Array _ sh dag@(DAG level is _) ret t) =
-        "(" ++ args ++ ") [ " ++ body ++ " ]"
-      where f i b = i ++ " < " ++ show b
-            args = intercalate ", " $ zipWith f is sh
-            body = show ret ++ " :: " ++ show t ++
-                if show dag == "" then "" else " |\n" ++ show dag
-
-instance Show NodeRef where
-    show (Internal level i) = "#" ++ show level ++ "." ++ show i
-    show (External s) = s
-    show (Constant c) = if d == 1 then show n
-                                  else "(" ++ show n ++ "/" ++ show d ++ ")"
-      where n = numerator c
-            d = denominator c
-    show (Index f js) = show f ++ show (reverse js)
-
-instance Show DAG where
-    show (DAG level _ bmap) = intercalate "\n" . map ("    " ++) $ lines defs
-      where defs = unlines . map f $ Bimap.toAscListR bmap
-            f (i,n) = show (Internal level i) ++ " = " ++ show n
-
-instance Show Type where
-    show IntT = "Z"
-    show RealT = "R"
-    show (ConstrainedT t Nothing  Nothing ) = show t
-    show (ConstrainedT t (Just l) Nothing ) = show t ++ "[" ++ show l ++ "..]"
-    show (ConstrainedT t Nothing  (Just h)) = show t ++ "[.." ++ show h ++ "]"
-    show (ConstrainedT t (Just l) (Just h)) = show t ++ "[" ++ show l ++ ".."
-                                                              ++ show h ++ "]"
-    show (ArrayT 1 e) = "[ " ++ show e ++ " ]"
-    show (ArrayT n e) = "[" ++ show (ArrayT (n-1) e) ++ "]"
+typeRef ref@(Internal level i) = do
+    dag:_ <- get
+    if level == dagLevel dag
+        then return . typeNode . fromJust . Bimap.lookupR i $ bimap dag
+        else liftBlock $ typeRef ref
 
 
 ------------------------------------------------------------------------------
@@ -167,7 +144,9 @@ varies (DAG level inputs _) xs = level == 0 || any p xs
 externRefs (DAG _ _ defs) = go defs
   where go defs = concat . map (f . snd) $ Bimap.toAscListR defs
         f (Apply _ args _) = mapMaybe extern args
-        f (Array _ sh (DAG _ _ defs') r _) = mapMaybe extern (r:sh) ++ go defs'
+        f (Array _ sh (DAG _ _ defs') r _) =
+            mapMaybe extern [r] ++ mapMaybe (extern . AA.lowerBound) sh
+                                ++ mapMaybe (extern . AA.cardinality) sh ++ go defs'
         extern (External id) = Just id
         extern _ = Nothing
         -- TODO Index
@@ -234,24 +213,32 @@ makeArray ar sh = do
     block <- get
     let dag = head block
         depth = dagLevel dag
-        ids = [ "$" ++ show (depth+1) ++ "." ++ show i | i <- [1..length sh] ]
-        e = erase $ AA.apply ar (map fromString ids)
+        ids = [ Id (Dummy $ depth + 1) (show i) | i <- [1..length sh] ]
+        e = erase $ AA.apply ar (map (expr . return . External) ids)
         (ret, vdag:newBlock) = runState (fromDExpr e) $
             DAG (depth + 1) ids Bimap.empty : block
     put newBlock
-    hashcons $ Array depth sh vdag ret (exprType e)
+    hashcons $ Array depth sh vdag ret (ArrayT sh $ typeDExpr e)
 
 -- constant floating
 floatArray ar = do
     dag:_ <- get
-    sh <- sequence . map fromExpr $ AA.shape ar
-    if varies dag sh || length (inputs dag `intersect` capture ar) > 0
+    sh <- sequence . flip map (AA.shape ar) $ \interval -> do
+        i <- fromExpr $ AA.lowerBound  interval
+        z <- fromExpr $ AA.cardinality interval
+        return $ AA.Interval i z
+    if varies dag (map AA.lowerBound  sh) ||
+       varies dag (map AA.cardinality sh) ||
+       length (inputs dag `intersect` capture ar) > 0
       then makeArray ar sh
       else liftBlock $ floatArray ar
 
-array n a = if length (AA.shape a) == n
+array :: (Num i, ExprType i, ExprType t) =>
+    Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t
+array n a = if length sh == n
                 then expr $ floatArray a
                 else error "dimension mismatch"
+  where sh = AA.shape a
 
 array1 :: (ExprType r) => AAI r -> Expr (FI1 r)
 array1 = array 1
@@ -324,8 +311,11 @@ instance (Floating t, ExprType t) => Floating (Expr t) where
     acosh = apply1 "acosh"
     atanh = apply1 "atanh"
 
+instance IsString Id where
+    fromString = Id Builtin
+
 instance (ExprType t) => IsString (Expr t) where
-    fromString = expr . return . External
+    fromString = expr . return . External . Id Builtin
 
 instance (ExprType b) => Indexable (EVector a b) (Expr a) (Expr b) where
     a ! e = expr $ do
@@ -337,7 +327,14 @@ instance (ExprType b) => Indexable (EVector a b) (Expr a) (Expr b) where
 
 instance (ExprType e) => LinearOperator (EMatrix r c e)
                                         (EVector c e) (EVector r e) where
-    (#>) = apply2 "#>"
+    m #> v = expr $ do
+        i <- fromExpr m
+        j <- fromExpr v
+        (ArrayT [r,c] t) <- typeRef i
+        simplify $ Apply "#>" [i,j] (ArrayT [r] t)
 
 instance (ExprType e) => SquareMatrix (EMatrix n n e) where
-    chol = apply1 "chol"
+    chol m = expr $ do
+        i <- fromExpr m
+        t <- typeRef i
+        simplify $ Apply "chol" [i] t

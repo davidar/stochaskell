@@ -5,15 +5,15 @@ module Data.Array.Abstract where
 import Control.Applicative
 import Data.List
 
-data AbstractArray i e = AArr { shape :: [i]
+data Interval i = Interval { lowerBound  :: i
+                           , cardinality :: i
+                           } deriving (Eq, Ord)
+
+data AbstractArray i e = AArr { shape :: [Interval i]
                               , apply :: [i] -> e
                               }
-
-instance (Integral i, Show e) => Show (AbstractArray i e) where
-    show (AArr [] c) = show (c [])
-    show (AArr (d:ds) f) = "[" ++ es ++ "]"
-      where es = intercalate "," [ show $ AArr ds (\is -> f (i:is))
-                                 | i <- [0..d-1] ]
+instance (Show i) => Show (Interval i) where
+  show (Interval a s) = "[" ++ show a ++ "," ++ show a ++ "+" ++ show s ++ ")"
 
 instance Functor (AbstractArray i) where
     fmap f (AArr sh g) = AArr sh (f . g)
@@ -26,9 +26,9 @@ instance Applicative (AbstractArray i) where
 
 infix 5 ...
 (...) :: (Num a) => a -> a -> AbstractArray a a
-a...b = AArr [size] f
+a...b = AArr [Interval a size] f
   where size = b - a + 1
-        f [x] = x + a
+        f [x] = x
         f _ = error "shape mismatch"
 
 infixl 9 !
