@@ -29,15 +29,15 @@ type Level = Nat
 data Scope = Builtin
            | Dummy Level
            | Volatile Level
-           deriving (Eq, Ord)
+           deriving (Eq, Ord, Show)
 data Id = Id Scope String
-        deriving (Eq, Ord)
+        deriving (Eq, Ord, Show)
 
 data NodeRef = Internal Level Pointer
-             | External Id
+             | External Id Type
              | Constant Rational
              | Index NodeRef [NodeRef]
-             deriving (Eq, Ord)
+             deriving (Eq, Ord, Show)
 data Node = Apply { fName :: Id
                   , fArgs :: [NodeRef]
                   , typeNode :: Type
@@ -82,8 +82,8 @@ data Type
     = IntT
     | RealT
     | SubrangeT Type (Maybe NodeRef) (Maybe NodeRef)
-    | ArrayT [AA.Interval NodeRef] Type
-    deriving (Eq, Ord)
+    | ArrayT (Maybe String) [AA.Interval NodeRef] Type
+    deriving (Eq, Ord, Show)
 
 newtype TypeOf t = TypeIs Type
 class ExprType t where
@@ -99,8 +99,8 @@ instance ExprType R where
 instance forall a b. (ExprType b) => ExprType (a -> b) where
     typeOf = TypeIs $
         case t of
-            (ArrayT n r) -> ArrayT (error "undefined array bounds") r
-            r            -> ArrayT (error "undefined array bounds") r
+            (ArrayT _ n r) -> ArrayT Nothing (error "undefined array bounds") r
+            r              -> ArrayT Nothing (error "undefined array bounds") r
       where (TypeIs t) = typeOf :: TypeOf b
 
 typeRef ref@(Internal level i) = do
@@ -108,6 +108,7 @@ typeRef ref@(Internal level i) = do
     if level == dagLevel dag
         then return . typeNode . fromJust . Bimap.lookupR i $ bimap dag
         else liftBlock $ typeRef ref
+typeRef (External _ t) = return t
 
 
 ------------------------------------------------------------------------------
@@ -136,7 +137,7 @@ liftBlock state = do
 -- does a list of expressions depend on the inputs to this block?
 varies (DAG level inputs _) xs = level == 0 || any p xs
   where p (Internal l _) = l == level
-        p (External s) = s `elem` inputs
+        p (External s _) = s `elem` inputs
         p (Constant _) = False
         p (Index a is) = p a || any p is
 
@@ -147,7 +148,7 @@ externRefs (DAG _ _ defs) = go defs
         f (Array _ sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . AA.lowerBound) sh
                                 ++ mapMaybe (extern . AA.cardinality) sh ++ go defs'
-        extern (External id) = Just id
+        extern (External id _) = Just id
         extern _ = Nothing
         -- TODO Index
 
@@ -214,11 +215,11 @@ makeArray ar sh = do
     let dag = head block
         depth = dagLevel dag
         ids = [ Id (Dummy $ depth + 1) (show i) | i <- [1..length sh] ]
-        e = erase $ AA.apply ar (map (expr . return . External) ids)
+        e = erase $ AA.apply ar [ expr . return $ External i IntT | i <- ids ]
         (ret, vdag:newBlock) = runState (fromDExpr e) $
             DAG (depth + 1) ids Bimap.empty : block
     put newBlock
-    hashcons $ Array depth sh vdag ret (ArrayT sh $ typeDExpr e)
+    hashcons $ Array depth sh vdag ret (ArrayT Nothing sh $ typeDExpr e)
 
 -- constant floating
 floatArray ar = do
@@ -292,7 +293,7 @@ instance (Fractional t, ExprType t) => Fractional (Expr t) where
     (/) = apply2 "/"
 
 instance (Floating t, ExprType t) => Floating (Expr t) where
-    pi = "pi"
+    pi = apply "pi" []
     (**) = apply2 "**"
 
     exp   = apply1 "exp"
@@ -314,8 +315,9 @@ instance (Floating t, ExprType t) => Floating (Expr t) where
 instance IsString Id where
     fromString = Id Builtin
 
-instance (ExprType t) => IsString (Expr t) where
-    fromString = expr . return . External . Id Builtin
+instance forall t. (ExprType t) => IsString (Expr t) where
+    fromString s = expr . return $ External (Id Builtin s) t
+      where (TypeIs t) = typeOf :: TypeOf t
 
 instance (ExprType b) => Indexable (EVector a b) (Expr a) (Expr b) where
     a ! e = expr $ do
@@ -325,16 +327,28 @@ instance (ExprType b) => Indexable (EVector a b) (Expr a) (Expr b) where
             (Index g js) -> Index g (j:js)
             otherwise    -> Index f [j]
 
+asVector :: (ExprType e) => EVector n e -> EVector n e
+asVector v = expr $ do
+    i <- fromExpr v
+    (ArrayT _ [n] t) <- typeRef i
+    simplify $ Apply "asVector" [i] (ArrayT (Just "vector") [n] t)
+
+asMatrix :: (ExprType e) => EMatrix r c e -> EMatrix r c e
+asMatrix m = expr $ do
+    i <- fromExpr m
+    (ArrayT _ [r,c] t) <- typeRef i
+    simplify $ Apply "asMatrix" [i] (ArrayT (Just "matrix") [r,c] t)
+
 instance (ExprType e) => LinearOperator (EMatrix r c e)
                                         (EVector c e) (EVector r e) where
     m #> v = expr $ do
-        i <- fromExpr m
-        j <- fromExpr v
-        (ArrayT [r,c] t) <- typeRef i
-        simplify $ Apply "#>" [i,j] (ArrayT [r] t)
+        i <- fromExpr $ asMatrix m
+        j <- fromExpr $ asVector v
+        (ArrayT _ [r,c] t) <- typeRef i
+        simplify $ Apply "#>" [i,j] (ArrayT (Just "vector") [r] t)
 
 instance (ExprType e) => SquareMatrix (EMatrix n n e) where
     chol m = expr $ do
-        i <- fromExpr m
+        i <- fromExpr $ asMatrix m
         t <- typeRef i
         simplify $ Apply "chol" [i] t

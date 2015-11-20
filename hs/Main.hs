@@ -33,9 +33,16 @@ instance Stan Id where
 stanNode name (Apply op [i,j] t) | op `elem` ["+","-","*","/"] =
     name ++" <- "++ stan i ++" "++ stan op ++" "++ stan j ++";"
 stanNode name (Apply "#>" [i,j] t) =
-    name ++" <- to_matrix("++ stan i ++") * to_vector("++ stan j ++");"
+    name ++" <- "++ stan i ++" * "++ stan j ++";"
 stanNode name (Apply f js t) =
-    name ++" <- "++ stan f ++"("++ intercalate ", " (map stan js) ++");"
+    name ++" <- "++ g ++"("++ intercalate ", " (map stan js) ++");"
+  where g = case lookup (stan f) funcs of
+                Just g  -> g
+                Nothing -> stan f
+        funcs = [("asVector","to_vector")
+                ,("asMatrix","to_matrix")
+                ,("chol","cholesky_decompose")
+                ]
 stanNode name (Array _ sh dag@(DAG level is _) ret t) =
     forLoop is sh ++"{\n"++ body ++"\n}"
   where body = stan dag ++ (if stan dag == "" then "    " else "\n    ") ++
@@ -43,7 +50,7 @@ stanNode name (Array _ sh dag@(DAG level is _) ret t) =
 
 instance Stan NodeRef where
     stan (Internal level i) = "value_"++ show level ++"_"++ show i
-    stan (External s) = stan s
+    stan (External s _) = stan s
     stan (Constant c) = if d == 1 then show n
                                   else "("++ show n ++"/"++ show d ++")"
       where n = numerator c
@@ -57,7 +64,7 @@ instance Stan DAG where
       where defs  = unlines . map f $ Bimap.toAscListR bmap
             decls = unlines . map g $ Bimap.toAscListR bmap
             f (i,n) = stanNode (stan $ Internal level i) n
-            g (i,n) = stan (typeNode n) ++" "++ stan (Internal level i) ++";"
+            g (i,n) = stanDecl (typeNode n) (stan $ Internal level i)
 
 instance Stan Type where
     stan IntT = "int"
@@ -67,25 +74,40 @@ instance Stan Type where
     stan (SubrangeT t Nothing  (Just h)) = stan t ++"<upper="++ stan h ++">"
     stan (SubrangeT t (Just l) (Just h)) = stan t ++"<lower="++ stan l ++
                                                     ",upper="++ stan h ++">"
-    stan (ArrayT n t) = stan t ++ stan (map cardinality n)
+    stan (ArrayT Nothing n t) =   stan t ++ stan (map cardinality n)
+    stan (ArrayT (Just kind) n _) = kind ++ stan (map cardinality n)
+
+stanDecl (ArrayT Nothing n t) name =
+    stan t ++" "++ name ++ stan (map cardinality n) ++";"
+stanDecl t name = stan t ++" "++ name ++";"
 
 stanPBlock rName rId (PBlock block revrefs) =
     if depth == 0
-       then "transformed parameters {\n"++ edefs ++"\n}\n"++
+       then "parameters {\n"++ params' ++"\n}\n\n"++
+            "transformed parameters {\n"++ edefs ++"\n}\n\n"++
             "model {\n"++ pdefs' ++"\n}\n"
        else edefs ++ (if edefs == "" then "" else "\n") ++ pdefs'
   where refs = reverse revrefs
         depth = dagLevel $ head block
         pdefs = zipWith f [0..] refs
           where f i n = stanPNode name n
-                  where ident = External $ Id (Volatile depth) (show i)
+                  where ident = External (Id (Volatile depth) (show i)) (typePNode n)
+                        name = if ident == rId then rName else stan ident
+        params = zipWith g [0..] refs
+          where g i n = stanDecl (typePNode n) name
+                  where ident = External (Id (Volatile depth) (show i)) (typePNode n)
                         name = if ident == rId then rName else stan ident
         edefs = stan (head block)
         indent = intercalate "\n" . map ("    "++) . lines
-        pdefs' = indent . unlines $ pdefs
+        pdefs'  = indent . unlines $ pdefs
+        params' = indent . unlines $ params
 
 stanPNode name (Dist f args t) =
-    name ++" ~ "++ stan f ++"("++ intercalate ", " (map stan args) ++");"
+    name ++" ~ "++ g ++"("++ intercalate ", " (map stan args) ++");"
+  where g = case lookup (stan f) funcs of
+                Just g  -> g
+                Nothing -> stan f
+        funcs = [("bernoulliLogit","bernoulli_logit")]
 stanPNode name (Loop sh body r t) =
     forLoop (inputs ldag) sh ++
     "{\n"++ stanPBlock (name ++ stan (inputs ldag)) r body ++"\n}"

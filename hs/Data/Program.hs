@@ -19,12 +19,12 @@ import Control.Monad.State
 
 data PNode = Dist { dName :: Expr.Id
                   , dArgs :: [Expr.NodeRef]
-                  , dType :: Expr.Type
+                  , typePNode :: Expr.Type
                   }
            | Loop { lShape :: [Interval Expr.NodeRef]
                   , lBody  :: PBlock
                   , lRet   :: Expr.NodeRef
-                  , lRetTy :: Expr.Type
+                  , typePNode :: Expr.Type
                   }
            deriving (Eq)
 
@@ -72,7 +72,7 @@ dist s = Prog $ do
     let depth = Expr.dagLevel $ head block
         k = length rhs
         name = Expr.Id (Expr.Volatile depth) (show k)
-        v = Expr.expr . return $ Expr.External name
+        v = Expr.expr . return $ Expr.External name (typePNode d)
     return v
 
 normal :: Expr R -> Expr R -> Prog (Expr R)
@@ -96,7 +96,7 @@ makeLoop shape body = do
     (r,t) <- fromProgE body
     sh <- liftExprBlock . Expr.liftBlock $ sequence shape'
     block <- get
-    return $ Loop sh block r t
+    return $ Loop sh block r (Expr.ArrayT Nothing sh t)
   where shape' = flip map shape $ \interval -> do
             i <- fromExpr $ lowerBound  interval
             z <- fromExpr $ cardinality interval
@@ -110,11 +110,12 @@ joint _ ar = Prog $ do
     let ashape = shape ar
         depth = Expr.dagLevel $ head block
         ids = [ Expr.Id (Expr.Dummy $ depth + 1) (show i) | i <- [1..length ashape] ]
-        p = apply ar [Expr.expr . return $ Expr.External i | i <- ids]
+        p = apply ar [Expr.expr . return $ Expr.External i Expr.IntT | i <- ids]
         loop = evalState (makeLoop ashape p) $
             PBlock (Expr.DAG (depth + 1) ids Bimap.empty : block) []
         name = Expr.Id (Expr.Volatile depth) $ show (length dists)
-        ref = Expr.expr . return $ Expr.External name :: Expr f
+        ref = Expr.expr . return $ Expr.External name t :: Expr f
+        t = typePNode loop
     put $ let (PBlock (_:block') _) = lBody loop
            in PBlock block' (loop:dists)
     return ref
