@@ -1,10 +1,11 @@
-{-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables,
+{-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables, TypeFamilies,
              TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
 module Data.Expression where
 
 import Data.Array.Abstract (Indexable,LinearOperator,SquareMatrix)
 import qualified Data.Array.Abstract as AA
 import qualified Data.Bimap as Bimap
+import Data.Boolean
 import Data.List
 import Data.Maybe
 import Data.Ratio
@@ -185,6 +186,15 @@ apply2 f x y = expr $ do
     simplify $ Apply f [i,j] t
   where (TypeIs t) = typeOf :: TypeOf r
 
+apply3 :: forall a b c r. (ExprType r) => Id -> Expr a -> Expr b
+                                                     -> Expr c -> Expr r
+apply3 f x y z = expr $ do
+    i <- fromExpr x
+    j <- fromExpr y
+    k <- fromExpr z
+    simplify $ Apply f [i,j,k] t
+  where (TypeIs t) = typeOf :: TypeOf r
+
 
 ------------------------------------------------------------------------------
 -- ARRAY COMPREHENSIONS                                                     --
@@ -241,9 +251,9 @@ array n a = if length sh == n
                 else error "dimension mismatch"
   where sh = AA.shape a
 
-array1 :: (ExprType r) => AAI r -> Expr (FI1 r)
+array1 :: (ExprType r) => AAI r -> EVector Integer r
 array1 = array 1
-array2 :: (ExprType r) => AAI r -> Expr (FI2 r)
+array2 :: (ExprType r) => AAI r -> EMatrix Integer Integer r
 array2 = array 2
 array3 :: (ExprType r) => AAI r -> Expr (FI3 r)
 array3 = array 3
@@ -352,3 +362,25 @@ instance (ExprType e) => SquareMatrix (EMatrix n n e) where
         i <- fromExpr $ asMatrix m
         t <- typeRef i
         simplify $ Apply "chol" [i] t
+
+instance Boolean (Expr Bool) where
+    true  = "true"
+    false = "false"
+    notB  = apply1 "not"
+    (&&*) = apply2 "&&"
+    (||*) = apply2 "||"
+
+type instance BooleanOf (Expr t) = Expr Bool
+
+instance (ExprType t) => IfB (Expr t) where
+    ifB = apply3 "ifThenElse"
+
+instance (ExprType t) => EqB (Expr t) where
+    (==*) = apply2 "=="
+    (/=*) = apply2 "/="
+
+instance (ExprType t) => OrdB (Expr t) where
+    (<*)  = apply2 "<"
+    (<=*) = apply2 "<="
+    (>=*) = apply2 ">="
+    (>*)  = apply2 ">"

@@ -28,18 +28,21 @@ data PNode = Dist { dName :: Expr.Id
                   }
            deriving (Eq)
 
-data PBlock = PBlock Expr.Block [PNode]
+data PBlock = PBlock { definitions :: Expr.Block
+                     , actions     :: [PNode]
+                     , constraints :: [(Expr.NodeRef, [Rational])]
+                     }
             deriving (Eq)
-emptyPBlock = PBlock Expr.emptyBlock []
+emptyPBlock = PBlock Expr.emptyBlock [] []
 
 -- lift into Expr.Block
 liftExprBlock state = do
-    PBlock block rhs <- get
+    PBlock block rhs given <- get
     let (ret, block') = runState state block
-    put $ PBlock block' rhs
+    put $ PBlock block' rhs given
     return ret
 
-data Prog t = Prog  { fromProg  :: State PBlock t }
+data Prog t = Prog { fromProg :: State PBlock t }
 instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
 runProg p = runState (fromProg p) emptyPBlock
 
@@ -67,8 +70,8 @@ instance Monad Prog where
 
 dist s = Prog $ do
     d <- liftExprBlock s
-    PBlock block rhs <- get
-    put $ PBlock block (d:rhs)
+    PBlock block rhs given <- get
+    put $ PBlock block (d:rhs) given
     let depth = Expr.dagLevel $ head block
         k = length rhs
         name = Expr.Id (Expr.Volatile depth) (show k)
@@ -106,16 +109,27 @@ joint :: forall r f. (ExprType r, ExprType f)
       => (AbstractArray (Expr Integer)       (Expr r)  ->       Expr f)
       ->  AbstractArray (Expr Integer) (Prog (Expr r)) -> Prog (Expr f)
 joint _ ar = Prog $ do
-    PBlock block dists <- get
+    PBlock block dists given <- get
     let ashape = shape ar
         depth = Expr.dagLevel $ head block
         ids = [ Expr.Id (Expr.Dummy $ depth + 1) (show i) | i <- [1..length ashape] ]
         p = apply ar [Expr.expr . return $ Expr.External i Expr.IntT | i <- ids]
         loop = evalState (makeLoop ashape p) $
-            PBlock (Expr.DAG (depth + 1) ids Bimap.empty : block) []
+            PBlock (Expr.DAG (depth + 1) ids Bimap.empty : block) [] []
         name = Expr.Id (Expr.Volatile depth) $ show (length dists)
         ref = Expr.expr . return $ Expr.External name t :: Expr f
         t = typePNode loop
-    put $ let (PBlock (_:block') _) = lBody loop
-           in PBlock block' (loop:dists)
+    put $ let (PBlock (_:block') _ _) = lBody loop
+           in PBlock block' (loop:dists) given
     return ref
+
+
+------------------------------------------------------------------------------
+-- CONDITIONING                                                             --
+------------------------------------------------------------------------------
+
+assume :: Expr t -> [Rational] -> Prog ()
+assume cond dat = Prog $ do
+    i <- liftExprBlock (fromExpr cond)
+    (PBlock block dists given) <- get
+    put $ PBlock block dists ((i,dat):given)
