@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables, TypeFamilies,
-             TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
+             TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,
+             FlexibleContexts #-}
 module Data.Expression where
 
 import Data.Array.Abstract (Indexable,LinearOperator,SquareMatrix)

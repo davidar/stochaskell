@@ -1,4 +1,5 @@
-{-# LANGUAGE GADTs, ImpredicativeTypes, FlexibleInstances, ScopedTypeVariables #-}
+{-# LANGUAGE GADTs, ImpredicativeTypes, FlexibleInstances, ScopedTypeVariables,
+             FlexibleContexts #-}
 module Data.Program where
 
 import Control.Applicative
