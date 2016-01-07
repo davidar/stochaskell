@@ -120,7 +120,7 @@ stanPBlock rName rId (PBlock block revrefs given) =
         dat' = indent . unlines $ filter (/="") dat
         constrs = unlines $ map f given
           where f (n,ar) = stan n ++" <- c("++ intercalate ", " (map g ar) ++")"
-                g c = let x = fromRational c :: Double in show x
+                g = stan . Constant
 
 stanPNode name (Dist f args t) =
     name ++" ~ "++ g ++"("++ intercalate ", " (map stan args) ++");"
@@ -148,10 +148,16 @@ prior n = do
     phi <- joint vector $ (\i -> bernoulliLogit (g!i)) <$> 1...n
     return (g,phi,s)
 
+dat =  [0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1,
+        0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1,
+        1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0,
+        1, 1, 1, 1, 0, 0, 1, 0, 1]
+
 posterior = do
-    (g,phi,s) <- prior 100
-    assume phi $ map (\i -> if odd i then 1 else 0) [1..100]
-    assume s   $ map (\i -> if odd i then 1 else 0) [1..100]
+    (g,phi,s) <- prior 101
+    assume phi dat
+    assume s $ map (%10) [0..100]
     return g
 
 main = putStrLn $ stan posterior
