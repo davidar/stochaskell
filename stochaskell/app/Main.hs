@@ -8,10 +8,12 @@ import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Expression
 import Data.List
+import Data.List.Split
 import Data.Program
 import Data.Ratio
+import System.Process
 
-forLoop is sh = concat . map (\s -> "for ("++ s ++") ") $ zipWith g is sh
+forLoop is sh = concatMap (\s -> "for ("++ s ++") ") $ zipWith g is sh
     where g i (Interval a s) = stan i ++" in "++ stan a ++":"++ upper
             where upper = if stan a == "1"
                             then stan s
@@ -72,7 +74,7 @@ instance Stan Type where
     stan IntT = "int"
     stan RealT = "real"
     stan (SubrangeT t _ _) = stan t
-    {- TODO:
+    {- TODO only enable at top-level:
     stan (SubrangeT t Nothing  Nothing ) = stan t
     stan (SubrangeT t (Just l) Nothing ) = stan t ++"<lower="++ stan l ++">"
     stan (SubrangeT t Nothing  (Just h)) = stan t ++"<upper="++ stan h ++">"
@@ -88,39 +90,27 @@ stanDecl t name = stan t ++" "++ name ++";"
 
 stanPBlock rName rId (PBlock block revrefs given) =
     if depth == 0
-       then "data {\n"++ dat' ++"\n}\n\n"++
-            "parameters {\n"++ params' ++"\n}\n\n"++
+       then "data {\n"++ dat ++"\n}\n\n"++
+            "parameters {\n"++ params ++"\n}\n\n"++
             "transformed parameters {\n"++ edefs ++"\n}\n\n"++
-            "model {\n"++ pdefs' ++"\n}\n"++
-            "/*\ncollect: "++ rName ++" = "++ stan rId ++"\n"++
-                "constraints:\n"++ constrs ++"*/\n"
-       else edefs ++ (if edefs == "" then "" else "\n") ++ pdefs'
+            "model {\n"++ pdefs ++"\n}\n"
+       else edefs ++ (if edefs == "" then "" else "\n") ++ pdefs
   where refs = reverse revrefs
         depth = dagLevel $ head block
-        pdefs = zipWith f [0..] refs
-          where f i n = stanPNode name n
-                  where ident = External (Id (Volatile depth) (show i)) (typePNode n)
-                        name = if ident == rId then rName else stan ident
-        params = zipWith g [0..] refs
-          where g i n = if ident `elem` map fst given
-                            then ""
-                            else stanDecl (typePNode n) name
-                  where ident = External (Id (Volatile depth) (show i)) (typePNode n)
-                        name = if ident == rId then rName else stan ident
-        dat = zipWith g [0..] refs
-          where g i n = if ident `elem` map fst given
-                            then stanDecl (typePNode n) name
-                            else ""
-                  where ident = External (Id (Volatile depth) (show i)) (typePNode n)
-                        name = if ident == rId then rName else stan ident
+        ident i n = External (Id (Volatile depth) (show i)) (typePNode n)
+        name i n = let idt = ident i n in if idt == rId then rName else stan idt
+        printRefs f = indent . unlines . filter (/= "") $ zipWith f [0..] refs
+        pdefs = printRefs $ \i n -> stanPNode (name i n) n
+        params = printRefs $ \i n ->
+          if ident i n `elem` map fst given
+          then ""
+          else stanDecl (typePNode n) (name i n)
+        dat = printRefs $ \i n ->
+          if ident i n `elem` map fst given
+          then stanDecl (typePNode n) (name i n)
+          else ""
         edefs = stan (head block)
         indent = intercalate "\n" . map ("    "++) . lines
-        pdefs'  = indent . unlines $ pdefs
-        params' = indent . unlines $ filter (/="") params
-        dat' = indent . unlines $ filter (/="") dat
-        constrs = unlines $ map f given
-          where f (n,ar) = stan n ++" <- c("++ intercalate ", " (map g ar) ++")"
-                g = stan . Constant
 
 stanPNode name (Dist f args t) =
     name ++" ~ "++ g ++"("++ intercalate ", " (map stan args) ++");"
@@ -136,6 +126,17 @@ stanPNode name (Loop sh body r t) =
 instance Stan (Prog (Expr t)) where
     stan p = stanPBlock "RESULT" r pblock
       where ((r,_), pblock) = runState (fromProgE p) emptyPBlock
+
+extractCSV name content = table'
+  where rows = lines content
+        noComment row = row /= "" && head row /= '#'
+        rows' = filter noComment rows
+        table = map (splitOn ",") rows'
+        prefix = name ++ "."
+        cols = findIndices (isPrefixOf prefix) (head table)
+        idx = head cols
+        len = length cols
+        table' = map (take len . drop idx) table
 
 prior n = do
     s <- joint vector $ (\i -> normal 0 1) <$> 1...n
@@ -160,4 +161,24 @@ posterior = do
     assume s $ map (%10) [0..100]
     return g
 
-main = putStrLn $ stan posterior
+runStan p = do
+    writeFile "genmodel.stan" model
+    writeFile "genmodel.data" constrs
+    system "stan genmodel"
+    system "./genmodel sample data file=genmodel.data"
+    content <- readFile "output.csv"
+    let table = extractCSV collect content
+        table' = map (map read) (tail table) :: [[Double]]
+    return table'
+  where ((r,_), pblock) = runState (fromProgE p) emptyPBlock
+        model = stanPBlock "RESULT" r pblock
+        collect = case r of
+          (External _ _) -> "RESULT"
+          _ -> stan r
+        constrs = unlines . map f $ constraints pblock
+          where f (n,ar) = stan n ++" <- c("++ intercalate ", " (map g ar) ++")"
+                g = stan . Constant
+
+main = do
+  samples <- runStan posterior
+  putStrLn . unlines $ map show samples

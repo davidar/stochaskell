@@ -10,6 +10,7 @@ packages:
 # Packages to be pulled from upstream that are not in the resolver (e.g., acme-missiles-0.3)
 extra-deps:
   - bimap-0.3.1
+  - cabal-helper-0.6.1.0
 
 # Override default flag values for local packages and extra-deps
 flags: {}
@@ -36,4 +37,4 @@ nix:
   enable: true
   packages:
     - cmdstan
-  nix-shell-options: ["-I","nixpkgs=../nixpkgs"]
+  #nix-shell-options: ["-I","nixpkgs=../nixpkgs"]

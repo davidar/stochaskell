@@ -156,7 +156,7 @@ externRefs (DAG _ _ defs) = go defs
 
 
 ------------------------------------------------------------------------------
--- FUNCTION APPPLICATION                                                    --
+-- FUNCTION APPLICATION                                                     --
 ------------------------------------------------------------------------------
 
 -- simplify and float constants
@@ -173,7 +173,7 @@ simplify e = do
 
 apply :: forall a r.    (ExprType r) => Id ->    [ Expr a ]    -> Expr r
 apply f xs = expr $ do
-    js <- sequence $ map fromExpr xs
+    js <- mapM fromExpr xs
     simplify $ Apply f js t
   where (TypeIs t) = typeOf :: TypeOf r
 
