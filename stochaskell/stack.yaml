@@ -35,6 +35,4 @@ extra-package-dbs: []
 
 nix:
   enable: true
-  packages:
-    - cmdstan
-  #nix-shell-options: ["-I","nixpkgs=../nixpkgs"]
+  shell-file: shell.nix

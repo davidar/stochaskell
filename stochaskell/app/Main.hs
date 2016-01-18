@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleInstances, OverloadedStrings #-}
 module Main where
 
+import Graphics.Rendering.Chart.Easy (plot, line, points, def, setColors, black, withOpacity)
+import Graphics.Rendering.Chart.Backend.Cairo
 import Control.Applicative
 import Control.Monad.State
 import Data.Array.Abstract
@@ -149,19 +151,22 @@ prior n = do
     phi <- joint vector $ (\i -> bernoulliLogit (g!i)) <$> 1...n
     return (g,phi,s)
 
-dat =  [0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0,
-        1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1,
-        0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1,
-        1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0,
-        1, 1, 1, 1, 0, 0, 1, 0, 1]
+inp = map (%10) [0..100]
+dat = [1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+       0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0,
+       1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1,
+       0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+       1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0]
 
 posterior = do
     (g,phi,s) <- prior 101
     assume phi dat
-    assume s $ map (%10) [0..100]
+    assume s inp
     return g
 
 runStan p = do
+    putStrLn "--- Generating Stan code ---"
+    putStrLn model
     writeFile "genmodel.stan" model
     writeFile "genmodel.data" constrs
     system "stan genmodel"
@@ -181,4 +186,8 @@ runStan p = do
 
 main = do
   samples <- runStan posterior
-  putStrLn . unlines $ map show samples
+  let xs = map fromRational inp :: [Double]
+  toFile def "out.png" $ do
+    plot . points "data" $ zip xs [5 * (fromRational y - 0.5) :: Double | y <- dat]
+    setColors [black `withOpacity` 0.1]
+    plot . line "samples" $ map (zip xs) samples
