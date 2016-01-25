@@ -57,6 +57,7 @@ data DAG = DAG { dagLevel :: Level
                , bimap  :: Bimap.Bimap Node Pointer
                } deriving (Eq, Ord)
 emptyDAG = DAG 0 [] Bimap.empty
+nodes dag = Bimap.toAscListR $ bimap dag
 
 type Block = [DAG]
 emptyBlock = [emptyDAG]
