@@ -1,12 +1,16 @@
 module Language.Stan where
 
 import Control.Applicative ()
+import Control.Monad.State
 import Data.Array.Abstract
 import Data.Expression
 import Data.List
+import Data.List.Split
 import Data.Maybe
 import Data.Program
 import Data.Ratio
+import System.IO.Temp
+import System.Process
 
 type Label = String
 
@@ -137,8 +141,51 @@ stanDAG dag = indent $
 stanPBlock :: Label -> NodeRef -> PBlock -> String
 stanPBlock rName rId (PBlock block refs _) =
     stanDAG (head block) ++ pdefs
-  where pdefs = indent . unlines . filter (/= "") $
-                    zipWith f [0..] (reverse refs)
+  where pdefs = indent . unlines $ zipWith f [0..] (reverse refs)
         f i n = stanPNode (if cId == rId then rName else stanNodeRef cId) n
           where cId = External (Id (Volatile . dagLevel $ head block)
                                    (show i)) (typePNode n)
+
+
+------------------------------------------------------------------------------
+-- WHOLE PROGRAMS                                                           --
+------------------------------------------------------------------------------
+
+stanProgram :: PBlock -> String
+stanProgram (PBlock block refs given) =
+    "data {\n"++ printRefs (\i n ->
+        if i `elem` map fst given
+        then stanDecl (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
+    "parameters {\n"++ printRefs (\i n ->
+        if i `elem` map fst given
+        then "" else stanDecl (stanNodeRef i) (typePNode n)) ++"\n}\n"++
+    "transformed parameters {\n"++ stanDAG (head block) ++"\n}\n"++
+    "model {\n"++ printRefs (\i n -> stanPNode (stanNodeRef i) n) ++"\n}\n"
+  where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
+          where g i n = let l = External (Id (Volatile . dagLevel $ head block)
+                                             (show i)) (typePNode n)
+                        in f l n
+
+runStan :: Prog (EVector Integer R) -> IO [[R]]
+runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
+    let basename = tmpDir ++"/generated_model"
+
+    putStrLn "--- Generating Stan code ---"
+    putStrLn $ stanProgram p
+    writeFile (basename ++".stan") $ stanProgram p
+    writeFile (basename ++".data") $
+      unlines . flip map (constraints p) $ \(n,ar) ->
+        stanNodeRef n ++" <- c("++ (stanNodeRef . Constant) `commas` ar ++")"
+    system $ "stan "++ basename
+
+    putStrLn "--- Sampling Stan model ---"
+    system $ basename ++" sample data file="++ basename ++".data "++
+                              "output file="++ basename ++".csv"
+    content <- readFile $ basename ++".csv"
+
+    return $ map (map read) (tail $ extractCSV content)
+  where ((r,_),p) = runState (fromProgE prog) emptyPBlock
+        extractCSV content = map (take (length cols) . drop (head cols)) table
+          where noComment row = row /= "" && head row /= '#'
+                table = map (splitOn ",") . filter noComment $ lines content
+                cols = findIndices (isPrefixOf $ stanNodeRef r ++ ".") (head table)

@@ -23,8 +23,9 @@ library
                      , base >= 4.7 && < 5
                      , bimap
                      , mtl
-                     , split
                      , process
+                     , split
+                     , temporary
   default-language:    Haskell2010
 
 executable stochaskell-exe
@@ -35,10 +36,6 @@ executable stochaskell-exe
                      , Chart
                      , Chart-cairo
                      , base
-                     , bimap
-                     , mtl
-                     , process
-                     , split
                      , stochaskell
   default-language:    Haskell2010
 
