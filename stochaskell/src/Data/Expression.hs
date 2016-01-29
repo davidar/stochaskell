@@ -13,6 +13,7 @@ import Data.Ratio
 import Data.String
 import Control.Applicative
 import Control.Monad.State
+import GHC.Exts
 
 instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
     m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
@@ -38,6 +39,7 @@ data Id = Id Scope String
 data NodeRef = Internal Level Pointer
              | External Id Type
              | Constant Rational
+             | Constants [Rational]
              | Index NodeRef [NodeRef]
              deriving (Eq, Ord, Show)
 data Node = Apply { fName :: Id
@@ -50,12 +52,12 @@ data Node = Apply { fName :: Id
                   , aHead  :: NodeRef
                   , typeNode :: Type
                   }
-          deriving (Eq, Ord)
+          deriving (Eq, Ord, Show)
 
 data DAG = DAG { dagLevel :: Level
                , inputs :: [Id]
                , bimap  :: Bimap.Bimap Node Pointer
-               } deriving (Eq, Ord)
+               } deriving (Eq, Ord, Show)
 emptyDAG = DAG 0 [] Bimap.empty
 nodes dag = Bimap.toAscListR $ bimap dag
 
@@ -386,3 +388,8 @@ instance (ExprType t) => OrdB (Expr t) where
     (<=*) = apply2 "<="
     (>=*) = apply2 ">="
     (>*)  = apply2 ">"
+
+instance (Real e, ExprType e) => IsList (EVector i e) where
+    type Item (EVector i e) = e
+    fromList = expr . return . Constants . map toRational
+    toList = error "not implemented"

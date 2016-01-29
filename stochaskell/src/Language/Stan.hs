@@ -173,12 +173,14 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     putStrLn "--- Generating Stan code ---"
     putStrLn $ stanProgram p
     writeFile (basename ++".stan") $ stanProgram p
-    writeFile (basename ++".data") $
-      unlines . flip map (constraints p) $ \(n,ar) ->
-        stanNodeRef n ++" <- c("++ (stanNodeRef . Constant) `commas` ar ++")"
     system $ "stan "++ basename
 
     putStrLn "--- Sampling Stan model ---"
+    let dat = unlines . flip map (constraints p) $ \(n,ar) ->
+                stanNodeRef n ++" <- c("++
+                  (stanNodeRef . Constant) `commas` ar ++")"
+    putStrLn dat
+    writeFile (basename ++".data") dat
     system $ basename ++" sample data file="++ basename ++".data "++
                               "output file="++ basename ++".csv"
     content <- readFile $ basename ++".csv"

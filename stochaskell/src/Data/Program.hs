@@ -1,8 +1,10 @@
 {-# LANGUAGE GADTs, ImpredicativeTypes, FlexibleInstances, ScopedTypeVariables,
-             FlexibleContexts #-}
+             FlexibleContexts, TypeFamilies #-}
 module Data.Program where
 
 import Control.Applicative
+import Control.Monad.Guard
+import Control.Monad.State
 import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
 import Data.Expression (R,ExprType,Expr,DExpr,fromExpr,fromDExpr,typeDExpr)
@@ -10,8 +12,6 @@ import qualified Data.Expression as Expr
 import Data.List
 import Data.Ratio
 import Data.String
-import Control.Applicative
-import Control.Monad.State
 
 
 ------------------------------------------------------------------------------
@@ -129,8 +129,14 @@ joint _ ar = Prog $ do
 -- CONDITIONING                                                             --
 ------------------------------------------------------------------------------
 
-assume :: Expr t -> [Rational] -> Prog ()
-assume cond dat = Prog $ do
-    i <- liftExprBlock (fromExpr cond)
-    (PBlock block dists given) <- get
-    put $ PBlock block dists ((i,dat):given)
+type instance ConditionOf (Prog ()) = Expr Bool
+instance MonadGuard Prog where
+    guard cond = Prog $ do -- TODO: weaker assumptions
+        (Expr.Internal 0 i) <- liftExprBlock (fromExpr cond)
+        (PBlock (dag:dags) dists given) <- get
+        if i /= length (Expr.nodes dag) - 1 then undefined else do
+          let (Just (Expr.Apply (Expr.Id Expr.Builtin "==")
+                                [j, Expr.Constants xs] _)) =
+                lookup i $ Expr.nodes dag
+              dag' = dag { Expr.bimap = Bimap.deleteR i (Expr.bimap dag) }
+          put $ PBlock (dag':dags) dists ((j,xs):given)
