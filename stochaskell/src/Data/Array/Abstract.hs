@@ -24,6 +24,14 @@ instance Applicative (AbstractArray i) where
       where h x = let (is,js) = splitAt (length sa) x
                   in f is $ g js
 
+-- emulate <https://ghc.haskell.org/trac/ghc/ticket/10976>
+instance Monad (AbstractArray i) where
+    return = pure
+    (AArr sa f) >>= k = AArr (sa ++ sb) h
+      where sb = shape (k $ error "non-rectangular array")
+            h x = let (is,js) = splitAt (length sa) x
+                  in k (f is) `apply` js
+
 infix 5 ...
 (...) :: (Num a) => a -> a -> AbstractArray a a
 a...b = AArr [Interval a size] f
