@@ -3,7 +3,7 @@
              FlexibleContexts #-}
 module Data.Expression where
 
-import Data.Array.Abstract (Indexable,LinearOperator,SquareMatrix)
+import Data.Array.Abstract (LinearOperator,SquareMatrix)
 import qualified Data.Array.Abstract as AA
 import qualified Data.Bimap as Bimap
 import Data.Boolean
@@ -11,7 +11,7 @@ import Data.List
 import Data.Maybe
 import Data.Ratio
 import Data.String
-import Control.Applicative
+import Control.Applicative ()
 import Control.Monad.State
 import GHC.Exts
 
@@ -36,10 +36,13 @@ data Scope = Builtin
 data Id = Id Scope String
         deriving (Eq, Ord, Show)
 
+data ConstVal = Scalar Rational
+              | Vector [Rational]
+              deriving (Eq, Ord, Show)
+
 data NodeRef = Internal Level Pointer
              | External Id Type
-             | Constant Rational
-             | Constants [Rational]
+             | Const ConstVal
              | Index NodeRef [NodeRef]
              deriving (Eq, Ord, Show)
 data Node = Apply { fName :: Id
@@ -98,13 +101,13 @@ instance ExprType Integer where
     typeOf = TypeIs IntT
 instance ExprType Bool where
     typeOf = TypeIs $
-        SubrangeT IntT (Just $ Constant 0) (Just $ Constant 1)
+        SubrangeT IntT (Just . Const $ Scalar 0) (Just . Const $ Scalar 1)
 instance ExprType R where
     typeOf = TypeIs RealT
-instance forall a b. (ExprType b) => ExprType (a -> b) where
+instance forall b. (ExprType b) => ExprType [b] where
     typeOf = TypeIs $
         case t of
-            (ArrayT _ n r) -> ArrayT Nothing (error "undefined array bounds") r
+            (ArrayT _ _ r) -> ArrayT Nothing (error "undefined array bounds") r
             r              -> ArrayT Nothing (error "undefined array bounds") r
       where (TypeIs t) = typeOf :: TypeOf b
 
@@ -143,12 +146,12 @@ liftBlock state = do
 varies (DAG level inputs _) xs = level == 0 || any p xs
   where p (Internal l _) = l == level
         p (External s _) = s `elem` inputs
-        p (Constant _) = False
+        p (Const _) = False
         p (Index a is) = p a || any p is
 
 -- collect External references
 externRefs (DAG _ _ defs) = go defs
-  where go defs = concat . map (f . snd) $ Bimap.toAscListR defs
+  where go defs = concatMap (f . snd) $ Bimap.toAscListR defs
         f (Apply _ args _) = mapMaybe extern args
         f (Array _ sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . AA.lowerBound) sh
@@ -164,10 +167,9 @@ externRefs (DAG _ _ defs) = go defs
 
 -- simplify and float constants
 simplify :: Node -> State Block NodeRef
-simplify (Apply "+" [Constant x, Constant y] _) = return . Constant $ x + y
-simplify (Apply "-" [Constant x, Constant y] _) = return . Constant $ x - y
-simplify (Apply "*" [Constant x, Constant y] _) = return . Constant $ x * y
-simplify (Apply "/" [Constant x, Constant y] _) = return . Constant $ x / y
+simplify (Apply op [Const (Scalar x), Const (Scalar y)] _) | isJust f =
+    return . Const . Scalar $ fromJust f x y
+  where f = lookup op [("+",(+)), ("-",(-)), ("*",(*)), ("/",(/))]
 simplify e = do
     dag:parent <- get
     if varies dag $ fArgs e
@@ -205,18 +207,6 @@ apply3 f x y z = expr $ do
 ------------------------------------------------------------------------------
 
 type AAI r = AA.AbstractArray (Expr Integer) (Expr r)
-type EVector n   e = Expr (n -> e)
-type EMatrix r c e = Expr (r -> c -> e)
-
-type FI1 r = Integer -> r
-type FI2 r = Integer -> FI1 r
-type FI3 r = Integer -> FI2 r
-type FI4 r = Integer -> FI3 r
-type FI5 r = Integer -> FI4 r
-type FI6 r = Integer -> FI5 r
-type FI7 r = Integer -> FI6 r
-type FI8 r = Integer -> FI7 r
-type FI9 r = Integer -> FI8 r
 
 -- External references captured by this closure
 capture ar = externRefs adag
@@ -244,7 +234,7 @@ floatArray ar = do
         return $ AA.Interval i z
     if varies dag (map AA.lowerBound  sh) ||
        varies dag (map AA.cardinality sh) ||
-       length (inputs dag `intersect` capture ar) > 0
+       (not . null $ inputs dag `intersect` capture ar)
       then makeArray ar sh
       else liftBlock $ floatArray ar
 
@@ -255,32 +245,10 @@ array n a = if length sh == n
                 else error "dimension mismatch"
   where sh = AA.shape a
 
-array1 :: (ExprType r) => AAI r -> EVector Integer r
-array1 = array 1
-array2 :: (ExprType r) => AAI r -> EMatrix Integer Integer r
-array2 = array 2
-array3 :: (ExprType r) => AAI r -> Expr (FI3 r)
-array3 = array 3
-array4 :: (ExprType r) => AAI r -> Expr (FI4 r)
-array4 = array 4
-array5 :: (ExprType r) => AAI r -> Expr (FI5 r)
-array5 = array 5
-array6 :: (ExprType r) => AAI r -> Expr (FI6 r)
-array6 = array 6
-array7 :: (ExprType r) => AAI r -> Expr (FI7 r)
-array7 = array 7
-array8 :: (ExprType r) => AAI r -> Expr (FI8 r)
-array8 = array 8
-array9 :: (ExprType r) => AAI r -> Expr (FI9 r)
-array9 = array 9
-
-vector v = array1 v
-matrix m = array2 m
-
 index :: (ExprType r) => Expr a -> [Expr i] -> Expr r
 index a es = expr $ do
     f <- fromExpr a
-    js <- sequence $ map fromExpr es
+    js <- mapM fromExpr es
     return $ Index f js
 
 
@@ -289,7 +257,7 @@ index a es = expr $ do
 ------------------------------------------------------------------------------
 
 fromRational' :: (ExprType t) => Rational -> Expr t
-fromRational' = expr . return . Constant
+fromRational' = expr . return . Const . Scalar
 
 instance (Num t, ExprType t) => Num (Expr t) where
     (+) = apply2 "+"
@@ -333,35 +301,43 @@ instance forall t. (ExprType t) => IsString (Expr t) where
     fromString s = expr . return $ External (Id Builtin s) t
       where (TypeIs t) = typeOf :: TypeOf t
 
-instance (ExprType b) => Indexable (EVector a b) (Expr a) (Expr b) where
+instance (ExprType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = expr $ do
         f <- fromExpr a
         j <- fromExpr e
         return $ case f of
             (Index g js) -> Index g (j:js)
-            otherwise    -> Index f [j]
+            _            -> Index f [j]
+    vector = array 1
+instance (ExprType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
+    matrix = array 2
 
-asVector :: (ExprType e) => EVector n e -> EVector n e
+isConstVector :: NodeRef -> Bool
+isConstVector (Const (Vector _)) = True
+isConstVector _ = False
+
+asVector :: (ExprType e) => Expr [e] -> Expr [e]
 asVector v = expr $ do
     i <- fromExpr v
-    (ArrayT _ [n] t) <- typeRef i
-    simplify $ Apply "asVector" [i] (ArrayT (Just "vector") [n] t)
+    if isConstVector i then return i else do
+      (ArrayT _ [n] t) <- typeRef i
+      simplify $ Apply "asVector" [i] (ArrayT (Just "vector") [n] t)
 
-asMatrix :: (ExprType e) => EMatrix r c e -> EMatrix r c e
+asMatrix :: (ExprType e) => Expr [[e]] -> Expr [[e]]
 asMatrix m = expr $ do
     i <- fromExpr m
     (ArrayT _ [r,c] t) <- typeRef i
     simplify $ Apply "asMatrix" [i] (ArrayT (Just "matrix") [r,c] t)
 
-instance (ExprType e) => LinearOperator (EMatrix r c e)
-                                        (EVector c e) (EVector r e) where
+instance (ExprType e) => LinearOperator (Expr [[e]])
+                                        (Expr [e]) (Expr [e]) where
     m #> v = expr $ do
         i <- fromExpr $ asMatrix m
         j <- fromExpr $ asVector v
         (ArrayT _ [r,c] t) <- typeRef i
         simplify $ Apply "#>" [i,j] (ArrayT (Just "vector") [r] t)
 
-instance (ExprType e) => SquareMatrix (EMatrix n n e) where
+instance (ExprType e) => SquareMatrix (Expr [[e]]) where
     chol m = expr $ do
         i <- fromExpr $ asMatrix m
         t <- typeRef i
@@ -389,7 +365,7 @@ instance (ExprType t) => OrdB (Expr t) where
     (>=*) = apply2 ">="
     (>*)  = apply2 ">"
 
-instance (Real e, ExprType e) => IsList (EVector i e) where
-    type Item (EVector i e) = e
-    fromList = expr . return . Constants . map toRational
+instance (Real e, ExprType e) => IsList (Expr [e]) where
+    type Item (Expr [e]) = e
+    fromList = expr . return . Const . Vector . map toRational
     toList = error "not implemented"

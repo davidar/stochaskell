@@ -40,8 +40,12 @@ a...b = AArr [Interval a size] f
         f _ = error "shape mismatch"
 
 infixl 9 !
-class Indexable a i e | a -> i e where
-    (!) :: a -> i -> e
+class Vector v i e | v -> i e, i e -> v where
+    (!) :: v -> i -> e
+    vector :: AbstractArray i e -> v
+
+class Matrix m i e | m -> i e, i e -> m where
+    matrix :: AbstractArray i e -> m
 
 class LinearOperator m u v | m -> u v where
     (#>) :: m -> u -> v

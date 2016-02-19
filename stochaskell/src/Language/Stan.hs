@@ -40,13 +40,16 @@ stanId (Id Builtin s) = s
 stanId (Id (Dummy level) s) = "index_"++ show level ++"_"++ s
 stanId (Id (Volatile level) s) = "sample_"++ show level ++"_"++ s
 
-stanNodeRef :: NodeRef -> String
-stanNodeRef (Internal level i) = "value_"++ show level ++"_"++ show i
-stanNodeRef (External s _) = stanId s
-stanNodeRef (Constant c) =
+stanConstVal :: ConstVal -> String
+stanConstVal (Scalar c) =
     if d == 1 then show n else show (fromRational c :: Double)
   where n = numerator c
         d = denominator c
+
+stanNodeRef :: NodeRef -> String
+stanNodeRef (Internal level i) = "value_"++ show level ++"_"++ show i
+stanNodeRef (External s _) = stanId s
+stanNodeRef (Const c) = stanConstVal c
 stanNodeRef (Index f js) =
     stanNodeRef f ++"["++ stanNodeRef `commas` reverse js ++"]"
 
@@ -99,6 +102,7 @@ stanOperators =
   ,("/",   "/")
   ,("==",  "==")
   ,("#>",  "*")
+  ,("**",  "^")
   ]
 
 stanNode :: Label -> Node -> String
@@ -166,7 +170,7 @@ stanProgram (PBlock block refs given) =
                                              (show i)) (typePNode n)
                         in f l n
 
-runStan :: Prog (EVector Integer R) -> IO [[R]]
+runStan :: Prog (Expr [R]) -> IO [[R]]
 runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/generated_model"
 
@@ -178,7 +182,7 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     putStrLn "--- Sampling Stan model ---"
     let dat = unlines . flip map (constraints p) $ \(n,ar) ->
                 stanNodeRef n ++" <- c("++
-                  (stanNodeRef . Constant) `commas` ar ++")"
+                  (stanNodeRef . Const . Scalar) `commas` ar ++")"
     putStrLn dat
     writeFile (basename ++".data") dat
     system $ basename ++" sample data file="++ basename ++".data "++

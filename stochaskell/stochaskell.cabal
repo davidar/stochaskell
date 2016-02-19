@@ -20,6 +20,7 @@ library
                      , Data.Expression
                      , Data.Program
                      , Data.Array.Abstract
+                     , Data.Random.Distribution.Abstract
                      , Language.Stan
   build-depends:       Boolean
                      , base >= 4.7 && < 5

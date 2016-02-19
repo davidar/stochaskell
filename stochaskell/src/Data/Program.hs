@@ -1,5 +1,5 @@
 {-# LANGUAGE GADTs, ImpredicativeTypes, FlexibleInstances, ScopedTypeVariables,
-             FlexibleContexts, TypeFamilies #-}
+             FlexibleContexts, TypeFamilies, MultiParamTypeClasses #-}
 module Data.Program where
 
 import Control.Applicative
@@ -10,6 +10,7 @@ import qualified Data.Bimap as Bimap
 import Data.Expression (R,ExprType,Expr,DExpr,fromExpr,fromDExpr,typeDExpr)
 import qualified Data.Expression as Expr
 import Data.List
+import Data.Random.Distribution.Abstract
 import Data.Ratio
 import Data.String
 
@@ -47,7 +48,8 @@ data Prog t = Prog { fromProg :: State PBlock t }
 instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
 runProg p = runState (fromProg p) emptyPBlock
 
-fromProgE :: Prog (Expr t) -> State PBlock (Expr.NodeRef, Expr.Type)
+type ProgE t = Prog (Expr t)
+fromProgE :: ProgE t -> State PBlock (Expr.NodeRef, Expr.Type)
 fromProgE p = do
     e <- fromProg p
     j <- liftExprBlock $ fromExpr e
@@ -79,17 +81,17 @@ dist s = Prog $ do
         v = Expr.expr . return $ Expr.External name (typePNode d)
     return v
 
-normal :: Expr R -> Expr R -> Prog (Expr R)
-normal m s = dist $ do
-    i <- fromExpr m
-    j <- fromExpr s
-    return $ Dist (Expr.Id Expr.Builtin "normal") [i,j] Expr.RealT
+instance Distribution BernoulliLogit (Expr R) Prog (Expr Bool) where
+    sample (BernoulliLogit l) = dist $ do
+        i <- fromExpr l
+        return $ Dist (Expr.Id Expr.Builtin "bernoulliLogit") [i] t
+      where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
 
-bernoulliLogit :: Expr R -> Prog (Expr Bool)
-bernoulliLogit l = dist $ do
-    i <- fromExpr l
-    return $ Dist (Expr.Id Expr.Builtin "bernoulliLogit") [i] t
-  where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
+instance Distribution Normal (Expr R) Prog (Expr R) where
+    sample (Normal m s) = dist $ do
+        i <- fromExpr m
+        j <- fromExpr s
+        return $ Dist (Expr.Id Expr.Builtin "normal") [i,j] Expr.RealT
 
 
 ------------------------------------------------------------------------------
@@ -124,6 +126,9 @@ joint _ ar = Prog $ do
            in PBlock block' (loop:dists) given
     return ref
 
+instance (ExprType e) => Vector (ProgE [e]) (Expr Integer) (ProgE e) where
+    vector = joint vector
+
 
 ------------------------------------------------------------------------------
 -- CONDITIONING                                                             --
@@ -136,7 +141,7 @@ instance MonadGuard Prog where
         (PBlock (dag:dags) dists given) <- get
         if i /= length (Expr.nodes dag) - 1 then undefined else do
           let (Just (Expr.Apply (Expr.Id Expr.Builtin "==")
-                                [j, Expr.Constants xs] _)) =
+                                [j, Expr.Const (Expr.Vector xs)] _)) =
                 lookup i $ Expr.nodes dag
               dag' = dag { Expr.bimap = Bimap.deleteR i (Expr.bimap dag) }
           put $ PBlock (dag':dags) dists ((j,xs):given)
