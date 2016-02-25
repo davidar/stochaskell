@@ -11,9 +11,12 @@ packages:
 extra-deps:
   - bimap-0.3.1
   - cabal-helper-0.6.1.0
+  - hmatrix-0.17.0.1
 
 # Override default flag values for local packages and extra-deps
-flags: {}
+flags:
+  hmatrix:
+    openblas: false
 
 # Extra package databases containing global packages
 extra-package-dbs: []
@@ -34,5 +37,5 @@ extra-package-dbs: []
 # extra-lib-dirs: [/path/to/dir]
 
 nix:
-  enable: true
+  enable: false
   shell-file: shell.nix

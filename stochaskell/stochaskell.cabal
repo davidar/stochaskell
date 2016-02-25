@@ -23,10 +23,13 @@ library
                      , Data.Random.Distribution.Abstract
                      , Language.Stan
   build-depends:       Boolean
+                     , array
                      , base >= 4.7 && < 5
                      , bimap
+                     , hmatrix
                      , mtl
                      , process
+                     , random-fu
                      , split
                      , temporary
   default-language:    Haskell2010

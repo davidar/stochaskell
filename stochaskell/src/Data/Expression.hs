@@ -117,6 +117,13 @@ typeRef ref@(Internal level i) = do
         then return . typeNode . fromJust . Bimap.lookupR i $ bimap dag
         else liftBlock $ typeRef ref
 typeRef (External _ t) = return t
+typeRef (Const (Scalar _)) = return RealT
+typeRef (Const (Vector v)) = return $
+    ArrayT Nothing [AA.Interval (Const $ Scalar 1)
+                                (Const . Scalar . fromIntegral $ length v)] RealT
+typeRef (Index a i) = do
+    (ArrayT _ _ t) <- typeRef a
+    return t
 
 
 ------------------------------------------------------------------------------
@@ -155,7 +162,7 @@ externRefs (DAG _ _ defs) = go defs
         f (Apply _ args _) = mapMaybe extern args
         f (Array _ sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . AA.lowerBound) sh
-                                ++ mapMaybe (extern . AA.cardinality) sh ++ go defs'
+                                ++ mapMaybe (extern . AA.upperBound) sh ++ go defs'
         extern (External id _) = Just id
         extern _ = Nothing
         -- TODO Index
@@ -191,6 +198,15 @@ apply2 f x y = expr $ do
     j <- fromExpr y
     simplify $ Apply f [i,j] t
   where (TypeIs t) = typeOf :: TypeOf r
+
+applyClosed2 :: (ExprType a) => Id -> Expr a -> Expr a -> Expr a
+applyClosed2 f x y = expr $ do
+    i <- fromExpr x
+    j <- fromExpr y
+    s <- typeRef i
+    t <- typeRef j
+    if s /= t then error $ "type mismatch: "++ show s ++" /= "++ show t
+              else simplify $ Apply f [i,j] t
 
 apply3 :: forall a b c r. (ExprType r) => Id -> Expr a -> Expr b
                                                      -> Expr c -> Expr r
@@ -229,11 +245,11 @@ makeArray ar sh = do
 floatArray ar = do
     dag:_ <- get
     sh <- sequence . flip map (AA.shape ar) $ \interval -> do
-        i <- fromExpr $ AA.lowerBound  interval
-        z <- fromExpr $ AA.cardinality interval
-        return $ AA.Interval i z
-    if varies dag (map AA.lowerBound  sh) ||
-       varies dag (map AA.cardinality sh) ||
+        i <- fromExpr $ AA.lowerBound interval
+        j <- fromExpr $ AA.upperBound interval
+        return $ AA.Interval i j
+    if varies dag (map AA.lowerBound sh) ||
+       varies dag (map AA.upperBound sh) ||
        (not . null $ inputs dag `intersect` capture ar)
       then makeArray ar sh
       else liftBlock $ floatArray ar
@@ -259,10 +275,19 @@ index a es = expr $ do
 fromRational' :: (ExprType t) => Rational -> Expr t
 fromRational' = expr . return . Const . Scalar
 
+instance (Num t) => Num [t] where
+    (+) = zipWith (+)
+    (-) = zipWith (-)
+    (*) = zipWith (*)
+    negate = map negate
+    abs    = map abs
+    signum = map signum
+    fromInteger x = [fromInteger x]
+
 instance (Num t, ExprType t) => Num (Expr t) where
-    (+) = apply2 "+"
-    (-) = apply2 "-"
-    (*) = apply2 "*"
+    (+) = applyClosed2 "+"
+    (-) = applyClosed2 "-"
+    (*) = applyClosed2 "*"
 
     negate = apply1 "negate"
     abs    = apply1 "abs"
@@ -308,9 +333,9 @@ instance (ExprType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
         return $ case f of
             (Index g js) -> Index g (j:js)
             _            -> Index f [j]
-    vector = array 1
+    vector = asVector . array 1
 instance (ExprType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
-    matrix = array 2
+    matrix = asMatrix . array 2
 
 isConstVector :: NodeRef -> Bool
 isConstVector (Const (Vector _)) = True

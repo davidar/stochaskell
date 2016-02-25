@@ -12,6 +12,8 @@ import Data.Ratio
 import System.IO.Temp
 import System.Process
 
+-- TODO: better handling for exceptions to 1-based indexing
+
 type Label = String
 
 ------------------------------------------------------------------------------
@@ -26,9 +28,9 @@ indent = intercalate "\n" . map ("  "++) . lines
 
 forLoop :: [Id] -> [Interval NodeRef] -> String -> String
 forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
-    where f i (Interval a s) =
-            "for ("++ stanId i ++" in "++ stanNodeRef a ++":"++
-                 "("++ stanNodeRef a ++"+"++ stanNodeRef s ++"-1)) "
+    where f i (Interval a b) =
+            "for ("++ stanId i ++" in "++ stanNodeRef a
+                                  ++":"++ stanNodeRef b ++") "
 
 
 ------------------------------------------------------------------------------
@@ -71,12 +73,12 @@ stanType (SubrangeT t (Just l) (Just h)) = stan t ++"<lower="++ stan l ++
 -}
 stanType (ArrayT kind n t) =
     fromMaybe (stanType t) kind ++
-      "["++ stanNodeRef `commas` map cardinality n ++"]"
+      "["++ stanNodeRef `commas` map upperBound n ++"]"
 
 stanDecl :: Label -> Type -> String
 stanDecl name (ArrayT Nothing n t) =
     stanType t ++" "++ name ++
-      "["++ stanNodeRef `commas` map cardinality n ++"];"
+      "["++ stanNodeRef `commas` map upperBound n ++"];"
 stanDecl name t = stanType t ++" "++ name ++";"
 
 
@@ -189,6 +191,7 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
                               "output file="++ basename ++".csv"
     content <- readFile $ basename ++".csv"
 
+    putStrLn "--- Removing temporary files ---"
     return $ map (map read) (tail $ extractCSV content)
   where ((r,_),p) = runState (fromProgE prog) emptyPBlock
         extractCSV content = map (take (length cols) . drop (head cols)) table

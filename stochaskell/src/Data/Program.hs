@@ -11,6 +11,7 @@ import Data.Expression (R,ExprType,Expr,DExpr,fromExpr,fromDExpr,typeDExpr)
 import qualified Data.Expression as Expr
 import Data.List
 import Data.Random.Distribution.Abstract
+import Data.Random.Distribution.Normal (Normal(..))
 import Data.Ratio
 import Data.String
 
@@ -104,14 +105,13 @@ makeLoop shape body = do
     block <- get
     return $ Loop sh block r (Expr.ArrayT Nothing sh t)
   where shape' = flip map shape $ \interval -> do
-            i <- fromExpr $ lowerBound  interval
-            z <- fromExpr $ cardinality interval
-            return $ Interval i z
+            i <- fromExpr $ lowerBound interval
+            j <- fromExpr $ upperBound interval
+            return $ Interval i j
 
-joint :: forall r f. (ExprType r, ExprType f)
-      => (AbstractArray (Expr Integer)       (Expr r)  ->       Expr f)
-      ->  AbstractArray (Expr Integer) (Prog (Expr r)) -> Prog (Expr f)
-joint _ ar = Prog $ do
+instance forall r f. (ExprType r, ExprType f)
+    => Joint Prog (Expr Integer) (Expr r) (Expr f) where
+  joint _ ar = Prog $ do
     PBlock block dists given <- get
     let ashape = shape ar
         depth = Expr.dagLevel $ head block
@@ -123,11 +123,8 @@ joint _ ar = Prog $ do
         ref = Expr.expr . return $ Expr.External name t :: Expr f
         t = typePNode loop
     put $ let (PBlock (_:block') _ _) = lBody loop
-           in PBlock block' (loop:dists) given
+          in PBlock block' (loop:dists) given
     return ref
-
-instance (ExprType e) => Vector (ProgE [e]) (Expr Integer) (ProgE e) where
-    vector = joint vector
 
 
 ------------------------------------------------------------------------------
