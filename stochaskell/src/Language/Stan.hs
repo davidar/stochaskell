@@ -28,7 +28,7 @@ indent = intercalate "\n" . map ("  "++) . lines
 
 forLoop :: [Id] -> [Interval NodeRef] -> String -> String
 forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
-    where f i (Interval a b) =
+    where f i (a,b) =
             "for ("++ stanId i ++" in "++ stanNodeRef a
                                   ++":"++ stanNodeRef b ++") "
 
@@ -73,12 +73,12 @@ stanType (SubrangeT t (Just l) (Just h)) = stan t ++"<lower="++ stan l ++
 -}
 stanType (ArrayT kind n t) =
     fromMaybe (stanType t) kind ++
-      "["++ stanNodeRef `commas` map upperBound n ++"]"
+      "["++ stanNodeRef `commas` map snd n ++"]"
 
 stanDecl :: Label -> Type -> String
 stanDecl name (ArrayT Nothing n t) =
     stanType t ++" "++ name ++
-      "["++ stanNodeRef `commas` map upperBound n ++"];"
+      "["++ stanNodeRef `commas` map snd n ++"];"
 stanDecl name t = stanType t ++" "++ name ++";"
 
 
@@ -168,11 +168,9 @@ stanProgram (PBlock block refs given) =
     "transformed parameters {\n"++ stanDAG (head block) ++"\n}\n"++
     "model {\n"++ printRefs (\i n -> stanPNode (stanNodeRef i) n) ++"\n}\n"
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
-          where g i n = let l = External (Id (Volatile . dagLevel $ head block)
-                                             (show i)) (typePNode n)
-                        in f l n
+          where g i n = f (External (Id (Volatile 0) (show i)) (typePNode n)) n
 
-runStan :: Prog (Expr [R]) -> IO [[R]]
+runStan :: ProgE [R] -> IO [[R]]
 runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/generated_model"
 
@@ -193,7 +191,7 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
 
     putStrLn "--- Removing temporary files ---"
     return $ map (map read) (tail $ extractCSV content)
-  where ((r,_),p) = runState (fromProgE prog) emptyPBlock
+  where ((r,_),p) = runProgE prog
         extractCSV content = map (take (length cols) . drop (head cols)) table
           where noComment row = row /= "" && head row /= '#'
                 table = map (splitOn ",") . filter noComment $ lines content

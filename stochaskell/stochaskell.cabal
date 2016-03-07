@@ -18,6 +18,7 @@ library
   exposed-modules:     Control.Monad.Guard
                      , Data.Bool.Num
                      , Data.Expression
+                     , Data.Expression.Eval
                      , Data.Program
                      , Data.Array.Abstract
                      , Data.Random.Distribution.Abstract
@@ -27,6 +28,7 @@ library
                      , base >= 4.7 && < 5
                      , bimap
                      , hmatrix
+                     , logfloat
                      , mtl
                      , process
                      , random-fu

@@ -27,14 +27,9 @@ instance (Ix i) => Ix [i] where
           unsafeIndex ([],[]) [] = 0
           unsafeIndex _ _ = undefined
 
-data Interval i = Interval { lowerBound :: i
-                           , upperBound :: i
-                           } deriving (Eq, Ord)
-
-cardinality i = upperBound i - lowerBound i + 1
-
-instance (Show i) => Show (Interval i) where
-    show (Interval a b) = "[" ++ show a ++ ".." ++ show b ++ "]"
+type Interval i = (i,i)
+cardinality :: (Num a) => Interval a -> a
+cardinality (a,b) = b - a + 1
 
 data AbstractArray i e = AArr { shape :: [Interval i]
                               , apply :: [i] -> e
@@ -42,12 +37,12 @@ data AbstractArray i e = AArr { shape :: [Interval i]
 
 toArray :: (Ix i) => AbstractArray i e -> A.Array [i] e
 toArray a = A.array bounds assocs
-  where bounds = (map lowerBound $ shape a, map upperBound $ shape a)
+  where bounds = unzip (shape a)
         assocs = [ (i, apply a i) | i <- range bounds ]
 
 fromArray :: (Ix i) => A.Array [i] e -> AbstractArray i e
 fromArray a = AArr sh $ (A.!) a
-  where sh = [ Interval l h | l <- fst (A.bounds a), h <- snd (A.bounds a) ]
+  where sh = zip (fst $ A.bounds a) (snd $ A.bounds a)
 
 instance Functor (AbstractArray i) where
     fmap f (AArr sh g) = AArr sh (f . g)
@@ -66,9 +61,12 @@ instance Monad (AbstractArray i) where
             h x = let (is,js) = splitAt (length sa) x
                   in k (f is) `apply` js
 
+fromShape :: [Interval a] -> AbstractArray a [a]
+fromShape = flip AArr id
+
 infix 5 ...
 (...) :: a -> a -> AbstractArray a a
-a...b = AArr [Interval a b] f
+a...b = AArr [(a,b)] f
   where f [x] = x
         f _ = error "shape mismatch"
 
@@ -82,7 +80,7 @@ instance (Show t, Storable t) => Show (ShapedVector t) where
     show (ShVec _ v) = show v
 instance (Storable t) => IsList (ShapedVector t) where
     type Item (ShapedVector t) = t
-    fromList xs = ShVec (Interval 1 . fromIntegral $ length xs) (LAD.fromList xs)
+    fromList xs = ShVec (1, fromIntegral $ length xs) (LAD.fromList xs)
     toList (ShVec _ v) = LAD.toList v
 instance (Num (LAD.Vector t)) => Num (ShapedVector t) where
     (ShVec s u) + (ShVec z v) | s == z = ShVec s (u + v)
@@ -90,7 +88,7 @@ instance (Num (LAD.Vector t)) => Num (ShapedVector t) where
 
 instance (Storable t) => Vector (ShapedVector t) Integer t where
     vector a = ShVec (head $ shape a) . LAD.fromList . A.elems $ toArray a
-    (ShVec sh v) ! i = LAD.toList v !! index (lowerBound sh, upperBound sh) i
+    (ShVec sh v) ! i = LAD.toList v !! index sh i
 
 class Matrix m i e | m -> i e, i e -> m where
     matrix :: AbstractArray i e -> m

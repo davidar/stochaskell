@@ -3,10 +3,12 @@
              FlexibleContexts #-}
 module Data.Expression where
 
+import qualified Data.Array as A
 import Data.Array.Abstract (LinearOperator,SquareMatrix)
 import qualified Data.Array.Abstract as AA
 import qualified Data.Bimap as Bimap
 import Data.Boolean
+import qualified Data.Ix as Ix
 import Data.List
 import Data.Maybe
 import Data.Ratio
@@ -37,8 +39,14 @@ data Id = Id Scope String
         deriving (Eq, Ord, Show)
 
 data ConstVal = Scalar Rational
+              | Approx Double
               | Vector [Rational]
+              | CArray (A.Array [ConstVal] ConstVal)
               deriving (Eq, Ord, Show)
+toR :: ConstVal -> R
+toR (Scalar x) = fromRational x
+toR (Approx x) = x
+toR _ = error "can't convert non-scalar to real"
 
 data NodeRef = Internal Level Pointer
              | External Id Type
@@ -61,14 +69,18 @@ data DAG = DAG { dagLevel :: Level
                , inputs :: [Id]
                , bimap  :: Bimap.Bimap Node Pointer
                } deriving (Eq, Ord, Show)
+emptyDAG :: DAG
 emptyDAG = DAG 0 [] Bimap.empty
+nodes :: DAG -> [(Pointer, Node)]
 nodes dag = Bimap.toAscListR $ bimap dag
 
 type Block = [DAG]
+emptyBlock :: [DAG]
 emptyBlock = [emptyDAG]
 
 data DExpr = DExpr { typeDExpr  :: Type
                    , fromDExpr :: State Block NodeRef }
+runDExpr :: DExpr -> (NodeRef, Block)
 runDExpr e = runState (fromDExpr e) emptyBlock
 instance Eq DExpr where e == f = runDExpr e == runDExpr f
 instance Ord DExpr where
@@ -77,8 +89,11 @@ instance Ord DExpr where
 newtype Expr t = Expr { erase :: DExpr }
 expr :: forall t. (ExprType t) => State Block NodeRef -> Expr t
 expr = Expr . DExpr t     where (TypeIs t) = typeOf :: TypeOf t
+typeExpr :: Expr t -> Type
 typeExpr = typeDExpr . erase
+fromExpr :: Expr t -> State Block NodeRef
 fromExpr = fromDExpr . erase
+runExpr :: Expr t -> (NodeRef, Block)
 runExpr  =  runDExpr . erase
 
 
@@ -111,6 +126,7 @@ instance forall b. (ExprType b) => ExprType [b] where
             r              -> ArrayT Nothing (error "undefined array bounds") r
       where (TypeIs t) = typeOf :: TypeOf b
 
+typeRef :: NodeRef -> State [DAG] Type
 typeRef ref@(Internal level i) = do
     dag:_ <- get
     if level == dagLevel dag
@@ -118,10 +134,10 @@ typeRef ref@(Internal level i) = do
         else liftBlock $ typeRef ref
 typeRef (External _ t) = return t
 typeRef (Const (Scalar _)) = return RealT
+typeRef (Const (Approx _)) = return RealT
 typeRef (Const (Vector v)) = return $
-    ArrayT Nothing [AA.Interval (Const $ Scalar 1)
-                                (Const . Scalar . fromIntegral $ length v)] RealT
-typeRef (Index a i) = do
+    ArrayT Nothing [(Const $ Scalar 1, Const . Scalar . fromIntegral $ length v)] RealT
+typeRef (Index a _) = do
     (ArrayT _ _ t) <- typeRef a
     return t
 
@@ -133,37 +149,40 @@ typeRef (Index a i) = do
 -- http://okmij.org/ftp/tagless-final/sharing/sharing.pdf
 hashcons :: Node -> State Block NodeRef
 hashcons e = do
-    (DAG level inp vdag):parent <- get
+    DAG level inp vdag : parent <- get
     case Bimap.lookup e vdag of
         Just k ->
             return $ Internal level k
         Nothing -> do
             let k = Bimap.size vdag
-            put $ (DAG level inp $ Bimap.insert e k vdag) : parent
+            put $ DAG level inp (Bimap.insert e k vdag) : parent
             return $ Internal level k
 
 -- perform an action in the enclosing block
-liftBlock state = do
+liftBlock :: MonadState [a] m => State [a] b -> m b
+liftBlock s = do
     dag:parent <- get
-    let (ref, parent') = runState state parent
+    let (ref, parent') = runState s parent
     put $ dag:parent'
     return ref
 
 -- does a list of expressions depend on the inputs to this block?
-varies (DAG level inputs _) xs = level == 0 || any p xs
+varies :: DAG -> [NodeRef] -> Bool
+varies (DAG level inp _) xs = level == 0 || any p xs
   where p (Internal l _) = l == level
-        p (External s _) = s `elem` inputs
+        p (External s _) = s `elem` inp
         p (Const _) = False
         p (Index a is) = p a || any p is
 
 -- collect External references
-externRefs (DAG _ _ defs) = go defs
+externRefs :: DAG -> [Id]
+externRefs (DAG _ _ d) = go d
   where go defs = concatMap (f . snd) $ Bimap.toAscListR defs
         f (Apply _ args _) = mapMaybe extern args
         f (Array _ sh (DAG _ _ defs') r _) =
-            mapMaybe extern [r] ++ mapMaybe (extern . AA.lowerBound) sh
-                                ++ mapMaybe (extern . AA.upperBound) sh ++ go defs'
-        extern (External id _) = Just id
+            mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
+                                ++ mapMaybe (extern . snd) sh ++ go defs'
+        extern (External i _) = Just i
         extern _ = Nothing
         -- TODO Index
 
@@ -178,7 +197,7 @@ simplify (Apply op [Const (Scalar x), Const (Scalar y)] _) | isJust f =
     return . Const . Scalar $ fromJust f x y
   where f = lookup op [("+",(+)), ("-",(-)), ("*",(*)), ("/",(/))]
 simplify e = do
-    dag:parent <- get
+    dag:_ <- get
     if varies dag $ fArgs e
       then hashcons e
       else liftBlock $ simplify e
@@ -225,11 +244,14 @@ apply3 f x y z = expr $ do
 type AAI r = AA.AbstractArray (Expr Integer) (Expr r)
 
 -- External references captured by this closure
+capture :: Num i => AA.AbstractArray i (Expr t) -> [Id]
 capture ar = externRefs adag
   where dim = length $ AA.shape ar
         dummy = replicate dim 0
         (_,adag:_) = runExpr $ AA.apply ar dummy
 
+makeArray :: ExprType i => AA.AbstractArray (Expr i) (Expr t)
+                        -> [AA.Interval NodeRef] -> State Block NodeRef
 makeArray ar sh = do
     block <- get
     let dag = head block
@@ -242,14 +264,16 @@ makeArray ar sh = do
     hashcons $ Array depth sh vdag ret (ArrayT Nothing sh $ typeDExpr e)
 
 -- constant floating
+floatArray :: (Num i, ExprType i) => AA.AbstractArray (Expr i) (Expr t)
+                                  -> State Block NodeRef
 floatArray ar = do
     dag:_ <- get
     sh <- sequence . flip map (AA.shape ar) $ \interval -> do
-        i <- fromExpr $ AA.lowerBound interval
-        j <- fromExpr $ AA.upperBound interval
-        return $ AA.Interval i j
-    if varies dag (map AA.lowerBound sh) ||
-       varies dag (map AA.upperBound sh) ||
+        i <- fromExpr $ fst interval
+        j <- fromExpr $ snd interval
+        return (i,j)
+    if varies dag (map fst sh) ||
+       varies dag (map snd sh) ||
        (not . null $ inputs dag `intersect` capture ar)
       then makeArray ar sh
       else liftBlock $ floatArray ar
@@ -359,7 +383,7 @@ instance (ExprType e) => LinearOperator (Expr [[e]])
     m #> v = expr $ do
         i <- fromExpr $ asMatrix m
         j <- fromExpr $ asVector v
-        (ArrayT _ [r,c] t) <- typeRef i
+        (ArrayT _ [r,_] t) <- typeRef i
         simplify $ Apply "#>" [i,j] (ArrayT (Just "vector") [r] t)
 
 instance (ExprType e) => SquareMatrix (Expr [[e]]) where
@@ -394,3 +418,40 @@ instance (Real e, ExprType e) => IsList (Expr [e]) where
     type Item (Expr [e]) = e
     fromList = expr . return . Const . Vector . map toRational
     toList = error "not implemented"
+
+-- TODO: rest of instance methods
+instance Num ConstVal where
+    (Scalar a) + (Scalar b) = Scalar (a + b)
+    (Scalar a) + (Approx b) = Approx (fromRational a + b)
+    (Approx a) + (Scalar b) = Approx (a + fromRational b)
+instance Fractional ConstVal
+instance Floating ConstVal where
+    exp (Approx a) = Approx (exp a)
+    pi = Approx pi
+
+instance Ix.Ix ConstVal where
+    range (Scalar a, Scalar b)
+      | denominator a == 1 && denominator b == 1
+        = Scalar . fromInteger <$> Ix.range (numerator a, numerator b)
+    range _ = error "not indexable"
+    inRange (Scalar a, Scalar b) (Scalar c)
+      | denominator a == 1 && denominator b == 1 && denominator c == 1
+        = Ix.inRange (numerator a, numerator b) (numerator c)
+    inRange _ _ = error "not indexable"
+    index (Scalar a, Scalar b) (Scalar c)
+      | denominator a == 1 && denominator b == 1 && denominator c == 1
+        = Ix.index (numerator a, numerator b) (numerator c)
+    index _ _ = error "not indexable"
+
+class ExprTuple t where
+    unify :: t -> t -> [(DExpr,DExpr)]
+
+instance ExprTuple (Expr a) where
+    unify a x = [(erase a, erase x)]
+instance ExprTuple (Expr a, Expr b) where
+    unify (a,b) (x,y) = [(erase a, erase x)
+                        ,(erase b, erase y)]
+instance ExprTuple (Expr a, Expr b, Expr c) where
+    unify (a,b,c) (x,y,z) = [(erase a, erase x)
+                            ,(erase b, erase y)
+                            ,(erase c, erase z)]

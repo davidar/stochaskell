@@ -2,18 +2,19 @@
              FlexibleContexts, TypeFamilies, MultiParamTypeClasses #-}
 module Data.Program where
 
-import Control.Applicative
 import Control.Monad.Guard
 import Control.Monad.State
 import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
-import Data.Expression (R,ExprType,Expr,DExpr,fromExpr,fromDExpr,typeDExpr)
+import Data.Expression (R,ExprType,Expr,fromExpr,typeDExpr)
 import qualified Data.Expression as Expr
-import Data.List
+import Data.Expression.Eval
+import Data.Ix
+import Data.Maybe
+import qualified Data.Number.LogFloat as LF
+import Data.Random.Distribution (logPdf)
 import Data.Random.Distribution.Abstract
 import Data.Random.Distribution.Normal (Normal(..))
-import Data.Ratio
-import Data.String
 
 
 ------------------------------------------------------------------------------
@@ -36,17 +37,20 @@ data PBlock = PBlock { definitions :: Expr.Block
                      , constraints :: [(Expr.NodeRef, [Rational])]
                      }
             deriving (Eq)
+emptyPBlock :: PBlock
 emptyPBlock = PBlock Expr.emptyBlock [] []
 
 -- lift into Expr.Block
-liftExprBlock state = do
+liftExprBlock :: MonadState PBlock m => State Expr.Block b -> m b
+liftExprBlock s = do
     PBlock block rhs given <- get
-    let (ret, block') = runState state block
+    let (ret, block') = runState s block
     put $ PBlock block' rhs given
     return ret
 
 data Prog t = Prog { fromProg :: State PBlock t }
 instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
+runProg :: Prog a -> (a, PBlock)
 runProg p = runState (fromProg p) emptyPBlock
 
 type ProgE t = Prog (Expr t)
@@ -55,6 +59,8 @@ fromProgE p = do
     e <- fromProg p
     j <- liftExprBlock $ fromExpr e
     return (j, typeDExpr $ Expr.erase e)
+runProgE :: ProgE t -> ((Expr.NodeRef, Expr.Type), PBlock)
+runProgE p = runState (fromProgE p) emptyPBlock
 
 instance Functor Prog where
     fmap = liftM
@@ -72,6 +78,7 @@ instance Monad Prog where
 -- PRIMITIVE DISTRIBUTIONS                                                  --
 ------------------------------------------------------------------------------
 
+dist :: ExprType t => State Expr.Block PNode -> ProgE t
 dist s = Prog $ do
     d <- liftExprBlock s
     PBlock block rhs given <- get
@@ -93,21 +100,23 @@ instance Distribution Normal (Expr R) Prog (Expr R) where
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist (Expr.Id Expr.Builtin "normal") [i,j] Expr.RealT
+    sample StdNormal = sample (Normal 0 1)
 
 
 ------------------------------------------------------------------------------
 -- LOOPS                                                                    --
 ------------------------------------------------------------------------------
 
-makeLoop shape body = do
+makeLoop :: [Interval (Expr i)] -> ProgE t -> State PBlock PNode
+makeLoop shp body = do
     (r,t) <- fromProgE body
     sh <- liftExprBlock . Expr.liftBlock $ sequence shape'
     block <- get
     return $ Loop sh block r (Expr.ArrayT Nothing sh t)
-  where shape' = flip map shape $ \interval -> do
-            i <- fromExpr $ lowerBound interval
-            j <- fromExpr $ upperBound interval
-            return $ Interval i j
+  where shape' = flip map shp $ \(a,b) -> do
+            i <- fromExpr a
+            j <- fromExpr b
+            return (i,j)
 
 instance forall r f. (ExprType r, ExprType f)
     => Joint Prog (Expr Integer) (Expr r) (Expr f) where
@@ -142,3 +151,40 @@ instance MonadGuard Prog where
                 lookup i $ Expr.nodes dag
               dag' = dag { Expr.bimap = Bimap.deleteR i (Expr.bimap dag) }
           put $ PBlock (dag':dags) dists ((j,xs):given)
+
+
+------------------------------------------------------------------------------
+-- PROBABILITY DENSITIES                                                    --
+------------------------------------------------------------------------------
+
+density :: (Expr.ExprTuple t) => Prog t -> t -> LF.LogFloat
+density prog vals = flip densityPBlock pb $ do
+    (d,e) <- Expr.unify rets vals
+    let (Expr.External i _, _) = Expr.runDExpr d
+        v = evalD [] e
+    return (i,v)
+  where (rets, pb) = runProg prog
+
+densityPBlock :: Env -> PBlock -> LF.LogFloat
+densityPBlock env (PBlock block refs _) = LF.product $ do
+    (i,d) <- zip [0..] $ reverse refs
+    let scope = Expr.Volatile . Expr.dagLevel $ head block
+        ident = Expr.Id scope (show i)
+        val = error "unspecified parameter" `fromMaybe` lookup ident env
+    return $ densityPNode env block d val
+
+densityPNode :: Env -> Expr.Block -> PNode -> Expr.ConstVal -> LF.LogFloat
+densityPNode env block (Dist (Expr.Id Expr.Builtin "normal") [m,s] _) x =
+    LF.logToLogFloat $ logPdf (Normal m' s') (Expr.toR x)
+  where m' = Expr.toR $ evalNodeRef env block m
+        s' = Expr.toR $ evalNodeRef env block s
+densityPNode _ _ Dist{} _ = error "unrecognised distribution"
+densityPNode env block (Loop shp body (Expr.External ident _) _) (Expr.Vector xs) = LF.product $ do
+    let (as,bs) = unzip shp
+        as' = evalNodeRef env block <$> as
+        bs' = evalNodeRef env block <$> bs
+    (i,x) <- zip (range (as',bs')) xs
+    let inps = Expr.inputs $ head block
+        env' = (ident, Expr.Scalar x) : (zip inps i ++ env)
+    return $ densityPBlock env' body
+densityPNode _ _ Loop{} _ = error "unable to determine density of array"
