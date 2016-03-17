@@ -18,6 +18,7 @@ library
   exposed-modules:     Control.Monad.Guard
                      , Data.Bool.Num
                      , Data.Expression
+                     , Data.Expression.Const
                      , Data.Expression.Eval
                      , Data.Program
                      , Data.Array.Abstract

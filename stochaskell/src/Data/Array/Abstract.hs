@@ -10,8 +10,13 @@ import GHC.Exts
 import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra.Data as LAD
 
-asList :: (IsList l, IsList l', Item l ~ Item l') => l -> l'
-asList = fromList . toList
+list :: (IsList l, IsList l', Item l ~ Item l') => l -> l'
+list = fromList . toList
+
+zipWithA :: (Ix i) => (a -> b -> c) -> A.Array i a -> A.Array i b -> A.Array i c
+zipWithA f a b | A.bounds a == A.bounds b =
+                 A.listArray (A.bounds a) $ zipWith f (A.elems a) (A.elems b)
+               | otherwise = error "arrays not same shape"
 
 instance (Ix i) => Ix [i] where
   range (x:xs,y:ys) = [ z:zs | z <- range (x,y), zs <- range (xs,ys) ]
@@ -31,14 +36,13 @@ type Interval i = (i,i)
 cardinality :: (Num a) => Interval a -> a
 cardinality (a,b) = b - a + 1
 
-data AbstractArray i e = AArr { shape :: [Interval i]
-                              , apply :: [i] -> e
-                              }
+data AbstractArray i e = AArr [Interval i] ([i] -> e)
+apply :: AbstractArray i e -> [i] -> e
+apply = (!) -- TODO
 
 toArray :: (Ix i) => AbstractArray i e -> A.Array [i] e
-toArray a = A.array bounds assocs
-  where bounds = unzip (shape a)
-        assocs = [ (i, apply a i) | i <- range bounds ]
+toArray a = A.array (bounds a) assocs
+  where assocs = [ (i, apply a i) | i <- range (bounds a) ]
 
 fromArray :: (Ix i) => A.Array [i] e -> AbstractArray i e
 fromArray a = AArr sh $ (A.!) a
@@ -71,8 +75,21 @@ a...b = AArr [(a,b)] f
         f _ = error "shape mismatch"
 
 infixl 9 !
-class Vector v i e | v -> i e, i e -> v where
-    (!) :: v -> i -> e
+class Indexable a i e | a -> i e where
+    (!) :: a -> i -> e
+    bounds :: a -> Interval i
+shape :: (Indexable a [i] e) => a -> [Interval i]
+shape x = uncurry zip . bounds $ x
+
+instance Indexable (AbstractArray i e) [i] e where
+    (AArr _ f) ! i = f i
+    bounds (AArr s _) = unzip s
+
+instance (Ix i) => Indexable (A.Array i e) i e where
+    (!) = (A.!)
+    bounds = A.bounds
+
+class (Indexable v i e) => Vector v i e | v -> i e, i e -> v where
     vector :: AbstractArray i e -> v
 
 data ShapedVector t = ShVec (Interval Integer) (LAD.Vector t)
@@ -86,29 +103,33 @@ instance (Num (LAD.Vector t)) => Num (ShapedVector t) where
     (ShVec s u) + (ShVec z v) | s == z = ShVec s (u + v)
     -- TODO ...
 
+instance (Storable t) => Indexable (ShapedVector t) Integer t where
+    (ShVec sh v) ! i = LAD.toList v !! index sh i
+    bounds (ShVec sh _) = sh
 instance (Storable t) => Vector (ShapedVector t) Integer t where
     vector a = ShVec (head $ shape a) . LAD.fromList . A.elems $ toArray a
-    (ShVec sh v) ! i = LAD.toList v !! index sh i
 
 class Matrix m i e | m -> i e, i e -> m where
     matrix :: AbstractArray i e -> m
 
-instance Matrix (LAD.Matrix Double) Integer Double where
-    matrix a = LAD.matrix ncol xs
+data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
+instance Matrix (ShapedMatrix Double) Integer Double where
+    matrix a = ShMat r c $ LAD.matrix ncol xs
       where ncol = fromInteger . cardinality $ shape a !! 1
             xs = A.elems $ toArray a
+            r:c:_ = shape a
 
 class LinearOperator m u v | m -> u v where
     (#>) :: m -> u -> v
 
-instance LinearOperator (LAD.Matrix Double) (ShapedVector Double) (ShapedVector Double) where
-    m #> (ShVec sh v) = ShVec sh . head . LAD.toColumns $ (LA.<>) m (LAD.asColumn v)
+instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) (ShapedVector Double) where
+    (ShMat _ _ m) #> (ShVec sh v) = ShVec sh . head . LAD.toColumns $ (LA.<>) m (LAD.asColumn v)
 
 class SquareMatrix m where
     chol :: m -> m
 
-instance SquareMatrix (LAD.Matrix Double) where
-    chol = LA.tr . LA.chol . LA.trustSym
+instance SquareMatrix (ShapedMatrix Double) where
+    chol (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.trustSym) m
 
 class Joint m i r f | m -> i where
     joint :: (AbstractArray i r -> f) -> AbstractArray i (m r) -> m f

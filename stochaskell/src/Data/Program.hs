@@ -6,8 +6,9 @@ import Control.Monad.Guard
 import Control.Monad.State
 import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
-import Data.Expression (R,ExprType,Expr,fromExpr,typeDExpr)
+import Data.Expression (ExprType,Expr,fromExpr,typeDExpr)
 import qualified Data.Expression as Expr
+import Data.Expression.Const
 import Data.Expression.Eval
 import Data.Ix
 import Data.Maybe
@@ -15,6 +16,7 @@ import qualified Data.Number.LogFloat as LF
 import Data.Random.Distribution (logPdf)
 import Data.Random.Distribution.Abstract
 import Data.Random.Distribution.Normal (Normal(..))
+import GHC.Exts
 
 
 ------------------------------------------------------------------------------
@@ -34,7 +36,7 @@ data PNode = Dist { dName :: Expr.Id
 
 data PBlock = PBlock { definitions :: Expr.Block
                      , actions     :: [PNode]
-                     , constraints :: [(Expr.NodeRef, [Rational])]
+                     , constraints :: [(Expr.NodeRef, ConstVal)]
                      }
             deriving (Eq)
 emptyPBlock :: PBlock
@@ -85,21 +87,21 @@ dist s = Prog $ do
     put $ PBlock block (d:rhs) given
     let depth = Expr.dagLevel $ head block
         k = length rhs
-        name = Expr.Id (Expr.Volatile depth) (show k)
-        v = Expr.expr . return $ Expr.External name (typePNode d)
+        name = Expr.Volatile depth k
+        v = Expr.expr . return $ Expr.Var name (typePNode d)
     return v
 
 instance Distribution BernoulliLogit (Expr R) Prog (Expr Bool) where
     sample (BernoulliLogit l) = dist $ do
         i <- fromExpr l
-        return $ Dist (Expr.Id Expr.Builtin "bernoulliLogit") [i] t
+        return $ Dist (Expr.Builtin "bernoulliLogit") [i] t
       where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
 
 instance Distribution Normal (Expr R) Prog (Expr R) where
     sample (Normal m s) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
-        return $ Dist (Expr.Id Expr.Builtin "normal") [i,j] Expr.RealT
+        return $ Dist (Expr.Builtin "normal") [i,j] Expr.RealT
     sample StdNormal = sample (Normal 0 1)
 
 
@@ -124,12 +126,12 @@ instance forall r f. (ExprType r, ExprType f)
     PBlock block dists given <- get
     let ashape = shape ar
         depth = Expr.dagLevel $ head block
-        ids = [ Expr.Id (Expr.Dummy $ depth + 1) (show i) | i <- [1..length ashape] ]
-        p = apply ar [Expr.expr . return $ Expr.External i Expr.IntT | i <- ids]
+        ids = [ Expr.Dummy (depth + 1) i | i <- [1..length ashape] ]
+        p = apply ar [Expr.expr . return $ Expr.Var i Expr.IntT | i <- ids]
         loop = evalState (makeLoop ashape p) $
             PBlock (Expr.DAG (depth + 1) ids Bimap.empty : block) [] []
-        name = Expr.Id (Expr.Volatile depth) $ show (length dists)
-        ref = Expr.expr . return $ Expr.External name t :: Expr f
+        name = Expr.Volatile depth (length dists)
+        ref = Expr.expr . return $ Expr.Var name t :: Expr f
         t = typePNode loop
     put $ let (PBlock (_:block') _ _) = lBody loop
           in PBlock block' (loop:dists) given
@@ -143,14 +145,14 @@ instance forall r f. (ExprType r, ExprType f)
 type instance ConditionOf (Prog ()) = Expr Bool
 instance MonadGuard Prog where
     guard cond = Prog $ do -- TODO: weaker assumptions
-        (Expr.Internal 0 i) <- liftExprBlock (fromExpr cond)
+        (Expr.Var (Expr.Internal 0 i) _) <- liftExprBlock (fromExpr cond)
         (PBlock (dag:dags) dists given) <- get
         if i /= length (Expr.nodes dag) - 1 then undefined else do
-          let (Just (Expr.Apply (Expr.Id Expr.Builtin "==")
-                                [j, Expr.Const (Expr.Vector xs)] _)) =
+          let (Just (Expr.Apply (Expr.Builtin "==")
+                                [j, Expr.Const a] _)) =
                 lookup i $ Expr.nodes dag
               dag' = dag { Expr.bimap = Bimap.deleteR i (Expr.bimap dag) }
-          put $ PBlock (dag':dags) dists ((j,xs):given)
+          put $ PBlock (dag':dags) dists ((j,a):given)
 
 
 ------------------------------------------------------------------------------
@@ -160,7 +162,7 @@ instance MonadGuard Prog where
 density :: (Expr.ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = flip densityPBlock pb $ do
     (d,e) <- Expr.unify rets vals
-    let (Expr.External i _, _) = Expr.runDExpr d
+    let (Expr.Var i _, _) = Expr.runDExpr d
         v = evalD [] e
     return (i,v)
   where (rets, pb) = runProg prog
@@ -168,23 +170,32 @@ density prog vals = flip densityPBlock pb $ do
 densityPBlock :: Env -> PBlock -> LF.LogFloat
 densityPBlock env (PBlock block refs _) = LF.product $ do
     (i,d) <- zip [0..] $ reverse refs
-    let scope = Expr.Volatile . Expr.dagLevel $ head block
-        ident = Expr.Id scope (show i)
-        val = error "unspecified parameter" `fromMaybe` lookup ident env
+    let ident = Expr.Volatile (Expr.dagLevel $ head block) i
+        val = flip fromMaybe (lookup ident env) $
+          error $ "parameter "++ show ident ++
+                  " not specified in env "++ show (map fst env)
     return $ densityPNode env block d val
 
-densityPNode :: Env -> Expr.Block -> PNode -> Expr.ConstVal -> LF.LogFloat
-densityPNode env block (Dist (Expr.Id Expr.Builtin "normal") [m,s] _) x =
-    LF.logToLogFloat $ logPdf (Normal m' s') (Expr.toR x)
-  where m' = Expr.toR $ evalNodeRef env block m
-        s' = Expr.toR $ evalNodeRef env block s
+densityPNode :: Env -> Expr.Block -> PNode -> ConstVal -> LF.LogFloat
+densityPNode env block (Dist (Expr.Builtin "normal") [m,s] _) x =
+    LF.logToLogFloat $ logPdf (Normal m' s') (toR x)
+  where m' = toR $ evalNodeRef env block m
+        s' = toR $ evalNodeRef env block s
+densityPNode env block (Dist (Expr.Builtin "bernoulliLogit") [l] _) a
+    | x == 1 = LF.logFloat p
+    | x == 0 = LF.logFloat (1 - p)
+    | otherwise = LF.logFloat 0
+  where x = toRational a
+        l' = toR $ evalNodeRef env block l
+        p = 1 / (1 + exp (-l'))
 densityPNode _ _ Dist{} _ = error "unrecognised distribution"
-densityPNode env block (Loop shp body (Expr.External ident _) _) (Expr.Vector xs) = LF.product $ do
+densityPNode env block (Loop shp body (Expr.Var ident _) _) a = LF.product $ do
     let (as,bs) = unzip shp
         as' = evalNodeRef env block <$> as
         bs' = evalNodeRef env block <$> bs
+        xs = toList a
     (i,x) <- zip (range (as',bs')) xs
     let inps = Expr.inputs $ head block
-        env' = (ident, Expr.Scalar x) : (zip inps i ++ env)
+        env' = (ident, fromRational x) : (zip inps i ++ env)
     return $ densityPBlock env' body
 densityPNode _ _ Loop{} _ = error "unable to determine density of array"

@@ -4,11 +4,10 @@
 module Data.Expression where
 
 import qualified Data.Array as A
-import Data.Array.Abstract (LinearOperator,SquareMatrix)
 import qualified Data.Array.Abstract as AA
 import qualified Data.Bimap as Bimap
 import Data.Boolean
-import qualified Data.Ix as Ix
+import Data.Expression.Const
 import Data.List
 import Data.Maybe
 import Data.Ratio
@@ -20,9 +19,6 @@ import GHC.Exts
 instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
     m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
 
-type Nat = Int
-type R = Double
-
 
 ------------------------------------------------------------------------------
 -- EXPRESSIONS                                                              --
@@ -31,25 +27,13 @@ type R = Double
 type Pointer = Nat
 type Level = Nat
 
-data Scope = Builtin
-           | Dummy Level
-           | Volatile Level
-           deriving (Eq, Ord, Show)
-data Id = Id Scope String
+data Id = Builtin String
+        | Dummy Level Pointer
+        | Volatile Level Pointer
+        | Internal Level Pointer
         deriving (Eq, Ord, Show)
 
-data ConstVal = Scalar Rational
-              | Approx Double
-              | Vector [Rational]
-              | CArray (A.Array [ConstVal] ConstVal)
-              deriving (Eq, Ord, Show)
-toR :: ConstVal -> R
-toR (Scalar x) = fromRational x
-toR (Approx x) = x
-toR _ = error "can't convert non-scalar to real"
-
-data NodeRef = Internal Level Pointer
-             | External Id Type
+data NodeRef = Var Id Type
              | Const ConstVal
              | Index NodeRef [NodeRef]
              deriving (Eq, Ord, Show)
@@ -115,8 +99,7 @@ class ExprType t where
 instance ExprType Integer where
     typeOf = TypeIs IntT
 instance ExprType Bool where
-    typeOf = TypeIs $
-        SubrangeT IntT (Just . Const $ Scalar 0) (Just . Const $ Scalar 1)
+    typeOf = TypeIs $ SubrangeT IntT (Just $ Const 0) (Just $ Const 1)
 instance ExprType R where
     typeOf = TypeIs RealT
 instance forall b. (ExprType b) => ExprType [b] where
@@ -126,20 +109,26 @@ instance forall b. (ExprType b) => ExprType [b] where
             r              -> ArrayT Nothing (error "undefined array bounds") r
       where (TypeIs t) = typeOf :: TypeOf b
 
-typeRef :: NodeRef -> State [DAG] Type
-typeRef ref@(Internal level i) = do
-    dag:_ <- get
-    if level == dagLevel dag
-        then return . typeNode . fromJust . Bimap.lookupR i $ bimap dag
-        else liftBlock $ typeRef ref
-typeRef (External _ t) = return t
-typeRef (Const (Scalar _)) = return RealT
-typeRef (Const (Approx _)) = return RealT
-typeRef (Const (Vector v)) = return $
-    ArrayT Nothing [(Const $ Scalar 1, Const . Scalar . fromIntegral $ length v)] RealT
-typeRef (Index a _) = do
-    (ArrayT _ _ t) <- typeRef a
-    return t
+internal :: Level -> Pointer -> State Block NodeRef
+internal level i = do
+    t <- getType
+    return $ Var (Internal level i) t
+  where getType = do
+          dag:_ <- get
+          if level == dagLevel dag
+            then return . typeNode . fromJust . Bimap.lookupR i $ bimap dag
+            else liftBlock getType
+
+typeRef :: NodeRef -> Type
+typeRef (Var _ t) = t
+typeRef (Const (Exact  a)) = typeArray (A.bounds a) RealT
+typeRef (Const (Approx a)) = typeArray (A.bounds a) RealT
+typeRef (Index a _) = let (ArrayT _ _ t) = typeRef a in t
+
+typeArray :: ([Integer],[Integer]) -> Type -> Type
+typeArray ([],[]) = id
+typeArray (lo,hi) = ArrayT Nothing $ zip (f lo) (f hi)
+  where f = map $ Const . fromInteger
 
 
 ------------------------------------------------------------------------------
@@ -151,12 +140,11 @@ hashcons :: Node -> State Block NodeRef
 hashcons e = do
     DAG level inp vdag : parent <- get
     case Bimap.lookup e vdag of
-        Just k ->
-            return $ Internal level k
+        Just k -> internal level k
         Nothing -> do
             let k = Bimap.size vdag
             put $ DAG level inp (Bimap.insert e k vdag) : parent
-            return $ Internal level k
+            internal level k
 
 -- perform an action in the enclosing block
 liftBlock :: MonadState [a] m => State [a] b -> m b
@@ -169,8 +157,8 @@ liftBlock s = do
 -- does a list of expressions depend on the inputs to this block?
 varies :: DAG -> [NodeRef] -> Bool
 varies (DAG level inp _) xs = level == 0 || any p xs
-  where p (Internal l _) = l == level
-        p (External s _) = s `elem` inp
+  where p (Var (Internal l _) _) = l == level
+        p (Var s _) = s `elem` inp
         p (Const _) = False
         p (Index a is) = p a || any p is
 
@@ -182,7 +170,8 @@ externRefs (DAG _ _ d) = go d
         f (Array _ sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
                                 ++ mapMaybe (extern . snd) sh ++ go defs'
-        extern (External i _) = Just i
+        extern (Var (Internal _ _) _) = Nothing
+        extern (Var i _) = Just i
         extern _ = Nothing
         -- TODO Index
 
@@ -193,9 +182,7 @@ externRefs (DAG _ _ d) = go d
 
 -- simplify and float constants
 simplify :: Node -> State Block NodeRef
-simplify (Apply op [Const (Scalar x), Const (Scalar y)] _) | isJust f =
-    return . Const . Scalar $ fromJust f x y
-  where f = lookup op [("+",(+)), ("-",(-)), ("*",(*)), ("/",(/))]
+-- TODO: eval const exprs
 simplify e = do
     dag:_ <- get
     if varies dag $ fArgs e
@@ -222,9 +209,10 @@ applyClosed2 :: (ExprType a) => Id -> Expr a -> Expr a -> Expr a
 applyClosed2 f x y = expr $ do
     i <- fromExpr x
     j <- fromExpr y
-    s <- typeRef i
-    t <- typeRef j
-    if s /= t then error $ "type mismatch: "++ show s ++" /= "++ show t
+    let s = typeRef i
+        t = typeRef j
+    if s /= t then error $ "type mismatch: "++ show i ++" :: "++ show s ++
+                                      " /= "++ show j ++" :: "++ show t
               else simplify $ Apply f [i,j] t
 
 apply3 :: forall a b c r. (ExprType r) => Id -> Expr a -> Expr b
@@ -256,8 +244,8 @@ makeArray ar sh = do
     block <- get
     let dag = head block
         depth = dagLevel dag
-        ids = [ Id (Dummy $ depth + 1) (show i) | i <- [1..length sh] ]
-        e = erase $ AA.apply ar [ expr . return $ External i IntT | i <- ids ]
+        ids = [ Dummy (depth + 1) i | i <- [1..length sh] ]
+        e = erase $ AA.apply ar [ expr . return $ Var i IntT | i <- ids ]
         (ret, vdag:newBlock) = runState (fromDExpr e) $
             DAG (depth + 1) ids Bimap.empty : block
     put newBlock
@@ -297,7 +285,7 @@ index a es = expr $ do
 ------------------------------------------------------------------------------
 
 fromRational' :: (ExprType t) => Rational -> Expr t
-fromRational' = expr . return . Const . Scalar
+fromRational' = expr . return . Const . fromRational
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
@@ -344,53 +332,48 @@ instance (Floating t, ExprType t) => Floating (Expr t) where
     atanh = apply1 "atanh"
 
 instance IsString Id where
-    fromString = Id Builtin
+    fromString = Builtin
 
 instance forall t. (ExprType t) => IsString (Expr t) where
-    fromString s = expr . return $ External (Id Builtin s) t
+    fromString s = expr . return $ Var (Builtin s) t
       where (TypeIs t) = typeOf :: TypeOf t
 
-instance (ExprType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
+instance (ExprType e) => AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = expr $ do
         f <- fromExpr a
         j <- fromExpr e
         return $ case f of
             (Index g js) -> Index g (j:js)
             _            -> Index f [j]
+instance (ExprType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
     vector = asVector . array 1
 instance (ExprType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
     matrix = asMatrix . array 2
 
-isConstVector :: NodeRef -> Bool
-isConstVector (Const (Vector _)) = True
-isConstVector _ = False
-
 asVector :: (ExprType e) => Expr [e] -> Expr [e]
 asVector v = expr $ do
     i <- fromExpr v
-    if isConstVector i then return i else do
-      (ArrayT _ [n] t) <- typeRef i
-      simplify $ Apply "asVector" [i] (ArrayT (Just "vector") [n] t)
+    let (ArrayT _ [n] t) = typeRef i
+    simplify $ Apply "asVector" [i] (ArrayT (Just "vector") [n] t)
 
 asMatrix :: (ExprType e) => Expr [[e]] -> Expr [[e]]
 asMatrix m = expr $ do
     i <- fromExpr m
-    (ArrayT _ [r,c] t) <- typeRef i
+    let (ArrayT _ [r,c] t) = typeRef i
     simplify $ Apply "asMatrix" [i] (ArrayT (Just "matrix") [r,c] t)
 
-instance (ExprType e) => LinearOperator (Expr [[e]])
-                                        (Expr [e]) (Expr [e]) where
+instance (ExprType e) => AA.LinearOperator (Expr [[e]])
+                                           (Expr [e]) (Expr [e]) where
     m #> v = expr $ do
         i <- fromExpr $ asMatrix m
         j <- fromExpr $ asVector v
-        (ArrayT _ [r,_] t) <- typeRef i
+        let (ArrayT _ [r,_] t) = typeRef i
         simplify $ Apply "#>" [i,j] (ArrayT (Just "vector") [r] t)
 
-instance (ExprType e) => SquareMatrix (Expr [[e]]) where
+instance (ExprType e) => AA.SquareMatrix (Expr [[e]]) where
     chol m = expr $ do
         i <- fromExpr $ asMatrix m
-        t <- typeRef i
-        simplify $ Apply "chol" [i] t
+        simplify $ Apply "chol" [i] (typeRef i)
 
 instance Boolean (Expr Bool) where
     true  = "true"
@@ -416,32 +399,8 @@ instance (ExprType t) => OrdB (Expr t) where
 
 instance (Real e, ExprType e) => IsList (Expr [e]) where
     type Item (Expr [e]) = e
-    fromList = expr . return . Const . Vector . map toRational
+    fromList = expr . return . Const . fromList . map toRational
     toList = error "not implemented"
-
--- TODO: rest of instance methods
-instance Num ConstVal where
-    (Scalar a) + (Scalar b) = Scalar (a + b)
-    (Scalar a) + (Approx b) = Approx (fromRational a + b)
-    (Approx a) + (Scalar b) = Approx (a + fromRational b)
-instance Fractional ConstVal
-instance Floating ConstVal where
-    exp (Approx a) = Approx (exp a)
-    pi = Approx pi
-
-instance Ix.Ix ConstVal where
-    range (Scalar a, Scalar b)
-      | denominator a == 1 && denominator b == 1
-        = Scalar . fromInteger <$> Ix.range (numerator a, numerator b)
-    range _ = error "not indexable"
-    inRange (Scalar a, Scalar b) (Scalar c)
-      | denominator a == 1 && denominator b == 1 && denominator c == 1
-        = Ix.inRange (numerator a, numerator b) (numerator c)
-    inRange _ _ = error "not indexable"
-    index (Scalar a, Scalar b) (Scalar c)
-      | denominator a == 1 && denominator b == 1 && denominator c == 1
-        = Ix.index (numerator a, numerator b) (numerator c)
-    index _ _ = error "not indexable"
 
 class ExprTuple t where
     unify :: t -> t -> [(DExpr,DExpr)]
@@ -455,3 +414,21 @@ instance ExprTuple (Expr a, Expr b, Expr c) where
     unify (a,b,c) (x,y,z) = [(erase a, erase x)
                             ,(erase b, erase y)
                             ,(erase c, erase z)]
+instance ExprTuple (Expr a, Expr b, Expr c, Expr d) where
+    unify (a,b,c,d) (x,y,z,w) = [(erase a, erase x)
+                                ,(erase b, erase y)
+                                ,(erase c, erase z)
+                                ,(erase d, erase w)]
+instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
+    unify (a,b,c,d,e) (x,y,z,w,v) = [(erase a, erase x)
+                                    ,(erase b, erase y)
+                                    ,(erase c, erase z)
+                                    ,(erase d, erase w)
+                                    ,(erase e, erase v)]
+instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
+    unify (a,b,c,d,e,f) (x,y,z,w,v,u) = [(erase a, erase x)
+                                        ,(erase b, erase y)
+                                        ,(erase c, erase z)
+                                        ,(erase d, erase w)
+                                        ,(erase e, erase v)
+                                        ,(erase f, erase u)]

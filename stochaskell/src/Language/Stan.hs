@@ -1,14 +1,15 @@
 module Language.Stan where
 
 import Control.Applicative ()
-import Control.Monad.State
 import Data.Array.Abstract
 import Data.Expression
+import Data.Expression.Const
 import Data.List
 import Data.List.Split
 import Data.Maybe
 import Data.Program
 import Data.Ratio
+import GHC.Exts
 import System.IO.Temp
 import System.Process
 
@@ -38,19 +39,20 @@ forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
 ------------------------------------------------------------------------------
 
 stanId :: Id -> String
-stanId (Id Builtin s) = s
-stanId (Id (Dummy level) s) = "index_"++ show level ++"_"++ s
-stanId (Id (Volatile level) s) = "sample_"++ show level ++"_"++ s
+stanId (Builtin s) = s
+stanId (Dummy    level i) =  "index_"++ show level ++"_"++ show i
+stanId (Volatile level i) = "sample_"++ show level ++"_"++ show i
+stanId (Internal level i) =  "value_"++ show level ++"_"++ show i
 
 stanConstVal :: ConstVal -> String
-stanConstVal (Scalar c) =
+stanConstVal (Exact a) =
     if d == 1 then show n else show (fromRational c :: Double)
-  where n = numerator c
+  where c = toScalar a
+        n = numerator c
         d = denominator c
 
 stanNodeRef :: NodeRef -> String
-stanNodeRef (Internal level i) = "value_"++ show level ++"_"++ show i
-stanNodeRef (External s _) = stanId s
+stanNodeRef (Var s _) = stanId s
 stanNodeRef (Const c) = stanConstVal c
 stanNodeRef (Index f js) =
     stanNodeRef f ++"["++ stanNodeRef `commas` reverse js ++"]"
@@ -141,7 +143,7 @@ stanDAG dag = indent $
     extract (\name -> stanDecl name . typeNode) ++
     extract stanNode
   where extract f = unlines . flip map (nodes dag) $ \(i,n) ->
-                        let name = stanNodeRef $ Internal (dagLevel dag) i
+                        let name = stanId $ Internal (dagLevel dag) i
                         in f name n
 
 stanPBlock :: Label -> NodeRef -> PBlock -> String
@@ -149,8 +151,7 @@ stanPBlock rName rId (PBlock block refs _) =
     stanDAG (head block) ++ pdefs
   where pdefs = indent . unlines $ zipWith f [0..] (reverse refs)
         f i n = stanPNode (if cId == rId then rName else stanNodeRef cId) n
-          where cId = External (Id (Volatile . dagLevel $ head block)
-                                   (show i)) (typePNode n)
+          where cId = Var (Volatile (dagLevel $ head block) i) (typePNode n)
 
 
 ------------------------------------------------------------------------------
@@ -168,7 +169,7 @@ stanProgram (PBlock block refs given) =
     "transformed parameters {\n"++ stanDAG (head block) ++"\n}\n"++
     "model {\n"++ printRefs (\i n -> stanPNode (stanNodeRef i) n) ++"\n}\n"
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
-          where g i n = f (External (Id (Volatile 0) (show i)) (typePNode n)) n
+          where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
 runStan :: ProgE [R] -> IO [[R]]
 runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
@@ -182,7 +183,7 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     putStrLn "--- Sampling Stan model ---"
     let dat = unlines . flip map (constraints p) $ \(n,ar) ->
                 stanNodeRef n ++" <- c("++
-                  (stanNodeRef . Const . Scalar) `commas` ar ++")"
+                  (stanNodeRef . Const . fromRational) `commas` toList ar ++")"
     putStrLn dat
     writeFile (basename ++".data") dat
     system $ basename ++" sample data file="++ basename ++".data "++
