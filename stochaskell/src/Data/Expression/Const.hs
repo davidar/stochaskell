@@ -4,6 +4,7 @@ module Data.Expression.Const where
 
 import Data.Array hiding ((!),bounds)
 import Data.Array.Abstract
+import Data.Boolean
 import Data.Ratio
 import GHC.Exts
 import qualified Numeric.LinearAlgebra.Data as LAD
@@ -22,6 +23,9 @@ toR :: ConstVal -> R
 toR (Exact  a) = fromRational (toScalar a)
 toR (Approx a) = toScalar a
 
+approx (Exact a) = Approx (fromRational <$> a)
+approx a = a
+
 constUnOp :: (forall a. Fractional a => a -> a) -> ConstVal -> ConstVal
 constUnOp f (Exact  a) = Exact  (f <$> a)
 constUnOp f (Approx a) = Approx (f <$> a)
@@ -34,10 +38,11 @@ constBinOp :: (forall a. Fractional a => a -> a -> a) -> ConstVal -> ConstVal ->
 constBinOp f (Exact  a) (Exact  b) = Exact  (zipWithA f a b)
 constBinOp f (Exact  a) (Approx b) = Approx (zipWithA f (fromRational <$> a) b)
 constBinOp f (Approx a) (Exact  b) = Approx (zipWithA f a (fromRational <$> b))
+constBinOp f (Approx a) (Approx b) = Approx (zipWithA f a b)
 
 toScalar :: (Ix t) => Array [t] r -> r
 toScalar a | bounds a == ([],[]) = a![]
-       | otherwise = error "can't convert non-scalar to real"
+           | otherwise = error "can't convert non-scalar to real"
 
 fromScalar :: (Ix t) => e -> Array [t] e
 fromScalar x = array ([],[]) [([], x)]
@@ -55,7 +60,7 @@ toMatrix a = ShMat r c $ LAD.matrix ncol xs
         xs = fromRational <$> toList a
         r:c:_ = shape a
 fromMatrix :: ShapedMatrix R -> ConstVal
-fromMatrix m = error "TODO: fromMatrix"
+fromMatrix (ShMat (r,r') (c,c') m) = Approx $ listArray ([r,c],[r',c']) (toList $ LAD.flatten m)
 
 instance Num ConstVal where
     (+) = constBinOp (+)
@@ -121,3 +126,22 @@ instance LinearOperator ConstVal ConstVal ConstVal where
 
 instance SquareMatrix ConstVal where
     chol = fromMatrix . chol . toMatrix
+
+toBool b = if notB b == false then True else False
+fromBool True  = true
+fromBool False = false
+
+instance Boolean ConstVal where
+    true  = Exact $ fromScalar 1
+    false = Exact $ fromScalar 0
+    notB (Exact a) = if toScalar a == 0 then true else false
+    a &&* b = fromBool $ toBool a && toBool b
+    a ||* b = fromBool $ toBool a && toBool b
+
+type instance BooleanOf ConstVal = ConstVal
+
+instance IfB ConstVal where
+    ifB a b c = if toBool a then b else c
+
+instance EqB ConstVal where
+    a ==* b = fromBool $ a == b

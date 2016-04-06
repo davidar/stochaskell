@@ -5,6 +5,7 @@ module Data.Expression where
 
 import qualified Data.Array as A
 import qualified Data.Array.Abstract as AA
+import Data.Array.Abstract ((!))
 import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Expression.Const
@@ -16,8 +17,22 @@ import Control.Applicative ()
 import Control.Monad.State
 import GHC.Exts
 
+
+------------------------------------------------------------------------------
+-- ORPHANS                                                                  --
+------------------------------------------------------------------------------
+
 instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
     m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
+
+instance (Num t) => Num [t] where
+    (+) = zipWith (+)
+    (-) = zipWith (-)
+    (*) = zipWith (*)
+    negate = map negate
+    abs    = map abs
+    signum = map signum
+    fromInteger x = [fromInteger x]
 
 
 ------------------------------------------------------------------------------
@@ -27,8 +42,7 @@ instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
 type Pointer = Nat
 type Level = Nat
 
-data Id = Builtin String
-        | Dummy Level Pointer
+data Id = Dummy Level Pointer
         | Volatile Level Pointer
         | Internal Level Pointer
         deriving (Eq, Ord, Show)
@@ -37,22 +51,21 @@ data NodeRef = Var Id Type
              | Const ConstVal
              | Index NodeRef [NodeRef]
              deriving (Eq, Ord, Show)
-data Node = Apply { fName :: Id
+data Node = Apply { fName :: String
                   , fArgs :: [NodeRef]
                   , typeNode :: Type
                   }
-          | Array { aLevel :: Level
-                  , aShape :: [AA.Interval NodeRef]
+          | Array { aShape :: [AA.Interval NodeRef]
                   , aDefs  :: DAG
                   , aHead  :: NodeRef
                   , typeNode :: Type
                   }
-          deriving (Eq, Ord, Show)
+          deriving (Eq, Ord)
 
 data DAG = DAG { dagLevel :: Level
                , inputs :: [Id]
                , bimap  :: Bimap.Bimap Node Pointer
-               } deriving (Eq, Ord, Show)
+               } deriving (Eq, Ord)
 emptyDAG :: DAG
 emptyDAG = DAG 0 [] Bimap.empty
 nodes :: DAG -> [(Pointer, Node)]
@@ -167,7 +180,7 @@ externRefs :: DAG -> [Id]
 externRefs (DAG _ _ d) = go d
   where go defs = concatMap (f . snd) $ Bimap.toAscListR defs
         f (Apply _ args _) = mapMaybe extern args
-        f (Array _ sh (DAG _ _ defs') r _) =
+        f (Array sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
                                 ++ mapMaybe (extern . snd) sh ++ go defs'
         extern (Var (Internal _ _) _) = Nothing
@@ -189,23 +202,23 @@ simplify e = do
       then hashcons e
       else liftBlock $ simplify e
 
-apply :: forall a r.    (ExprType r) => Id ->    [ Expr a ]    -> Expr r
+apply :: forall a r.    (ExprType r) => String ->    [ Expr a ]    -> Expr r
 apply f xs = expr $ do
     js <- mapM fromExpr xs
     simplify $ Apply f js t
   where (TypeIs t) = typeOf :: TypeOf r
 
-apply1 :: forall a r.   (ExprType r) => Id -> Expr a           -> Expr r
+apply1 :: forall a r.   (ExprType r) => String -> Expr a           -> Expr r
 apply1 f x = apply f [x]
 
-apply2 :: forall a b r. (ExprType r) => Id -> Expr a -> Expr b -> Expr r
+apply2 :: forall a b r. (ExprType r) => String -> Expr a -> Expr b -> Expr r
 apply2 f x y = expr $ do
     i <- fromExpr x
     j <- fromExpr y
     simplify $ Apply f [i,j] t
   where (TypeIs t) = typeOf :: TypeOf r
 
-applyClosed2 :: (ExprType a) => Id -> Expr a -> Expr a -> Expr a
+applyClosed2 :: (ExprType a) => String -> Expr a -> Expr a -> Expr a
 applyClosed2 f x y = expr $ do
     i <- fromExpr x
     j <- fromExpr y
@@ -215,7 +228,7 @@ applyClosed2 f x y = expr $ do
                                       " /= "++ show j ++" :: "++ show t
               else simplify $ Apply f [i,j] t
 
-apply3 :: forall a b c r. (ExprType r) => Id -> Expr a -> Expr b
+apply3 :: forall a b c r. (ExprType r) => String -> Expr a -> Expr b
                                                      -> Expr c -> Expr r
 apply3 f x y z = expr $ do
     i <- fromExpr x
@@ -242,14 +255,12 @@ makeArray :: ExprType i => AA.AbstractArray (Expr i) (Expr t)
                         -> [AA.Interval NodeRef] -> State Block NodeRef
 makeArray ar sh = do
     block <- get
-    let dag = head block
-        depth = dagLevel dag
-        ids = [ Dummy (depth + 1) i | i <- [1..length sh] ]
-        e = erase $ AA.apply ar [ expr . return $ Var i IntT | i <- ids ]
-        (ret, vdag:newBlock) = runState (fromDExpr e) $
-            DAG (depth + 1) ids Bimap.empty : block
-    put newBlock
-    hashcons $ Array depth sh vdag ret (ArrayT Nothing sh $ typeDExpr e)
+    let ids = [ Dummy (length block) i | i <- [1..length sh] ]
+        e = ar ! [ expr . return $ Var i IntT | i <- ids ]
+        (ret, dag:block') = runState (fromExpr e) $
+            DAG (length block) ids Bimap.empty : block
+    put block'
+    hashcons $ Array sh dag ret (ArrayT Nothing sh $ typeExpr e)
 
 -- constant floating
 floatArray :: (Num i, ExprType i) => AA.AbstractArray (Expr i) (Expr t)
@@ -287,15 +298,6 @@ index a es = expr $ do
 fromRational' :: (ExprType t) => Rational -> Expr t
 fromRational' = expr . return . Const . fromRational
 
-instance (Num t) => Num [t] where
-    (+) = zipWith (+)
-    (-) = zipWith (-)
-    (*) = zipWith (*)
-    negate = map negate
-    abs    = map abs
-    signum = map signum
-    fromInteger x = [fromInteger x]
-
 instance (Num t, ExprType t) => Num (Expr t) where
     (+) = applyClosed2 "+"
     (-) = applyClosed2 "-"
@@ -331,13 +333,6 @@ instance (Floating t, ExprType t) => Floating (Expr t) where
     acosh = apply1 "acosh"
     atanh = apply1 "atanh"
 
-instance IsString Id where
-    fromString = Builtin
-
-instance forall t. (ExprType t) => IsString (Expr t) where
-    fromString s = expr . return $ Var (Builtin s) t
-      where (TypeIs t) = typeOf :: TypeOf t
-
 instance (ExprType e) => AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = expr $ do
         f <- fromExpr a
@@ -345,6 +340,8 @@ instance (ExprType e) => AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
         return $ case f of
             (Index g js) -> Index g (j:js)
             _            -> Index f [j]
+    bounds a = (expr $ return lo, expr $ return hi)
+      where (ArrayT _ [(lo,hi)] _) = typeExpr a
 instance (ExprType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
     vector = asVector . array 1
 instance (ExprType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
@@ -376,8 +373,8 @@ instance (ExprType e) => AA.SquareMatrix (Expr [[e]]) where
         simplify $ Apply "chol" [i] (typeRef i)
 
 instance Boolean (Expr Bool) where
-    true  = "true"
-    false = "false"
+    true  = apply "true" []
+    false = apply "false" []
     notB  = apply1 "not"
     (&&*) = apply2 "&&"
     (||*) = apply2 "||"
@@ -432,3 +429,11 @@ instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
                                         ,(erase d, erase w)
                                         ,(erase e, erase v)
                                         ,(erase f, erase u)]
+
+instance Show Node where
+  show (Apply f js _) = show f ++ show js
+  show (Array sh dag ret _) =
+    "ARRAY "++ show (inputs dag) ++ show sh ++ show ret ++"\nWHERE {\n"++ show dag ++"}"
+instance Show DAG where
+  show dag = unlines $ map f (nodes dag)
+    where f (i,n) = show (Internal (dagLevel dag) i) ++" = "++ show n

@@ -39,7 +39,6 @@ forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
 ------------------------------------------------------------------------------
 
 stanId :: Id -> String
-stanId (Builtin s) = s
 stanId (Dummy    level i) =  "index_"++ show level ++"_"++ show i
 stanId (Volatile level i) = "sample_"++ show level ++"_"++ show i
 stanId (Internal level i) =  "value_"++ show level ++"_"++ show i
@@ -112,31 +111,23 @@ stanOperators =
 stanNode :: Label -> Node -> String
 stanNode name (Apply op [i,j] _) | s /= "" =
     name ++" <- "++ stanNodeRef i ++" "++ s ++" "++ stanNodeRef j ++";"
-  where s = fromMaybe "" $ lookup (stanId op) stanOperators
+  where s = fromMaybe "" $ lookup op stanOperators
 stanNode name (Apply f js _) =
-    name ++" <- "++ fromMaybe s (lookup s stanBuiltinFunctions) ++
+    name ++" <- "++ fromMaybe f (lookup f stanBuiltinFunctions) ++
       "("++ stanNodeRef `commas` js ++");"
-  where s = stanId f
-stanNode name (Array _ sh dag ret _) =
+stanNode name (Array sh dag ret _) =
     forLoop (inputs dag) sh $
         stanDAG dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] <- "++ stanNodeRef ret ++";"
 
 stanPNode :: Label -> PNode -> String
 stanPNode name (Dist f args _) =
-    name ++" ~ "++ fromMaybe s (lookup s stanBuiltinDistributions) ++
+    name ++" ~ "++ fromMaybe f (lookup f stanBuiltinDistributions) ++
       "("++ stanNodeRef `commas` args ++");"
-  where s = stanId f
-stanPNode name (Loop sh body r _) =
+stanPNode name (Loop sh ldag body _) =
     forLoop (inputs ldag) sh $
         let lval = name ++"["++ stanId `commas` inputs ldag ++"]"
-        in stanPBlock lval r body
-  where ldag = head $ definitions body
-
-
-------------------------------------------------------------------------------
--- BLOCKS                                                                   --
-------------------------------------------------------------------------------
+        in stanDAG ldag ++ indent (stanPNode lval body)
 
 stanDAG :: DAG -> String
 stanDAG dag = indent $
@@ -145,13 +136,6 @@ stanDAG dag = indent $
   where extract f = unlines . flip map (nodes dag) $ \(i,n) ->
                         let name = stanId $ Internal (dagLevel dag) i
                         in f name n
-
-stanPBlock :: Label -> NodeRef -> PBlock -> String
-stanPBlock rName rId (PBlock block refs _) =
-    stanDAG (head block) ++ pdefs
-  where pdefs = indent . unlines $ zipWith f [0..] (reverse refs)
-        f i n = stanPNode (if cId == rId then rName else stanNodeRef cId) n
-          where cId = Var (Volatile (dagLevel $ head block) i) (typePNode n)
 
 
 ------------------------------------------------------------------------------

@@ -113,12 +113,18 @@ class Matrix m i e | m -> i e, i e -> m where
     matrix :: AbstractArray i e -> m
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
+instance (Show t, LA.Element t) => Show (ShapedMatrix t) where
+    show (ShMat _ _ m) = show m
+instance (LA.Element t) => Indexable (ShapedMatrix t) Integer (ShapedVector t) where
+    (ShMat shr shc m) ! i = ShVec shc $ (LAD.!) m (fromInteger $ i - fst shr)
+    bounds (ShMat shr _ _) = shr
 instance Matrix (ShapedMatrix Double) Integer Double where
     matrix a = ShMat r c $ LAD.matrix ncol xs
       where ncol = fromInteger . cardinality $ shape a !! 1
             xs = A.elems $ toArray a
             r:c:_ = shape a
 
+infixr 8 #>
 class LinearOperator m u v | m -> u v where
     (#>) :: m -> u -> v
 

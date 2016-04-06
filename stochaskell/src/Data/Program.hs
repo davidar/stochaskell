@@ -23,13 +23,13 @@ import GHC.Exts
 -- PROGRAMS                                                                 --
 ------------------------------------------------------------------------------
 
-data PNode = Dist { dName :: Expr.Id
+data PNode = Dist { dName :: String
                   , dArgs :: [Expr.NodeRef]
                   , typePNode :: Expr.Type
                   }
            | Loop { lShape :: [Interval Expr.NodeRef]
-                  , lBody  :: PBlock
-                  , lRet   :: Expr.NodeRef
+                  , lDefs  :: Expr.DAG
+                  , lBody  :: PNode
                   , typePNode :: Expr.Type
                   }
            deriving (Eq)
@@ -94,14 +94,14 @@ dist s = Prog $ do
 instance Distribution BernoulliLogit (Expr R) Prog (Expr Bool) where
     sample (BernoulliLogit l) = dist $ do
         i <- fromExpr l
-        return $ Dist (Expr.Builtin "bernoulliLogit") [i] t
+        return $ Dist "bernoulliLogit" [i] t
       where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
 
 instance Distribution Normal (Expr R) Prog (Expr R) where
     sample (Normal m s) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
-        return $ Dist (Expr.Builtin "normal") [i,j] Expr.RealT
+        return $ Dist "normal" [i,j] Expr.RealT
     sample StdNormal = sample (Normal 0 1)
 
 
@@ -109,33 +109,23 @@ instance Distribution Normal (Expr R) Prog (Expr R) where
 -- LOOPS                                                                    --
 ------------------------------------------------------------------------------
 
-makeLoop :: [Interval (Expr i)] -> ProgE t -> State PBlock PNode
-makeLoop shp body = do
-    (r,t) <- fromProgE body
-    sh <- liftExprBlock . Expr.liftBlock $ sequence shape'
-    block <- get
-    return $ Loop sh block r (Expr.ArrayT Nothing sh t)
-  where shape' = flip map shp $ \(a,b) -> do
-            i <- fromExpr a
-            j <- fromExpr b
-            return (i,j)
-
 instance forall r f. (ExprType r, ExprType f)
     => Joint Prog (Expr Integer) (Expr r) (Expr f) where
   joint _ ar = Prog $ do
+    sh <- liftExprBlock . sequence . flip map (shape ar) $ \(a,b) -> do
+      i <- fromExpr a
+      j <- fromExpr b
+      return (i,j)
     PBlock block dists given <- get
-    let ashape = shape ar
-        depth = Expr.dagLevel $ head block
-        ids = [ Expr.Dummy (depth + 1) i | i <- [1..length ashape] ]
-        p = apply ar [Expr.expr . return $ Expr.Var i Expr.IntT | i <- ids]
-        loop = evalState (makeLoop ashape p) $
-            PBlock (Expr.DAG (depth + 1) ids Bimap.empty : block) [] []
-        name = Expr.Volatile depth (length dists)
-        ref = Expr.expr . return $ Expr.Var name t :: Expr f
-        t = typePNode loop
-    put $ let (PBlock (_:block') _ _) = lBody loop
-          in PBlock block' (loop:dists) given
-    return ref
+    let ids = [ Expr.Dummy (length block) i | i <- [1..length sh] ]
+        p = ar ! [Expr.expr . return $ Expr.Var i Expr.IntT | i <- ids]
+        ((_,t), PBlock (dag:block') [act] []) = runState (fromProgE p) $
+            PBlock (Expr.DAG (length block) ids Bimap.empty : block) [] []
+        loopType = Expr.ArrayT Nothing sh t
+        loop = Loop sh dag act loopType
+    put $ PBlock block' (loop:dists) given
+    let name = Expr.Volatile (length block - 1) (length dists)
+    return (Expr.expr . return $ Expr.Var name loopType :: Expr f)
 
 
 ------------------------------------------------------------------------------
@@ -148,8 +138,7 @@ instance MonadGuard Prog where
         (Expr.Var (Expr.Internal 0 i) _) <- liftExprBlock (fromExpr cond)
         (PBlock (dag:dags) dists given) <- get
         if i /= length (Expr.nodes dag) - 1 then undefined else do
-          let (Just (Expr.Apply (Expr.Builtin "==")
-                                [j, Expr.Const a] _)) =
+          let (Just (Expr.Apply "==" [j, Expr.Const a] _)) =
                 lookup i $ Expr.nodes dag
               dag' = dag { Expr.bimap = Bimap.deleteR i (Expr.bimap dag) }
           put $ PBlock (dag':dags) dists ((j,a):given)
@@ -177,11 +166,11 @@ densityPBlock env (PBlock block refs _) = LF.product $ do
     return $ densityPNode env block d val
 
 densityPNode :: Env -> Expr.Block -> PNode -> ConstVal -> LF.LogFloat
-densityPNode env block (Dist (Expr.Builtin "normal") [m,s] _) x =
+densityPNode env block (Dist "normal" [m,s] _) x =
     LF.logToLogFloat $ logPdf (Normal m' s') (toR x)
   where m' = toR $ evalNodeRef env block m
         s' = toR $ evalNodeRef env block s
-densityPNode env block (Dist (Expr.Builtin "bernoulliLogit") [l] _) a
+densityPNode env block (Dist "bernoulliLogit" [l] _) a
     | x == 1 = LF.logFloat p
     | x == 0 = LF.logFloat (1 - p)
     | otherwise = LF.logFloat 0
@@ -189,13 +178,13 @@ densityPNode env block (Dist (Expr.Builtin "bernoulliLogit") [l] _) a
         l' = toR $ evalNodeRef env block l
         p = 1 / (1 + exp (-l'))
 densityPNode _ _ Dist{} _ = error "unrecognised distribution"
-densityPNode env block (Loop shp body (Expr.Var ident _) _) a = LF.product $ do
+
+densityPNode env block (Loop shp ldag body _) a = LF.product $ do
     let (as,bs) = unzip shp
         as' = evalNodeRef env block <$> as
         bs' = evalNodeRef env block <$> bs
         xs = toList a
     (i,x) <- zip (range (as',bs')) xs
-    let inps = Expr.inputs $ head block
-        env' = (ident, fromRational x) : (zip inps i ++ env)
-    return $ densityPBlock env' body
-densityPNode _ _ Loop{} _ = error "unable to determine density of array"
+    let inps = Expr.inputs ldag
+        env' = zip inps i ++ env
+    return $ densityPNode env' (ldag:block) body (fromRational x)
