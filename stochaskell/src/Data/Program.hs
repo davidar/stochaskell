@@ -91,13 +91,13 @@ dist s = Prog $ do
         v = Expr.expr . return $ Expr.Var name (typePNode d)
     return v
 
-instance Distribution BernoulliLogit (Expr R) Prog (Expr Bool) where
+instance Distribution BernoulliLogit (Expr Double) Prog (Expr Bool) where
     sample (BernoulliLogit l) = dist $ do
         i <- fromExpr l
         return $ Dist "bernoulliLogit" [i] t
       where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
 
-instance Distribution Normal (Expr R) Prog (Expr R) where
+instance Distribution Normal (Expr Double) Prog (Expr Double) where
     sample (Normal m s) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
@@ -167,15 +167,15 @@ densityPBlock env (PBlock block refs _) = LF.product $ do
 
 densityPNode :: Env -> Expr.Block -> PNode -> ConstVal -> LF.LogFloat
 densityPNode env block (Dist "normal" [m,s] _) x =
-    LF.logToLogFloat $ logPdf (Normal m' s') (toR x)
-  where m' = toR $ evalNodeRef env block m
-        s' = toR $ evalNodeRef env block s
+    LF.logToLogFloat $ logPdf (Normal m' s') (toDouble x)
+  where m' = toDouble $ evalNodeRef env block m
+        s' = toDouble $ evalNodeRef env block s
 densityPNode env block (Dist "bernoulliLogit" [l] _) a
     | x == 1 = LF.logFloat p
     | x == 0 = LF.logFloat (1 - p)
     | otherwise = LF.logFloat 0
   where x = toRational a
-        l' = toR $ evalNodeRef env block l
+        l' = toDouble $ evalNodeRef env block l
         p = 1 / (1 + exp (-l'))
 densityPNode _ _ Dist{} _ = error "unrecognised distribution"
 

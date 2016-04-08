@@ -9,9 +9,6 @@ import Data.Ratio
 import GHC.Exts
 import qualified Numeric.LinearAlgebra.Data as LAD
 
-type Nat = Int
-type R = Double
-
 integer :: (Integral i, Num n) => i -> n
 integer = fromInteger . toInteger
 
@@ -19,10 +16,7 @@ data ConstVal = Exact  (Array [Integer] Rational)
               | Approx (Array [Integer] Double)
               deriving (Eq, Ord, Show)
 
-toR :: ConstVal -> R
-toR (Exact  a) = fromRational (toScalar a)
-toR (Approx a) = toScalar a
-
+approx :: ConstVal -> ConstVal
 approx (Exact a) = Approx (fromRational <$> a)
 approx a = a
 
@@ -47,19 +41,23 @@ toScalar a | bounds a == ([],[]) = a![]
 fromScalar :: (Ix t) => e -> Array [t] e
 fromScalar x = array ([],[]) [([], x)]
 
-toVector :: ConstVal -> ShapedVector R
+toDouble :: ConstVal -> Double
+toDouble (Exact  a) = fromRational (toScalar a)
+toDouble (Approx a) = toScalar a
+
+toVector :: ConstVal -> ShapedVector Double
 toVector a = ShVec (lo,hi) $ fromList (fromRational <$> toList a)
   where ([lo],[hi]) = bounds a
-fromVector :: ShapedVector R -> ConstVal
+fromVector :: ShapedVector Double -> ConstVal
 fromVector v = Approx $ listArray ([lo],[hi]) (toList v)
   where (lo,hi) = bounds v
 
-toMatrix :: ConstVal -> ShapedMatrix R
+toMatrix :: ConstVal -> ShapedMatrix Double
 toMatrix a = ShMat r c $ LAD.matrix ncol xs
   where ncol = fromInteger . cardinality $ shape a !! 1
         xs = fromRational <$> toList a
         r:c:_ = shape a
-fromMatrix :: ShapedMatrix R -> ConstVal
+fromMatrix :: ShapedMatrix Double -> ConstVal
 fromMatrix (ShMat (r,r') (c,c') m) = Approx $ listArray ([r,c],[r',c']) (toList $ LAD.flatten m)
 
 instance Num ConstVal where

@@ -39,8 +39,8 @@ instance (Num t) => Num [t] where
 -- EXPRESSIONS                                                              --
 ------------------------------------------------------------------------------
 
-type Pointer = Nat
-type Level = Nat
+type Pointer = Int
+type Level = Int
 
 data Id = Dummy Level Pointer
         | Volatile Level Pointer
@@ -113,7 +113,7 @@ instance ExprType Integer where
     typeOf = TypeIs IntT
 instance ExprType Bool where
     typeOf = TypeIs $ SubrangeT IntT (Just $ Const 0) (Just $ Const 1)
-instance ExprType R where
+instance ExprType Double where
     typeOf = TypeIs RealT
 instance forall b. (ExprType b) => ExprType [b] where
     typeOf = TypeIs $

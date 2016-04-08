@@ -155,7 +155,7 @@ stanProgram (PBlock block refs given) =
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
-runStan :: ProgE [R] -> IO [[R]]
+runStan :: ProgE [Double] -> IO [[Double]]
 runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/generated_model"
 
