@@ -91,7 +91,11 @@ dist s = Prog $ do
         v = Expr.expr . return $ Expr.Var name (typePNode d)
     return v
 
-instance Distribution BernoulliLogit (Expr Double) Prog (Expr Bool) where
+instance Distribution Bernoulli (Expr Double) Prog (Expr Bool) where
+    sample (Bernoulli p) = dist $ do
+        i <- fromExpr p
+        return $ Dist "bernoulli" [i] t
+      where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
     sample (BernoulliLogit l) = dist $ do
         i <- fromExpr l
         return $ Dist "bernoulliLogit" [i] t
