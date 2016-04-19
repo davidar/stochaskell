@@ -14,7 +14,11 @@ integer = fromInteger . toInteger
 
 data ConstVal = Exact  (Array [Integer] Rational)
               | Approx (Array [Integer] Double)
-              deriving (Eq, Ord, Show)
+              deriving (Eq, Ord)
+
+instance Show ConstVal where
+    show (Approx a) = show a
+    show c = show $ approx c
 
 approx :: ConstVal -> ConstVal
 approx (Exact a) = Approx (fromRational <$> a)
@@ -34,9 +38,9 @@ constBinOp f (Exact  a) (Approx b) = Approx (zipWithA f (fromRational <$> a) b)
 constBinOp f (Approx a) (Exact  b) = Approx (zipWithA f a (fromRational <$> b))
 constBinOp f (Approx a) (Approx b) = Approx (zipWithA f a b)
 
-toScalar :: (Ix t) => Array [t] r -> r
+toScalar :: (Ix t, Show t, Show r) => Array [t] r -> r
 toScalar a | bounds a == ([],[]) = a![]
-           | otherwise = error "can't convert non-scalar to real"
+           | otherwise = error $ "can't convert non-scalar "++ show a ++" to real"
 
 fromScalar :: (Ix t) => e -> Array [t] e
 fromScalar x = array ([],[]) [([], x)]
@@ -143,3 +147,6 @@ instance IfB ConstVal where
 
 instance EqB ConstVal where
     a ==* b = fromBool $ a == b
+
+instance OrdB ConstVal where
+    (Exact a) <* (Exact b) = fromBool $ a < b
