@@ -12,7 +12,6 @@ import Data.Expression.Const
 import Data.List
 import Data.Maybe
 import Data.Ratio
-import Data.String
 import Control.Applicative ()
 import Control.Monad.State
 import GHC.Exts
@@ -400,35 +399,25 @@ instance (Real e, ExprType e) => IsList (Expr [e]) where
     toList = error "not implemented"
 
 class ExprTuple t where
-    unify :: t -> t -> [(DExpr,DExpr)]
+    fromExprTuple :: t -> [DExpr]
+
+unify :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
+unify s t = fromExprTuple s `zip` fromExprTuple t
 
 instance ExprTuple (Expr a) where
-    unify a x = [(erase a, erase x)]
+    fromExprTuple a = [erase a]
 instance ExprTuple (Expr a, Expr b) where
-    unify (a,b) (x,y) = [(erase a, erase x)
-                        ,(erase b, erase y)]
+    fromExprTuple (a,b) = [erase a, erase b]
 instance ExprTuple (Expr a, Expr b, Expr c) where
-    unify (a,b,c) (x,y,z) = [(erase a, erase x)
-                            ,(erase b, erase y)
-                            ,(erase c, erase z)]
+    fromExprTuple (a,b,c) = [erase a, erase b, erase c]
 instance ExprTuple (Expr a, Expr b, Expr c, Expr d) where
-    unify (a,b,c,d) (x,y,z,w) = [(erase a, erase x)
-                                ,(erase b, erase y)
-                                ,(erase c, erase z)
-                                ,(erase d, erase w)]
+    fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
 instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
-    unify (a,b,c,d,e) (x,y,z,w,v) = [(erase a, erase x)
-                                    ,(erase b, erase y)
-                                    ,(erase c, erase z)
-                                    ,(erase d, erase w)
-                                    ,(erase e, erase v)]
+    fromExprTuple (a,b,c,d,e) =
+      [erase a, erase b, erase c, erase d, erase e]
 instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
-    unify (a,b,c,d,e,f) (x,y,z,w,v,u) = [(erase a, erase x)
-                                        ,(erase b, erase y)
-                                        ,(erase c, erase z)
-                                        ,(erase d, erase w)
-                                        ,(erase e, erase v)
-                                        ,(erase f, erase u)]
+    fromExprTuple (a,b,c,d,e,f) =
+      [erase a, erase b, erase c, erase d, erase e, erase f]
 
 instance Show Node where
   show (Apply f js _) = show f ++ show js

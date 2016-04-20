@@ -49,6 +49,12 @@ toDouble :: ConstVal -> Double
 toDouble (Exact  a) = fromRational (toScalar a)
 toDouble (Approx a) = toScalar a
 
+fromDouble :: Double -> ConstVal
+fromDouble = Approx . fromScalar
+
+flatten :: [ConstVal] -> ConstVal
+flatten = fromList . map toRational
+
 toVector :: ConstVal -> ShapedVector Double
 toVector a = ShVec (lo,hi) $ fromList (fromRational <$> toList a)
   where ([lo],[hi]) = bounds a
@@ -129,7 +135,10 @@ instance LinearOperator ConstVal ConstVal ConstVal where
 instance SquareMatrix ConstVal where
     chol = fromMatrix . chol . toMatrix
 
+toBool :: (Boolean b, Eq b) => b -> Bool
 toBool b = if notB b == false then True else False
+
+fromBool :: (Boolean b) => Bool -> b
 fromBool True  = true
 fromBool False = false
 

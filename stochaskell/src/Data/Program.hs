@@ -10,7 +10,6 @@ import Data.Expression (ExprType,Expr,fromExpr,typeDExpr)
 import qualified Data.Expression as Expr
 import Data.Expression.Const
 import Data.Expression.Eval
-import Data.Ix
 import Data.Maybe
 import qualified Data.Number.LogFloat as LF
 import qualified Data.Random as Rand
@@ -118,6 +117,11 @@ instance Distribution Bernoulli (Expr Double) Prog (Expr Bool) where
         return $ Dist "bernoulliLogit" [i] t
       where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
 
+instance Distribution Geometric (Expr Double) Prog (Expr Integer) where
+    sample (Geometric p) = dist $ do
+        i <- fromExpr p
+        return $ Dist "geometric" [i] Expr.IntT
+
 instance (ExprType t) => Distribution Categorical (Expr Double) Prog (Expr t) where
     sample cat = dist $ do
         let (ps,xs) = unzip $ Categorical.toList cat
@@ -195,6 +199,9 @@ densityPNode env block (Dist "normal" [m,s] _) x =
     LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
   where m' = toDouble $ evalNodeRef env block m
         s' = toDouble $ evalNodeRef env block s
+densityPNode env block (Dist "bernoulli" [p] _) x =
+    LF.logFloat (if toBool x then p' else 1 - p')
+  where p' = toDouble $ evalNodeRef env block p
 densityPNode env block (Dist "bernoulliLogit" [l] _) a
     | x == 1 = LF.logFloat p
     | x == 0 = LF.logFloat (1 - p)
@@ -207,14 +214,54 @@ densityPNode env block (Dist "categorical" cats _) x = LF.logFloat $ toDouble p
         ps = evalNodeRef env block <$> take n cats
         xs = evalNodeRef env block <$> drop n cats
         p = fromMaybe 0 . lookup x $ zip xs ps
-densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised distribution "++ d
+densityPNode env block (Dist "geometric" [t] _) x = p * q^k
+  where t' = toDouble $ evalNodeRef env block t
+        p = LF.logFloat t'
+        q = LF.logFloat (1 - t')
+        k = toInteger x
+densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
-densityPNode env block (Loop shp ldag body _) a = LF.product $ do
-    let (as,bs) = unzip shp
-        as' = evalNodeRef env block <$> as
-        bs' = evalNodeRef env block <$> bs
-        xs = toList a
-    (i,x) <- zip (range (as',bs')) xs
-    let inps = Expr.inputs ldag
-        env' = zip inps i ++ env
-    return $ densityPNode env' (ldag:block) body (fromRational x)
+densityPNode env block (Loop shp ldag body _) a = LF.product
+    [ densityPNode (zip inps i ++ env) block' body (fromRational x)
+    | (i,x) <- evalRange env block shp `zip` toList a ]
+  where inps = Expr.inputs ldag
+        block' = ldag : drop (length block - Expr.dagLevel ldag) block
+
+
+------------------------------------------------------------------------------
+-- SAMPLING                                                                 --
+------------------------------------------------------------------------------
+
+sampleP :: (ProgTuple t) => Prog t -> IO [ConstVal]
+sampleP p = do
+    env <- samplePNodes [] block idents
+    return $ evalTuple env rets
+  where (rets, PBlock block refs _) = runProg p
+        idents = [ (Expr.Volatile (Expr.dagLevel $ head block) i, d)
+                 | (i,d) <- zip [0..] $ reverse refs ]
+
+samplePNodes :: Env -> Expr.Block -> [(Expr.Id, PNode)] -> IO Env
+samplePNodes env _ [] = return env
+samplePNodes env block ((ident,node):rest) = do
+    val <- samplePNode env block node
+    let env' = (ident, val) : env
+    samplePNodes env' block rest
+
+samplePNode :: Env -> Expr.Block -> PNode -> IO ConstVal
+samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
+  where m' = toDouble $ evalNodeRef env block m
+        s' = toDouble $ evalNodeRef env block s
+samplePNode env block (Dist "bernoulli" [p] _) = fromBool <$> bernoulli p'
+  where p' = toDouble $ evalNodeRef env block p
+samplePNode env block (Dist "categorical" cats _) = fromRational <$> categorical (zip ps xs)
+  where n = length cats `div` 2
+        ps = toDouble . evalNodeRef env block <$> take n cats
+        xs = toRational . evalNodeRef env block <$> drop n cats
+samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric p'
+  where p' = toDouble $ evalNodeRef env block p
+samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
+
+samplePNode env block (Loop shp ldag hd _) = flatten <$> sequence arr
+  where inps = Expr.inputs ldag
+        block' = ldag : drop (length block - Expr.dagLevel ldag) block
+        arr = [ samplePNode (zip inps idx ++ env) block' hd | idx <- evalRange env block shp ]

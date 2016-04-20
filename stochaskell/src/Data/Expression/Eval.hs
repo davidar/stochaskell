@@ -44,6 +44,9 @@ evalD :: Env -> DExpr -> ConstVal
 evalD env e = evalNodeRef env block ret
   where (ret, block) = runDExpr e
 
+evalTuple :: (ExprTuple t) => Env -> t -> [ConstVal]
+evalTuple env = map (evalD env) . fromExprTuple
+
 evalNodeRef :: Env -> Block -> NodeRef -> ConstVal
 evalNodeRef env block (Var (Internal level ptr) _) =
     let dag = reverse block !! level
@@ -55,6 +58,12 @@ evalNodeRef env _ (Var ident _) =
 evalNodeRef _ _ (Const c) = c
 evalNodeRef env block (Index arr idx) =
     evalNodeRef env block arr ! (toInteger . evalNodeRef env block <$> idx)
+
+evalRange :: Env -> Block -> [(NodeRef,NodeRef)] -> [[ConstVal]]
+evalRange env block sh = range (a,b)
+  where (i,j) = unzip sh
+        a = evalNodeRef env block <$> i
+        b = evalNodeRef env block <$> j
 
 evalNode :: Env -> Block -> Node -> ConstVal
 evalNode env block (Apply fn args _) =
