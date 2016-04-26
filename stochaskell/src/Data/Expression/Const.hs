@@ -70,6 +70,10 @@ toMatrix a = ShMat r c $ LAD.matrix ncol xs
 fromMatrix :: ShapedMatrix Double -> ConstVal
 fromMatrix (ShMat (r,r') (c,c') m) = Approx $ listArray ([r,c],[r',c']) (toList $ LAD.flatten m)
 
+foldrConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
+foldrConst f r xs = fromRational $ foldr g (toRational r) (toList xs)
+  where g a b = toRational $ f (fromRational a) (fromRational b)
+
 instance Num ConstVal where
     (+) = constBinOp (+)
     (-) = constBinOp (-)

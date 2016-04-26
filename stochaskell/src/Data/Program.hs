@@ -6,8 +6,7 @@ import Control.Monad.Guard
 import Control.Monad.State
 import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
-import Data.Expression (ExprType,Expr,fromExpr,typeDExpr)
-import qualified Data.Expression as Expr
+import Data.Expression
 import Data.Expression.Const
 import Data.Expression.Eval
 import Data.Maybe
@@ -25,26 +24,26 @@ import GHC.Exts
 ------------------------------------------------------------------------------
 
 data PNode = Dist { dName :: String
-                  , dArgs :: [Expr.NodeRef]
-                  , typePNode :: Expr.Type
+                  , dArgs :: [NodeRef]
+                  , typePNode :: Type
                   }
-           | Loop { lShape :: [Interval Expr.NodeRef]
-                  , lDefs  :: Expr.DAG
+           | Loop { lShape :: [Interval NodeRef]
+                  , lDefs  :: DAG
                   , lBody  :: PNode
-                  , typePNode :: Expr.Type
+                  , typePNode :: Type
                   }
            deriving (Eq)
 
-data PBlock = PBlock { definitions :: Expr.Block
+data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
-                     , constraints :: [(Expr.NodeRef, ConstVal)]
+                     , constraints :: [(NodeRef, ConstVal)]
                      }
             deriving (Eq)
 emptyPBlock :: PBlock
-emptyPBlock = PBlock Expr.emptyBlock [] []
+emptyPBlock = PBlock emptyBlock [] []
 
--- lift into Expr.Block
-liftExprBlock :: MonadState PBlock m => State Expr.Block b -> m b
+-- lift into Block
+liftExprBlock :: MonadState PBlock m => State Block b -> m b
 liftExprBlock s = do
     PBlock block rhs given <- get
     let (ret, block') = runState s block
@@ -56,28 +55,20 @@ instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
 runProg :: Prog a -> (a, PBlock)
 runProg p = runState (fromProg p) emptyPBlock
 
-type NRT = (Expr.NodeRef, Expr.Type)
+type NRT = (NodeRef, Type)
 type ProgE t = Prog (Expr t)
-fromProgE :: ProgE t -> State PBlock NRT
-fromProgE p = do
-    e <- fromProg p
-    j <- liftExprBlock $ fromExpr e
-    return (j, typeDExpr $ Expr.erase e)
-runProgE :: ProgE t -> (NRT, PBlock)
+fromProgE :: (ExprType t) => ProgE t -> State PBlock NRT
+fromProgE p = head <$> fromProgExprs p
+runProgE :: (ExprType t) => ProgE t -> (NRT, PBlock)
 runProgE p = runState (fromProgE p) emptyPBlock
 
-class Expr.ExprTuple t => ProgTuple t where
-    fromProgExprs :: Prog t -> State PBlock [NRT]
+fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NRT]
+fromProgExprs p = do
+  es <- fromExprTuple <$> fromProg p
+  is <- mapM (liftExprBlock . fromDExpr) es
+  return $ is `zip` map typeDExpr es
 
-instance ProgTuple (Expr a, Expr b) where
-    fromProgExprs p = do
-      (d,e) <- fromProg p
-      i <- liftExprBlock $ fromExpr d
-      j <- liftExprBlock $ fromExpr e
-      return [(i, typeDExpr $ Expr.erase d)
-             ,(j, typeDExpr $ Expr.erase e)]
-
-runProgExprs :: (ProgTuple t) => Prog t -> ([NRT], PBlock)
+runProgExprs :: (ExprTuple t) => Prog t -> ([NRT], PBlock)
 runProgExprs p = runState (fromProgExprs p) emptyPBlock
 
 instance Functor Prog where
@@ -96,44 +87,44 @@ instance Monad Prog where
 -- PRIMITIVE DISTRIBUTIONS                                                  --
 ------------------------------------------------------------------------------
 
-dist :: ExprType t => State Expr.Block PNode -> ProgE t
+dist :: ExprType t => State Block PNode -> ProgE t
 dist s = Prog $ do
     d <- liftExprBlock s
     PBlock block rhs given <- get
     put $ PBlock block (d:rhs) given
-    let depth = Expr.dagLevel $ head block
+    let depth = dagLevel $ head block
         k = length rhs
-        name = Expr.Volatile depth k
-        v = Expr.expr . return $ Expr.Var name (typePNode d)
+        name = Volatile depth k
+        v = expr . return $ Var name (typePNode d)
     return v
 
 instance Distribution Bernoulli (Expr Double) Prog (Expr Bool) where
     sample (Bernoulli p) = dist $ do
         i <- fromExpr p
         return $ Dist "bernoulli" [i] t
-      where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
+      where (TypeIs t) = typeOf :: TypeOf Bool
     sample (BernoulliLogit l) = dist $ do
         i <- fromExpr l
         return $ Dist "bernoulliLogit" [i] t
-      where (Expr.TypeIs t) = Expr.typeOf :: Expr.TypeOf Bool
+      where (TypeIs t) = typeOf :: TypeOf Bool
 
 instance Distribution Geometric (Expr Double) Prog (Expr Integer) where
     sample (Geometric p) = dist $ do
         i <- fromExpr p
-        return $ Dist "geometric" [i] Expr.IntT
+        return $ Dist "geometric" [i] IntT
 
 instance (ExprType t) => Distribution Categorical (Expr Double) Prog (Expr t) where
     sample cat = dist $ do
         let (ps,xs) = unzip $ Categorical.toList cat
         qs <- mapM fromExpr ps
         ys <- mapM fromExpr xs
-        return $ Dist "categorical" (qs ++ ys) Expr.RealT
+        return $ Dist "categorical" (qs ++ ys) RealT
 
 instance Distribution Normal (Expr Double) Prog (Expr Double) where
     sample (Normal m s) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
-        return $ Dist "normal" [i,j] Expr.RealT
+        return $ Dist "normal" [i,j] RealT
 
 
 ------------------------------------------------------------------------------
@@ -148,15 +139,15 @@ instance forall r f. (ExprType r, ExprType f)
       j <- fromExpr b
       return (i,j)
     PBlock block dists given <- get
-    let ids = [ Expr.Dummy (length block) i | i <- [1..length sh] ]
-        p = ar ! [Expr.expr . return $ Expr.Var i Expr.IntT | i <- ids]
+    let ids = [ Dummy (length block) i | i <- [1..length sh] ]
+        p = ar ! [expr . return $ Var i IntT | i <- ids]
         ((_,t), PBlock (dag:block') [act] []) = runState (fromProgE p) $
-            PBlock (Expr.DAG (length block) ids Bimap.empty : block) [] []
-        loopType = Expr.ArrayT Nothing sh t
+            PBlock (DAG (length block) ids Bimap.empty : block) [] []
+        loopType = ArrayT Nothing sh t
         loop = Loop sh dag act loopType
     put $ PBlock block' (loop:dists) given
-    let name = Expr.Volatile (length block - 1) (length dists)
-    return (Expr.expr . return $ Expr.Var name loopType :: Expr f)
+    let name = Volatile (length block - 1) (length dists)
+    return (expr . return $ Var name loopType :: Expr f)
 
 
 ------------------------------------------------------------------------------
@@ -166,12 +157,12 @@ instance forall r f. (ExprType r, ExprType f)
 type instance ConditionOf (Prog ()) = Expr Bool
 instance MonadGuard Prog where
     guard cond = Prog $ do -- TODO: weaker assumptions
-        (Expr.Var (Expr.Internal 0 i) _) <- liftExprBlock (fromExpr cond)
+        (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
         (PBlock (dag:dags) dists given) <- get
-        if i /= length (Expr.nodes dag) - 1 then undefined else do
-          let (Just (Expr.Apply "==" [j, Expr.Const a] _)) =
-                lookup i $ Expr.nodes dag
-              dag' = dag { Expr.bimap = Bimap.deleteR i (Expr.bimap dag) }
+        if i /= length (nodes dag) - 1 then undefined else do
+          let (Just (Apply "==" [j, Const a] _)) =
+                lookup i $ nodes dag
+              dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
           put $ PBlock (dag':dags) dists ((j,a):given)
 
 
@@ -179,9 +170,9 @@ instance MonadGuard Prog where
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
 
-density :: (ProgTuple t) => Prog t -> t -> LF.LogFloat
+density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = flip densityPBlock pb $ do
-    (d,e) <- Expr.unify rets vals
+    (d,e) <- unify rets vals
     let v = evalD [] e
     unifyD [] d v
   where (rets, pb) = runProg prog
@@ -189,12 +180,12 @@ density prog vals = flip densityPBlock pb $ do
 densityPBlock :: Env -> PBlock -> LF.LogFloat
 densityPBlock env (PBlock block refs _) = LF.product $ do
     (i,d) <- zip [0..] $ reverse refs
-    let ident = Expr.Volatile (Expr.dagLevel $ head block) i
+    let ident = Volatile (dagLevel $ head block) i
     return $ case lookup ident env of
       Just val -> densityPNode env block d val
       Nothing  -> LF.logFloat 1
 
-densityPNode :: Env -> Expr.Block -> PNode -> ConstVal -> LF.LogFloat
+densityPNode :: Env -> Block -> PNode -> ConstVal -> LF.LogFloat
 densityPNode env block (Dist "normal" [m,s] _) x =
     LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
   where m' = toDouble $ evalNodeRef env block m
@@ -224,35 +215,38 @@ densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 densityPNode env block (Loop shp ldag body _) a = LF.product
     [ densityPNode (zip inps i ++ env) block' body (fromRational x)
     | (i,x) <- evalRange env block shp `zip` toList a ]
-  where inps = Expr.inputs ldag
-        block' = ldag : drop (length block - Expr.dagLevel ldag) block
+  where inps = inputs ldag
+        block' = ldag : drop (length block - dagLevel ldag) block
 
 
 ------------------------------------------------------------------------------
 -- SAMPLING                                                                 --
 ------------------------------------------------------------------------------
 
-sampleP :: (ProgTuple t) => Prog t -> IO [ConstVal]
+sampleP :: (ExprTuple t) => Prog t -> IO [ConstVal]
 sampleP p = do
     env <- samplePNodes [] block idents
     return $ evalTuple env rets
   where (rets, PBlock block refs _) = runProg p
-        idents = [ (Expr.Volatile (Expr.dagLevel $ head block) i, d)
+        idents = [ (Volatile (dagLevel $ head block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
 
-samplePNodes :: Env -> Expr.Block -> [(Expr.Id, PNode)] -> IO Env
+samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
 samplePNodes env _ [] = return env
 samplePNodes env block ((ident,node):rest) = do
     val <- samplePNode env block node
     let env' = (ident, val) : env
     samplePNodes env' block rest
 
-samplePNode :: Env -> Expr.Block -> PNode -> IO ConstVal
+samplePNode :: Env -> Block -> PNode -> IO ConstVal
 samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
   where m' = toDouble $ evalNodeRef env block m
         s' = toDouble $ evalNodeRef env block s
 samplePNode env block (Dist "bernoulli" [p] _) = fromBool <$> bernoulli p'
   where p' = toDouble $ evalNodeRef env block p
+samplePNode env block (Dist "bernoulliLogit" [l] _) = fromBool <$> bernoulli p'
+  where l' = toDouble $ evalNodeRef env block l
+        p' = 1 / (1 + exp (-l'))
 samplePNode env block (Dist "categorical" cats _) = fromRational <$> categorical (zip ps xs)
   where n = length cats `div` 2
         ps = toDouble . evalNodeRef env block <$> take n cats
@@ -262,6 +256,16 @@ samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric p'
 samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
 
 samplePNode env block (Loop shp ldag hd _) = flatten <$> sequence arr
-  where inps = Expr.inputs ldag
-        block' = ldag : drop (length block - Expr.dagLevel ldag) block
+  where inps = inputs ldag
+        block' = ldag : drop (length block - dagLevel ldag) block
         arr = [ samplePNode (zip inps idx ++ env) block' hd | idx <- evalRange env block shp ]
+
+mh :: forall r. ExprTuple r => Prog r -> (r -> Prog r) -> r -> IO r
+mh target proposal x = do
+  y' <- sampleP $ proposal x
+  let y = fromConstVals y' :: r
+      f = density target
+      q = density . proposal
+      a = LF.fromLogFloat $ (f y * q y x) / (f x * q x y)
+  accept <- bernoulli $ if a > 1 then 1 else a
+  if accept then return y else return x

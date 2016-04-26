@@ -1,7 +1,9 @@
 {-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables, TypeFamilies,
              TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,
-             FlexibleContexts #-}
+             FlexibleContexts, ConstraintKinds #-}
 module Data.Expression where
+
+import Prelude hiding (const,foldr)
 
 import qualified Data.Array as A
 import qualified Data.Array.Abstract as AA
@@ -9,7 +11,7 @@ import Data.Array.Abstract ((!))
 import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Expression.Const
-import Data.List
+import Data.List hiding (foldr)
 import Data.Maybe
 import Data.Ratio
 import Control.Applicative ()
@@ -57,6 +59,12 @@ data Node = Apply { fName :: String
           | Array { aShape :: [AA.Interval NodeRef]
                   , aDefs  :: DAG
                   , aHead  :: NodeRef
+                  , typeNode :: Type
+                  }
+          | FoldR { rDefs :: DAG
+                  , rHead :: NodeRef
+                  , rSeed :: NodeRef
+                  , rList :: NodeRef
                   , typeNode :: Type
                   }
           deriving (Eq, Ord)
@@ -107,6 +115,7 @@ data Type
 newtype TypeOf t = TypeIs Type
 class ExprType t where
     typeOf :: TypeOf t
+type ExpT = ExprType
 
 instance ExprType Integer where
     typeOf = TypeIs IntT
@@ -133,7 +142,9 @@ internal level i = do
 
 typeRef :: NodeRef -> Type
 typeRef (Var _ t) = t
-typeRef (Const (Exact  a)) = typeArray (A.bounds a) RealT
+typeRef (Const c@(Exact  a))
+  | and [ denominator x == 1 | x <- toList c ] = typeArray (A.bounds a) IntT
+  | otherwise = typeArray (A.bounds a) RealT
 typeRef (Const (Approx a)) = typeArray (A.bounds a) RealT
 typeRef (Index a _) = let (ArrayT _ _ t) = typeRef a in t
 
@@ -182,6 +193,7 @@ externRefs (DAG _ _ d) = go d
         f (Array sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
                                 ++ mapMaybe (extern . snd) sh ++ go defs'
+        f (FoldR (DAG _ _ defs') r s l _) = mapMaybe extern [r,s,l] ++ go defs'
         extern (Var (Internal _ _) _) = Nothing
         extern (Var i _) = Just i
         extern _ = Nothing
@@ -195,6 +207,7 @@ externRefs (DAG _ _ d) = go d
 -- simplify and float constants
 simplify :: Node -> State Block NodeRef
 -- TODO: eval const exprs
+simplify (Apply "+" [Const a, Const b] _) = return . Const $ a + b
 simplify e = do
     dag:_ <- get
     if varies dag $ fArgs e
@@ -246,9 +259,7 @@ type AAI r = AA.AbstractArray (Expr Integer) (Expr r)
 -- External references captured by this closure
 capture :: Num i => AA.AbstractArray i (Expr t) -> [Id]
 capture ar = externRefs adag
-  where dim = length $ AA.shape ar
-        dummy = replicate dim 0
-        (_,adag:_) = runExpr $ AA.apply ar dummy
+  where (_,adag:_) = runExpr $ ar ! replicate (length $ AA.shape ar) 0
 
 makeArray :: ExprType i => AA.AbstractArray (Expr i) (Expr t)
                         -> [AA.Interval NodeRef] -> State Block NodeRef
@@ -288,6 +299,22 @@ index a es = expr $ do
     f <- fromExpr a
     js <- mapM fromExpr es
     return $ Index f js
+
+foldr :: forall a b. (ExpT a, ExpT b) =>
+         (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr b
+foldr f r xs = expr $ do
+    block <- get
+    let d = length block
+        TypeIs s = typeOf :: TypeOf a
+        TypeIs t = typeOf :: TypeOf b
+        i = expr . return $ Var (Dummy d 1) s
+        j = expr . return $ Var (Dummy d 2) t
+        (ret, dag:block') = runState (fromExpr $ f i j) $
+            DAG d [Dummy d 1, Dummy d 2] Bimap.empty : block
+    put block'
+    seed <- fromExpr r
+    l <- fromExpr xs
+    hashcons $ FoldR dag ret seed l t
 
 
 ------------------------------------------------------------------------------
@@ -393,36 +420,62 @@ instance (ExprType t) => OrdB (Expr t) where
     (>=*) = apply2 ">="
     (>*)  = apply2 ">"
 
-instance (Real e, ExprType e) => IsList (Expr [e]) where
+instance (Fractional e, Real e, ExprType e) => IsList (Expr [e]) where
     type Item (Expr [e]) = e
     fromList = expr . return . Const . fromList . map toRational
-    toList = error "not implemented"
+    toList e =
+      case fst (runExpr e) of
+        Const c -> map fromRational $ toList c
+        r -> error $ "cannot convert "++ show r ++" to list"
 
 class ExprTuple t where
     fromExprTuple :: t -> [DExpr]
+    fromConstVals :: [ConstVal] -> t
 
 unify :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
 unify s t = fromExprTuple s `zip` fromExprTuple t
 
-instance ExprTuple (Expr a) where
-    fromExprTuple a = [erase a]
-instance ExprTuple (Expr a, Expr b) where
+const :: (ExprType t) => ConstVal -> Expr t
+const = expr . return . Const
+
+instance (ExprType a) => ExprTuple (Expr a) where
+    fromExprTuple (a) = [erase a]
+    fromConstVals [a] = (const a)
+    fromConstVals _ = undefined
+instance   (ExpT a, ExpT b) => ExprTuple (Expr a, Expr b) where
     fromExprTuple (a,b) = [erase a, erase b]
-instance ExprTuple (Expr a, Expr b, Expr c) where
+    fromConstVals [a,b] = (const a, const b)
+    fromConstVals _ = undefined
+instance   (ExpT a, ExpT b, ExpT c) =>
+ ExprTuple (Expr a, Expr b, Expr c) where
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
-instance ExprTuple (Expr a, Expr b, Expr c, Expr d) where
+    fromConstVals [a,b,c] = (const a, const b, const c)
+    fromConstVals _ = undefined
+instance   (ExpT a, ExpT b, ExpT c, ExpT d) =>
+ ExprTuple (Expr a, Expr b, Expr c, Expr d) where
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
-instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
+    fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
+    fromConstVals _ = undefined
+instance   (ExpT a, ExpT b, ExpT c, ExpT d, ExpT e) =>
+ ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
     fromExprTuple (a,b,c,d,e) =
       [erase a, erase b, erase c, erase d, erase e]
-instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
+    fromConstVals [a,b,c,d,e] =
+      (const a, const b, const c, const d, const e)
+    fromConstVals _ = undefined
+instance   (ExpT a, ExpT b, ExpT c, ExpT d, ExpT e, ExpT f) =>
+ ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
     fromExprTuple (a,b,c,d,e,f) =
       [erase a, erase b, erase c, erase d, erase e, erase f]
+    fromConstVals [a,b,c,d,e,f] =
+      (const a, const b, const c, const d, const e, const f)
+    fromConstVals _ = undefined
 
 instance Show Node where
   show (Apply f js _) = show f ++ show js
   show (Array sh dag ret _) =
     "ARRAY "++ show (inputs dag) ++ show sh ++ show ret ++"\nWHERE {\n"++ show dag ++"}"
+  show FoldR{} = "FOLDR"
 instance Show DAG where
   show dag = unlines $ map f (nodes dag)
     where f (i,n) = show (Internal (dagLevel dag) i) ++" = "++ show n

@@ -6,10 +6,11 @@ import Prelude hiding ((<*))
 
 import Data.Array.Abstract
 import Data.Boolean
-import Data.Expression
+import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Ix
 import Data.Maybe
+import Debug.Trace
 
 type Env = [(Id, ConstVal)]
 
@@ -76,6 +77,12 @@ evalNode env block (Array sh body hd _) =
     | xs <- fromShape sh' ]
   where sh' = [(toInteger $ evalNodeRef env block a, toInteger $ evalNodeRef env block b) | (a,b) <- sh]
         block' = body : drop (length block - dagLevel body) block
+evalNode env block (FoldR body hd seed ls _) = foldrConst f r xs
+  where [i,j] = inputs body
+        f a b = evalNodeRef env' (body:block) hd
+          where env' = (i,a) : (j,b) : env
+        r  = evalNodeRef env block seed
+        xs = evalNodeRef env block ls
 
 unifyD :: Env -> DExpr -> ConstVal -> Env
 unifyD env e = unifyNodeRef env block ret
@@ -102,4 +109,4 @@ unifyNode env block (Apply "asVector" [v] _) val =
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val =
     unifyNodeRef env block (if toBool c' then a else b) val
   where c' = evalNodeRef env block c
-unifyNode env block (Apply fn args _) val = error fn
+unifyNode _ _ node _ = trace ("WARN unable to unify node "++ show node) []

@@ -119,6 +119,20 @@ stanNode name (Array sh dag ret _) =
     forLoop (inputs dag) sh $
         stanDAG dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] <- "++ stanNodeRef ret ++";"
+stanNode name (FoldR dag ret seed (Var ls (ArrayT _ [(lo,hi)] s)) t) =
+    name ++" <- "++ stanNodeRef seed ++";\n"++ loop
+  where d = dagLevel dag
+        idx = Dummy d 0
+        [i,j] = inputs dag
+        loop =
+          forLoop [idx] [(lo,hi)] $ "  "++
+           stanDecl (stanId i) s ++"\n  "++
+           stanDecl (stanId j) t ++"\n  "++
+           stanId i ++" <- "++ stanId ls ++"["++
+             stanNodeRef lo ++"+"++ stanNodeRef hi ++"-"++ stanId idx ++"];\n  "++
+           stanId j ++" <- "++ name ++";\n  {\n"++
+           stanDAG dag ++"\n  "++
+           name ++" <- "++ stanNodeRef ret ++";\n  }"
 
 stanPNode :: Label -> PNode -> String
 stanPNode name (Dist f args _) =
