@@ -16,6 +16,7 @@ import Data.Random.Distribution (logPdf)
 import Data.Random.Distribution.Abstract
 import Data.Random.Distribution.Categorical (Categorical)
 import qualified Data.Random.Distribution.Categorical as Categorical
+import Data.Random.Distribution.Poisson (Poisson(..))
 import GHC.Exts
 
 
@@ -108,23 +109,41 @@ instance Distribution Bernoulli (Expr Double) Prog (Expr Bool) where
         return $ Dist "bernoulliLogit" [i] t
       where (TypeIs t) = typeOf :: TypeOf Bool
 
-instance Distribution Geometric (Expr Double) Prog (Expr Integer) where
-    sample (Geometric p) = dist $ do
-        i <- fromExpr p
-        return $ Dist "geometric" [i] IntT
-
 instance (ExprType t) => Distribution Categorical (Expr Double) Prog (Expr t) where
     sample cat = dist $ do
         let (ps,xs) = unzip $ Categorical.toList cat
         qs <- mapM fromExpr ps
         ys <- mapM fromExpr xs
-        return $ Dist "categorical" (qs ++ ys) RealT
+        let TypeIs t = typeOf :: TypeOf t
+        return $ Dist "categorical" (qs ++ ys) t
+
+instance Distribution Gamma (Expr Double) Prog (Expr Double) where
+    sample (Gamma a b) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "gamma" [i,j] RealT
+
+instance Distribution Geometric (Expr Double) Prog (Expr Integer) where
+    sample (Geometric p) = dist $ do
+        i <- fromExpr p
+        return $ Dist "geometric" [i] IntT
 
 instance Distribution Normal (Expr Double) Prog (Expr Double) where
     sample (Normal m s) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "normal" [i,j] RealT
+
+instance Distribution Poisson (Expr Double) Prog (Expr Integer) where
+    sample (Poisson a) = dist $ do
+        i <- fromExpr a
+        return $ Dist "poisson" [i] IntT
+
+instance Distribution Uniform (Expr Double) Prog (Expr Double) where
+    sample (Uniform a b) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "uniform" [i,j] RealT
 
 
 ------------------------------------------------------------------------------

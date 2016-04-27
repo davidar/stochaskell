@@ -41,6 +41,9 @@ eval :: Env -> Expr t -> ConstVal
 eval env e = evalNodeRef env block ret
   where (ret, block) = runExpr e
 
+eval_ :: Expr t -> ConstVal
+eval_ = eval []
+
 evalD :: Env -> DExpr -> ConstVal
 evalD env e = evalNodeRef env block ret
   where (ret, block) = runDExpr e

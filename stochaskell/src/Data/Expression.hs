@@ -153,6 +153,9 @@ typeArray ([],[]) = id
 typeArray (lo,hi) = ArrayT Nothing $ zip (f lo) (f hi)
   where f = map $ Const . fromInteger
 
+cast :: (ExprType b) => Expr a -> Expr b
+cast = expr . fromExpr
+
 
 ------------------------------------------------------------------------------
 -- DAG BUILDING                                                             --
@@ -193,7 +196,7 @@ externRefs (DAG _ _ d) = go d
         f (Array sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
                                 ++ mapMaybe (extern . snd) sh ++ go defs'
-        f (FoldR (DAG _ _ defs') r s l _) = mapMaybe extern [r,s,l] ++ go defs'
+        f FoldR{} = [] -- TODO
         extern (Var (Internal _ _) _) = Nothing
         extern (Var i _) = Just i
         extern _ = Nothing
@@ -237,7 +240,8 @@ applyClosed2 f x y = expr $ do
     let s = typeRef i
         t = typeRef j
     if s /= t then error $ "type mismatch: "++ show i ++" :: "++ show s ++
-                                      " /= "++ show j ++" :: "++ show t
+                                      " /= "++ show j ++" :: "++ show t ++
+                                      " (trying to apply "++ f ++")"
               else simplify $ Apply f [i,j] t
 
 apply3 :: forall a b c r. (ExprType r) => String -> Expr a -> Expr b
