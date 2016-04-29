@@ -1,8 +1,8 @@
-{-# LANGUAGE RebindableSyntax, MonadComprehensions, OverloadedLists,
+{-# LANGUAGE RebindableSyntax, MonadComprehensions,
              NoMonomorphismRestriction, FlexibleContexts, TypeFamilies #-}
 module Main where
 
-import Prelude hiding ((==))
+import Prelude hiding ((==),(/=),(<),(>),(<=),(>=),foldr)
 
 import Graphics.Rendering.Chart.Easy
     ( plot, line, points, def, setColors, black, withOpacity )
@@ -12,46 +12,60 @@ import Control.Monad.Guard
 import Data.Array.Abstract
 import Data.Bool.Num ()
 import Data.Boolean.Overload
-import Data.List
-import Data.Program (density)
+import Data.Expression
+import Data.Expression.Const
+import Data.Expression.Eval
+import Data.List hiding (foldr)
+import Data.Program
 import Data.Random.Distribution.Abstract
-import GHC.Exts
 import Language.Stan
 
-fromBool b = if b then true else false
-real = fromRational . toRational
+horner :: RVec -> R -> R
+horner ws x = foldr f 0 ws
+  where f w r = w + x * r -- (w:ws) -> w + x * rec ws
 
-normalChol mu cov = do
-  w <- joint vector [ normal 0 1 | _ <- mu ]
-  return (w, vector mu + (chol (matrix cov) #> w))
+poly :: Z -> Z -> P (RVec,RVec,RVec,RVec)
+poly d n = do
+  w <- joint vector [ normal 0 1 | i <- 1...(d + 1) ]
+  x <- joint vector [ uniform (-1.5) 1.5 | i <- 1...n ]
+  let z =    vector [ horner w (x!i)     | i <- 1...n ]
+  y <- joint vector [ normal (z!i) 10    | i <- 1...n ]
+  return (x,w,z,y)
 
-prior n = do
-  s <- joint vector [ normal 0 10 | i <- 1...n ]
-  lsv <- normal 0 1; lls2 <- normal (log 100) 2
+model :: Z -> P (Z,RVec,RVec,RVec,RVec)
+model n = do
+  d <- geometric (1/2)
+  (x,w,z,y) <- poly d n
+  return (d,x,w,z,y)
 
-  (w,g) <- normalChol [ 0 | _ <- 1...n ] [
-    exp (lsv - (s!i - s!j)**2 / (2 * exp lls2))
-    + if i == j then 1e-6 else 0
-    | i <- 1...n, j <- 1...n ]
-
-  phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
-
-  return (s, lsv, lls2, w, g, phi)
-
-test n = do
-  b <- bernoulliLogit 3
-  z <- normal 0 1
-  zs <- joint vector [ normal 0 10 | i <- 1...n ]
-  return (b,z,zs)
+jump :: Z -> (Z,RVec,RVec,RVec,RVec) -> P (Z,RVec,RVec,RVec,RVec)
+jump n (d,x,w,_,y) = do
+  d' <- categorical [(1/2, d + 1)
+                    ,(1/2, if d > 1 then d - 1 else d)]
+  m <- normal 0 1
+  let w' = vector [ if i > d then m else w!i | i <- 1...d' ]
+      z' = vector [ horner w' (x!i) | i <- 1...n ]
+  return (d',x,w',z',y)
 
 main :: IO ()
 main = do
-  let n = 101
-  (s0, lsv0, lls20, w0, g0, phi0) <- prior n
-  --print $ prior n `density` (list s0, real lsv0, real lls20, list w0, list g0, list phi0)
-  samples <- runStan [ g | (s,_,_,_,g, phi) <- prior n, s == list s0, phi == list phi0 ]
-  toFile def "out.png" $ do
-    plot $ line "truth" [sort $ zip (list s0) (list g0)]
-    plot . points "data" $ zip (list s0) [if y then 2.5 else (-2.5) | y <- list phi0]
-    setColors [black `withOpacity` 0.1]
-    plot . line "posterior" $ map (sort . zip (list s0)) samples
+  let n = 100
+  (xData,_,zData,yData) <- sampleP (poly 7 n)
+  loop (0,1) $ \(t,d) -> do
+    samples <- hmcStan [ (w,z) | (x,w,z,y) <- poly d n, x == xData, y == yData ]
+    let (w,z) = last samples
+    (d',_,_,z',_) <- chain 100 (model n `mh` jump n) (d,xData,w,z,yData)
+    plotPoly 7 t xData zData yData d samples d' z'
+    return (t+1,d')
+
+plotPoly :: Integer -> Integer -> RVec -> RVec -> RVec
+         -> Z -> [(RVec,RVec)] -> Z -> RVec -> IO ()
+plotPoly d0 t xData zData yData d samples d' z' =
+  toFile def ("poly_t"++ show t ++".png") $ do
+    plot $ points "data" (list xData `zip` list yData)
+    plot $ line ("truth d="++ show d0) [sort $ list xData `zip` list zData ]
+    plot $ line ("sample d="++ show (integer $ eval_ d'))
+      [ sort $ zip (list xData) (list z') ]
+    setColors [black `withOpacity` 0.05]
+    plot $ line ("posterior d="++ show (integer $ eval_ d)) $
+      map (sort . zip (list xData) . list . snd) samples

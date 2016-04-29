@@ -11,6 +11,8 @@ import qualified Numeric.LinearAlgebra.Data as LAD
 
 integer :: (Integral i, Num n) => i -> n
 integer = fromInteger . toInteger
+real :: (Real r, Fractional f) => r -> f
+real = fromRational . toRational
 
 data ConstVal = Exact  (Array [Integer] Rational)
               | Approx (Array [Integer] Double)

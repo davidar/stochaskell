@@ -21,6 +21,7 @@ builtins =
   ,("*", \[a,b] -> a * b)
   ,("/", \[a,b] -> a / b)
   ,("**", \[a,b] -> a ** b)
+  ,("negate", negate . head)
   ,("exp", exp . head)
   ,("log", log . head)
   ,("pi", const pi)

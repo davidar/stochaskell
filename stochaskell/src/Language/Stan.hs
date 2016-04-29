@@ -92,6 +92,7 @@ stanBuiltinFunctions =
   ,("asMatrix",    "to_matrix")
   ,("chol",        "cholesky_decompose")
   ,("ifThenElse",  "if_else")
+  ,("negate",      "-")
   ]
 
 stanBuiltinDistributions =
@@ -169,7 +170,7 @@ stanProgram (PBlock block refs given) =
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
-runStan :: ProgE [Double] -> IO [[Double]]
+runStan :: (ExprTuple t) => Prog t -> IO [t]
 runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/generated_model"
 
@@ -189,9 +190,17 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     content <- readFile $ basename ++".csv"
 
     putStrLn "--- Removing temporary files ---"
-    return $ map (map read) (tail $ extractCSV content)
-  where ((r,_),p) = runProgE prog
-        extractCSV content = map (take (length cols) . drop (head cols)) table
+    return $ extractCSV content
+  where (rets,p) = runProgExprs prog
+        extractCSV content = map f (tail table)
           where noComment row = row /= "" && head row /= '#'
                 table = map (splitOn ",") . filter noComment $ lines content
-                cols = findIndices (isPrefixOf $ stanNodeRef r ++ ".") (head table)
+                readDouble = read :: String -> Double
+                slice xs = map (xs !!)
+                f row = fromConstVals
+                  [ fromList (toRational . readDouble <$> row `slice` cols)
+                  | (r,_) <- rets, let prefix = stanNodeRef r ++".",
+                    let cols = isPrefixOf prefix `findIndices` head table ]
+
+hmcStan :: (ExprTuple t) => Prog t -> IO [t]
+hmcStan = runStan

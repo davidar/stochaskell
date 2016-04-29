@@ -9,6 +9,7 @@ import qualified Data.Bimap as Bimap
 import Data.Expression
 import Data.Expression.Const
 import Data.Expression.Eval
+import qualified Data.List as List
 import Data.Maybe
 import qualified Data.Number.LogFloat as LF
 import qualified Data.Random as Rand
@@ -52,6 +53,7 @@ liftExprBlock s = do
     return ret
 
 data Prog t = Prog { fromProg :: State PBlock t }
+type P t = Prog t
 instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
 runProg :: Prog a -> (a, PBlock)
 runProg p = runState (fromProg p) emptyPBlock
@@ -205,10 +207,6 @@ densityPBlock env (PBlock block refs _) = LF.product $ do
       Nothing  -> LF.logFloat 1
 
 densityPNode :: Env -> Block -> PNode -> ConstVal -> LF.LogFloat
-densityPNode env block (Dist "normal" [m,s] _) x =
-    LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
-  where m' = toDouble $ evalNodeRef env block m
-        s' = toDouble $ evalNodeRef env block s
 densityPNode env block (Dist "bernoulli" [p] _) x =
     LF.logFloat (if toBool x then p' else 1 - p')
   where p' = toDouble $ evalNodeRef env block p
@@ -229,6 +227,15 @@ densityPNode env block (Dist "geometric" [t] _) x = p * q^k
         p = LF.logFloat t'
         q = LF.logFloat (1 - t')
         k = toInteger x
+densityPNode env block (Dist "normal" [m,s] _) x =
+    LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
+  where m' = toDouble $ evalNodeRef env block m
+        s' = toDouble $ evalNodeRef env block s
+densityPNode env block (Dist "uniform" [a,b] _) x =
+    LF.logToLogFloat $ if a' <= x' && x' < b' then b' - a' else 0
+  where a' = toDouble $ evalNodeRef env block a
+        b' = toDouble $ evalNodeRef env block b
+        x' = toDouble x
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
 densityPNode env block (Loop shp ldag body _) a = LF.product
@@ -242,10 +249,10 @@ densityPNode env block (Loop shp ldag body _) a = LF.product
 -- SAMPLING                                                                 --
 ------------------------------------------------------------------------------
 
-sampleP :: (ExprTuple t) => Prog t -> IO [ConstVal]
+sampleP :: (ExprTuple t) => Prog t -> IO t
 sampleP p = do
     env <- samplePNodes [] block idents
-    return $ evalTuple env rets
+    return . fromConstVals $ evalTuple env rets
   where (rets, PBlock block refs _) = runProg p
         idents = [ (Volatile (dagLevel $ head block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
@@ -258,9 +265,6 @@ samplePNodes env block ((ident,node):rest) = do
     samplePNodes env' block rest
 
 samplePNode :: Env -> Block -> PNode -> IO ConstVal
-samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
-  where m' = toDouble $ evalNodeRef env block m
-        s' = toDouble $ evalNodeRef env block s
 samplePNode env block (Dist "bernoulli" [p] _) = fromBool <$> bernoulli p'
   where p' = toDouble $ evalNodeRef env block p
 samplePNode env block (Dist "bernoulliLogit" [l] _) = fromBool <$> bernoulli p'
@@ -272,6 +276,12 @@ samplePNode env block (Dist "categorical" cats _) = fromRational <$> categorical
         xs = toRational . evalNodeRef env block <$> drop n cats
 samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric p'
   where p' = toDouble $ evalNodeRef env block p
+samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
+  where m' = toDouble $ evalNodeRef env block m
+        s' = toDouble $ evalNodeRef env block s
+samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'
+  where a' = toDouble $ evalNodeRef env block a
+        b' = toDouble $ evalNodeRef env block b
 samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
 
 samplePNode env block (Loop shp ldag hd _) = flatten <$> sequence arr
@@ -279,11 +289,24 @@ samplePNode env block (Loop shp ldag hd _) = flatten <$> sequence arr
         block' = ldag : drop (length block - dagLevel ldag) block
         arr = [ samplePNode (zip inps idx ++ env) block' hd | idx <- evalRange env block shp ]
 
+
+------------------------------------------------------------------------------
+-- DISTRIBUTION CONSTRUCTORS                                                --
+------------------------------------------------------------------------------
+
+-- from hsc3
+chain :: Monad m => Int -> (b -> m b) -> b -> m b
+chain n f = List.foldr (<=<) return (replicate n f)
+loop :: Monad m => a -> (a -> m a) -> m ()
+loop s f = do
+  s' <- f s
+  loop s' f
+
+-- Metropolis-Hastings
 mh :: forall r. ExprTuple r => Prog r -> (r -> Prog r) -> r -> IO r
 mh target proposal x = do
-  y' <- sampleP $ proposal x
-  let y = fromConstVals y' :: r
-      f = density target
+  y <- sampleP (proposal x)
+  let f = density target
       q = density . proposal
       a = LF.fromLogFloat $ (f y * q y x) / (f x * q x y)
   accept <- bernoulli $ if a > 1 then 1 else a

@@ -100,6 +100,16 @@ fromExpr = fromDExpr . erase
 runExpr :: Expr t -> (NodeRef, Block)
 runExpr  =  runDExpr . erase
 
+type B = Expr Bool
+type R = Expr Double
+type Z = Expr Integer
+type BVec = Expr [Bool]
+type RVec = Expr [Double]
+type ZVec = Expr [Integer]
+type BMat = Expr [[Bool]]
+type RMat = Expr [[Double]]
+type ZMat = Expr [[Integer]]
+
 
 ------------------------------------------------------------------------------
 -- TYPES                                                                    --
