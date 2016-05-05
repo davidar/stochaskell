@@ -9,6 +9,14 @@ import Data.Ratio
 import GHC.Exts
 import qualified Numeric.LinearAlgebra.Data as LAD
 
+toBool :: (Boolean b, Eq b) => b -> Bool
+toBool b = if notB b == false then True else False
+fromBool :: (Boolean b) => Bool -> b
+fromBool True  = true
+fromBool False = false
+
+boolean :: (Eq a, Boolean a, Boolean b) => a -> b
+boolean = fromBool . toBool
 integer :: (Integral i, Num n) => i -> n
 integer = fromInteger . toInteger
 real :: (Real r, Fractional f) => r -> f
@@ -19,12 +27,16 @@ data ConstVal = Exact  (Array [Integer] Rational)
               deriving (Eq, Ord)
 
 instance Show ConstVal where
-    show (Approx a) = show a
+    show (Approx a) = if isScalar a then show (toScalar a) else show a
     show c = show $ approx c
 
 approx :: ConstVal -> ConstVal
 approx (Exact a) = Approx (fromRational <$> a)
 approx a = a
+
+isApprox :: ConstVal -> Bool
+isApprox (Approx _) = True
+isApprox (Exact  _) = False
 
 constUnOp :: (forall a. Fractional a => a -> a) -> ConstVal -> ConstVal
 constUnOp f (Exact  a) = Exact  (f <$> a)
@@ -40,11 +52,14 @@ constBinOp f (Exact  a) (Approx b) = Approx (zipWithA f (fromRational <$> a) b)
 constBinOp f (Approx a) (Exact  b) = Approx (zipWithA f a (fromRational <$> b))
 constBinOp f (Approx a) (Approx b) = Approx (zipWithA f a b)
 
-toScalar :: (Ix t, Show t, Show r) => Array [t] r -> r
-toScalar a | bounds a == ([],[]) = a![]
-           | otherwise = error $ "can't convert non-scalar "++ show a ++" to real"
+isScalar :: (Ix t, Show t) => Array [t] r -> Bool
+isScalar a = bounds a == ([],[])
 
-fromScalar :: (Ix t) => e -> Array [t] e
+toScalar :: (Ix t, Show t, Show r) => Array [t] r -> r
+toScalar a | isScalar a = a![]
+           | otherwise  = error $ "can't convert non-scalar "++ show a ++" to real"
+
+fromScalar :: (Ix t, Show t) => e -> Array [t] e
 fromScalar x = array ([],[]) [([], x)]
 
 toDouble :: ConstVal -> Double
@@ -54,27 +69,32 @@ toDouble (Approx a) = toScalar a
 fromDouble :: Double -> ConstVal
 fromDouble = Approx . fromScalar
 
-flatten :: [ConstVal] -> ConstVal
-flatten = fromList . map toRational
+dimension :: ConstVal -> Int
+dimension = length . fst . bounds
+
+entries :: (Fractional f) => ConstVal -> [f]
+entries (Exact  a) = real <$> elems a
+entries (Approx a) = real <$> elems a
 
 toVector :: ConstVal -> ShapedVector Double
-toVector a = ShVec (lo,hi) $ fromList (fromRational <$> toList a)
+toVector (Approx a) = ShVec (lo,hi) $ fromList (elems a)
   where ([lo],[hi]) = bounds a
+toVector a = toVector (approx a)
 fromVector :: ShapedVector Double -> ConstVal
 fromVector v = Approx $ listArray ([lo],[hi]) (toList v)
   where (lo,hi) = bounds v
 
 toMatrix :: ConstVal -> ShapedMatrix Double
-toMatrix a = ShMat r c $ LAD.matrix ncol xs
+toMatrix (Approx a) = ShMat r c $ LAD.matrix ncol xs
   where ncol = fromInteger . cardinality $ shape a !! 1
-        xs = fromRational <$> toList a
+        xs = elems a
         r:c:_ = shape a
+toMatrix a = toMatrix (approx a)
 fromMatrix :: ShapedMatrix Double -> ConstVal
 fromMatrix (ShMat (r,r') (c,c') m) = Approx $ listArray ([r,c],[r',c']) (toList $ LAD.flatten m)
 
 foldrConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
-foldrConst f r xs = fromRational $ foldr g (toRational r) (toList xs)
-  where g a b = toRational $ f (fromRational a) (fromRational b)
+foldrConst f r = foldr f r . toList
 
 instance Num ConstVal where
     (+) = constBinOp (+)
@@ -108,10 +128,20 @@ instance Integral ConstVal where
                   in (fromInteger q, fromInteger r)
 
 instance IsList ConstVal where
-    type Item ConstVal = Rational
-    fromList xs = Exact $ listArray ([1], [fromIntegral $ length xs]) (map toRational xs)
-    toList (Exact  a) = elems a
-    toList (Approx a) = toRational <$> elems a
+    type Item ConstVal = ConstVal
+    fromList xs = if ok then val else error "cannot concat irregular arrays"
+      where n = integer (length xs)
+            (lo,hi):bs = map bounds xs
+            ok = all (== (lo,hi)) bs
+            a = Exact $ array (1:lo,n:hi)
+              [ (i:js, toRational $ x!js) | (i,x) <- zip [1..n] xs
+                                          , js <- range (lo,hi) ]
+            val = if any isApprox xs then approx a else a
+    toList val = if isApprox val then map approx xs else xs
+      where (a:lo,b:hi) = bounds val
+            xs = [ Exact $ array (lo,hi)
+                   [ (js, toRational $ val!(i:js)) | js <- range (lo,hi) ]
+                 | i <- [a..b] ]
 
 instance Indexable ConstVal [Integer] ConstVal where
     (Exact  a) ! i = Exact  $ fromScalar (a!i)
@@ -140,13 +170,6 @@ instance LinearOperator ConstVal ConstVal ConstVal where
 
 instance SquareMatrix ConstVal where
     chol = fromMatrix . chol . toMatrix
-
-toBool :: (Boolean b, Eq b) => b -> Bool
-toBool b = if notB b == false then True else False
-
-fromBool :: (Boolean b) => Bool -> b
-fromBool True  = true
-fromBool False = false
 
 instance Boolean ConstVal where
     true  = Exact $ fromScalar 1

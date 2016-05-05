@@ -59,7 +59,8 @@ evalNodeRef env block (Var (Internal level ptr) _) =
           error $ "pointer "++ show level ++":"++ show ptr ++" not found"
     in evalNode env block node
 evalNodeRef env _ (Var ident _) =
-    fromMaybe (error $ "env lookup failure for "++ show ident) $ lookup ident env
+    fromMaybe (error $ "env lookup failure for "++ show ident
+               ++" in "++ show (map fst env)) $ lookup ident env
 evalNodeRef _ _ (Const c) = c
 evalNodeRef env block (Index arr idx) =
     evalNodeRef env block arr ! (toInteger . evalNodeRef env block <$> idx)
@@ -113,4 +114,5 @@ unifyNode env block (Apply "asVector" [v] _) val =
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val =
     unifyNodeRef env block (if toBool c' then a else b) val
   where c' = evalNodeRef env block c
+unifyNode _ _ FoldR{} _ = [] -- TODO
 unifyNode _ _ node _ = trace ("WARN unable to unify node "++ show node) []

@@ -18,7 +18,7 @@ zipWithA f a b | A.bounds a == A.bounds b =
                  A.listArray (A.bounds a) $ zipWith f (A.elems a) (A.elems b)
                | otherwise = error "arrays not same shape"
 
-instance (Ix i) => Ix [i] where
+instance (Ix i, Show i) => Ix [i] where
   range (x:xs,y:ys) = [ z:zs | z <- range (x,y), zs <- range (xs,ys) ]
   range ([],[]) = [[]]
   range _ = []
@@ -26,7 +26,7 @@ instance (Ix i) => Ix [i] where
   inRange ([],[]) [] = True
   inRange _ _ = False
   index b i | inRange b i = unsafeIndex b i
-            | otherwise = error "index out of range"
+            | otherwise = error $ "index "++ show i ++" out of range "++ show b
     where unsafeIndex (x:xs,y:ys) (z:zs) =
             index (x,y) z * rangeSize (xs,ys) + unsafeIndex (xs,ys) zs
           unsafeIndex ([],[]) [] = 0
@@ -40,11 +40,11 @@ data AbstractArray i e = AArr [Interval i] ([i] -> e)
 apply :: AbstractArray i e -> [i] -> e
 apply = (!) -- TODO
 
-toArray :: (Ix i) => AbstractArray i e -> A.Array [i] e
+toArray :: (Ix i, Show i) => AbstractArray i e -> A.Array [i] e
 toArray a = A.array (bounds a) assocs
   where assocs = [ (i, apply a i) | i <- range (bounds a) ]
 
-fromArray :: (Ix i) => A.Array [i] e -> AbstractArray i e
+fromArray :: (Ix i, Show i) => A.Array [i] e -> AbstractArray i e
 fromArray a = AArr sh $ (A.!) a
   where sh = zip (fst $ A.bounds a) (snd $ A.bounds a)
 

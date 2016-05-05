@@ -44,11 +44,14 @@ stanId (Volatile level i) = "sample_"++ show level ++"_"++ show i
 stanId (Internal level i) =  "value_"++ show level ++"_"++ show i
 
 stanConstVal :: ConstVal -> String
-stanConstVal (Exact a) =
+stanConstVal (Exact a) | isScalar a =
     if d == 1 then show n else show (fromRational c :: Double)
   where c = toScalar a
         n = numerator c
         d = denominator c
+stanConstVal (Approx a) | isScalar a = show (toScalar a)
+stanConstVal val | dimension val == 1 =
+  "c("++ stanConstVal `commas` toList val ++")"
 
 stanNodeRef :: NodeRef -> String
 stanNodeRef (Var s _) = stanId s
@@ -120,11 +123,12 @@ stanNode name (Array sh dag ret _) =
     forLoop (inputs dag) sh $
         stanDAG dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] <- "++ stanNodeRef ret ++";"
-stanNode name (FoldR dag ret seed (Var ls (ArrayT _ [(lo,hi)] s)) t) =
+stanNode name (FoldR dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) =
     name ++" <- "++ stanNodeRef seed ++";\n"++ loop
   where d = dagLevel dag
         idx = Dummy d 0
         [i,j] = inputs dag
+        s = typeIndex at
         loop =
           forLoop [idx] [(lo,hi)] $ "  "++
            stanDecl (stanId i) s ++"\n  "++
@@ -134,6 +138,7 @@ stanNode name (FoldR dag ret seed (Var ls (ArrayT _ [(lo,hi)] s)) t) =
            stanId j ++" <- "++ name ++";\n  {\n"++
            stanDAG dag ++"\n  "++
            name ++" <- "++ stanNodeRef ret ++";\n  }"
+stanNode _ node = error $ "unable to codegen node "++ show node
 
 stanPNode :: Label -> PNode -> String
 stanPNode name (Dist f args _) =
@@ -181,8 +186,7 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
 
     putStrLn "--- Sampling Stan model ---"
     let dat = unlines . flip map (constraints p) $ \(n,ar) ->
-                stanNodeRef n ++" <- c("++
-                  (stanNodeRef . Const . fromRational) `commas` toList ar ++")"
+                stanNodeRef n ++" <- "++ stanConstVal ar
     putStrLn dat
     writeFile (basename ++".data") dat
     system $ basename ++" sample data file="++ basename ++".data "++
@@ -198,8 +202,8 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
                 readDouble = read :: String -> Double
                 slice xs = map (xs !!)
                 f row = fromConstVals
-                  [ fromList (toRational . readDouble <$> row `slice` cols)
-                  | (r,_) <- rets, let prefix = stanNodeRef r ++".",
+                  [ fromList (real . readDouble <$> row `slice` cols)
+                  | r <- rets, let prefix = stanNodeRef r ++".",
                     let cols = isPrefixOf prefix `findIndices` head table ]
 
 hmcStan :: (ExprTuple t) => Prog t -> IO [t]

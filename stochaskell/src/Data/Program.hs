@@ -58,20 +58,18 @@ instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
 runProg :: Prog a -> (a, PBlock)
 runProg p = runState (fromProg p) emptyPBlock
 
-type NRT = (NodeRef, Type)
 type ProgE t = Prog (Expr t)
-fromProgE :: (ExprType t) => ProgE t -> State PBlock NRT
+fromProgE :: ProgE t -> State PBlock NodeRef
 fromProgE p = head <$> fromProgExprs p
-runProgE :: (ExprType t) => ProgE t -> (NRT, PBlock)
+runProgE :: ProgE t -> (NodeRef, PBlock)
 runProgE p = runState (fromProgE p) emptyPBlock
 
-fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NRT]
+fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NodeRef]
 fromProgExprs p = do
   es <- fromExprTuple <$> fromProg p
-  is <- mapM (liftExprBlock . fromDExpr) es
-  return $ is `zip` map typeDExpr es
+  mapM (liftExprBlock . fromDExpr) es
 
-runProgExprs :: (ExprTuple t) => Prog t -> ([NRT], PBlock)
+runProgExprs :: (ExprTuple t) => Prog t -> ([NodeRef], PBlock)
 runProgExprs p = runState (fromProgExprs p) emptyPBlock
 
 instance Functor Prog where
@@ -90,7 +88,7 @@ instance Monad Prog where
 -- PRIMITIVE DISTRIBUTIONS                                                  --
 ------------------------------------------------------------------------------
 
-dist :: ExprType t => State Block PNode -> ProgE t
+dist :: State Block PNode -> ProgE t
 dist s = Prog $ do
     d <- liftExprBlock s
     PBlock block rhs given <- get
@@ -104,14 +102,12 @@ dist s = Prog $ do
 instance Distribution Bernoulli (Expr Double) Prog (Expr Bool) where
     sample (Bernoulli p) = dist $ do
         i <- fromExpr p
-        return $ Dist "bernoulli" [i] t
-      where (TypeIs t) = typeOf :: TypeOf Bool
+        return $ Dist "bernoulli" [i] boolT
     sample (BernoulliLogit l) = dist $ do
         i <- fromExpr l
-        return $ Dist "bernoulliLogit" [i] t
-      where (TypeIs t) = typeOf :: TypeOf Bool
+        return $ Dist "bernoulliLogit" [i] boolT
 
-instance (ExprType t) => Distribution Categorical (Expr Double) Prog (Expr t) where
+instance (ScalarType t) => Distribution Categorical (Expr Double) Prog (Expr t) where
     sample cat = dist $ do
         let (ps,xs) = unzip $ Categorical.toList cat
         qs <- mapM fromExpr ps
@@ -152,8 +148,8 @@ instance Distribution Uniform (Expr Double) Prog (Expr Double) where
 -- LOOPS                                                                    --
 ------------------------------------------------------------------------------
 
-instance forall r f. (ExprType r, ExprType f)
-    => Joint Prog (Expr Integer) (Expr r) (Expr f) where
+instance forall r f. ScalarType r =>
+         Joint Prog (Expr Integer) (Expr r) (Expr f) where
   joint _ ar = Prog $ do
     sh <- liftExprBlock . sequence . flip map (shape ar) $ \(a,b) -> do
       i <- fromExpr a
@@ -162,8 +158,9 @@ instance forall r f. (ExprType r, ExprType f)
     PBlock block dists given <- get
     let ids = [ Dummy (length block) i | i <- [1..length sh] ]
         p = ar ! [expr . return $ Var i IntT | i <- ids]
-        ((_,t), PBlock (dag:block') [act] []) = runState (fromProgE p) $
+        (_, PBlock (dag:block') [act] []) = runState (fromProgE p) $
             PBlock (DAG (length block) ids Bimap.empty : block) [] []
+        TypeIs t = typeOf :: TypeOf r
         loopType = ArrayT Nothing sh t
         loop = Loop sh dag act loopType
     put $ PBlock block' (loop:dists) given
@@ -240,7 +237,7 @@ densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
 densityPNode env block (Loop shp ldag body _) a = LF.product
     [ densityPNode (zip inps i ++ env) block' body (fromRational x)
-    | (i,x) <- evalRange env block shp `zip` toList a ]
+    | (i,x) <- evalRange env block shp `zip` entries a ]
   where inps = inputs ldag
         block' = ldag : drop (length block - dagLevel ldag) block
 
@@ -284,7 +281,7 @@ samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'
         b' = toDouble $ evalNodeRef env block b
 samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
 
-samplePNode env block (Loop shp ldag hd _) = flatten <$> sequence arr
+samplePNode env block (Loop shp ldag hd _) = fromList <$> sequence arr
   where inps = inputs ldag
         block' = ldag : drop (length block - dagLevel ldag) block
         arr = [ samplePNode (zip inps idx ++ env) block' hd | idx <- evalRange env block shp ]
