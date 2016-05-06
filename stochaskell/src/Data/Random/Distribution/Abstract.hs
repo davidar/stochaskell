@@ -8,7 +8,7 @@ import qualified Data.Random.Distribution.Categorical as Categorical
 import Data.Random.Distribution.Poisson (Poisson(..))
 import System.Random
 
-class Distribution d s m t | d m t -> s where
+class (Monad m) => Distribution d s m t | d m t -> s where
     sample :: d s t -> m t
 
 data Bernoulli p t = Bernoulli p
@@ -44,10 +44,13 @@ instance Distribution Geometric Double IO Integer where
     sample (Geometric p) = do
       coin <- bernoulli p
       if coin then return 0 else do
-        x <- geometric p
+        x <- geometric 0 p
         return (x + 1)
-geometric :: Distribution Geometric s m t => s -> m t
-geometric p = sample $ Geometric p
+geometric :: (Distribution Geometric s m t, Num t) => Integer -> s -> m t
+geometric 0 p = sample $ Geometric p
+geometric a p = do
+  g <- geometric 0 p
+  return (fromInteger a + g)
 
 data Normal a r = Normal a a
 instance Distribution Normal Double IO Double where

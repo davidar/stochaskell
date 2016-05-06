@@ -2,8 +2,9 @@ module Language.Stan where
 
 import Control.Applicative ()
 import Data.Array.Abstract
-import Data.Expression
+import Data.Expression hiding (const)
 import Data.Expression.Const
+import Data.Expression.Eval
 import Data.List
 import Data.List.Split
 import Data.Maybe
@@ -175,8 +176,8 @@ stanProgram (PBlock block refs given) =
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
-runStan :: (ExprTuple t) => Prog t -> IO [t]
-runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
+runStan :: (ExprTuple t) => (String -> IO String) -> Prog t -> IO [t]
+runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/generated_model"
 
     putStrLn "--- Generating Stan code ---"
@@ -185,12 +186,14 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     system $ "stan "++ basename
 
     putStrLn "--- Sampling Stan model ---"
-    let dat = unlines . flip map (constraints p) $ \(n,ar) ->
-                stanNodeRef n ++" <- "++ stanConstVal ar
+    let dat = unlines . flip map (constraints p) $ \(n,x) ->
+                stanNodeRef n ++" <- "++ stanConstVal x
     putStrLn dat
     writeFile (basename ++".data") dat
+    -- TODO: avoid shell injection
+    args <- extraArgs basename
     system $ basename ++" sample data file="++ basename ++".data "++
-                              "output file="++ basename ++".csv"
+                              "output file="++ basename ++".csv "++ args
     content <- readFile $ basename ++".csv"
 
     putStrLn "--- Removing temporary files ---"
@@ -207,4 +210,12 @@ runStan prog = withSystemTempDirectory "stan" $ \tmpDir -> do
                     let cols = isPrefixOf prefix `findIndices` head table ]
 
 hmcStan :: (ExprTuple t) => Prog t -> IO [t]
-hmcStan = runStan
+hmcStan = runStan (const $ return "")
+
+hmcStanInit :: (ExprTuple t) => Prog t -> t -> IO [t]
+hmcStanInit p t = flip runStan p $ \basename -> do
+    let fname = basename ++".init"
+    fname `writeFile` unlines assigns
+    return $ "init="++ fname
+  where assigns = zipWith f (fst $ runProgExprs p) (evalTuple [] t)
+        f n x = stanNodeRef n ++" <- "++ stanConstVal x

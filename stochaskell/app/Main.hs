@@ -20,52 +20,52 @@ import Data.Program
 import Data.Random.Distribution.Abstract
 import Language.Stan
 
-horner :: RVec -> R -> R
-horner ws x = foldr f 0 ws
-  where f w r = w + x * r -- (w:ws) -> w + x * rec ws
+polyroots :: RVec -> R -> R
+polyroots as x = foldr f 1 as
+  where f a r = (x - a) * r
 
 poly :: Z -> Z -> P (RVec,RVec,RVec,RVec)
 poly d n = do
-  w <- joint vector [ normal 0 1 | i <- 1...(d + 1) ]
-  x <- joint vector [ uniform (-1.5) 1.5 | i <- 1...n ]
-  let z =    vector [ horner w (x!i)     | i <- 1...n ]
-  y <- joint vector [ normal (z!i) 10    | i <- 1...n ]
-  return (x,w,z,y)
+  r <- joint vector [ uniform (-1) 1         | i <- 1...d ]
+  x <- joint vector [ uniform (-1) 1         | i <- 1...n ]
+  let z =    vector [ 10 * polyroots r (x!i) | i <- 1...n ]
+  y <- joint vector [ normal (z!i) 1         | i <- 1...n ]
+  return (r,x,z,y)
 
 model :: Z -> P (Z,RVec,RVec,RVec,RVec)
 model n = do
-  d <- geometric (1/2)
-  (x,w,z,y) <- poly d n
-  return (d,x,w,z,y)
+  d <- geometric 1 (1/10)
+  (r,x,z,y) <- poly d n
+  return (d,r,x,z,y)
 
 jump :: Z -> (Z,RVec,RVec,RVec,RVec) -> P (Z,RVec,RVec,RVec,RVec)
-jump n (d,x,w,_,y) = do
-  d' <- categorical [(1/2, d + 1)
-                    ,(1/2, if d > 1 then d - 1 else d)]
-  m <- normal 0 1
-  let w' = vector [ if i > d then m else w!i | i <- 1...d' ]
-      z' = vector [ horner w' (x!i) | i <- 1...n ]
-  return (d',x,w',z',y)
+jump n (_,_,x,_,y) = do
+  d' <- geometric 1 (1/10)
+  r' <- joint vector [ uniform (-1) 1          | i <- 1...d' ]
+  let z' =    vector [ 10 * polyroots r' (x!i) | i <- 1...n  ]
+  return (d',r',x,z',y)
 
 main :: IO ()
 main = do
-  let n = 100
-  (xData,_,zData,yData) <- sampleP (poly 7 n)
-  loop (0,1) $ \(t,d) -> do
-    samples <- hmcStan [ (w,z) | (x,w,z,y) <- poly d n, x == xData, y == yData ]
-    let (w,z) = last samples
-    (d',_,_,z',_) <- chain 100 (model n `mh` jump n) (d,xData,w,z,yData)
-    plotPoly 7 t xData zData yData d samples d' z'
-    return (t+1,d')
+  let n = 100; dTrue = 5
+  (_,xData,zData,yData) <- sampleP (poly dTrue n)
+  let d0 = 1
+  (r0,z0) <- last <$> hmcStan [ (r,z) | (r,x,z,y) <- poly d0 n, x == xData, y == yData ]
+  loop (1,d0,r0,z0) $ \(t,d,r,z) -> do
+    (d',rMH,_,zMH,_) <- chain 1000 (model n `mh` jump n) (d,r,xData,z,yData)
+    samples <- [ (r,z) | (r,x,z,y) <- poly d' n, x == xData, y == yData ] `hmcStanInit` (rMH,zMH)
+    plotPoly dTrue t xData zData yData d' zMH samples
+    let (r',z') = last samples
+    return (t+1,d',r',z')
 
 plotPoly :: Integer -> Integer -> RVec -> RVec -> RVec
-         -> Z -> [(RVec,RVec)] -> Z -> RVec -> IO ()
-plotPoly d0 t xData zData yData d samples d' z' =
+         -> Z -> RVec -> [(RVec,RVec)] -> IO ()
+plotPoly dTrue t xData zData yData d' zMH samples =
   toFile def ("poly_t"++ show t ++".png") $ do
     plot $ points "data" (list xData `zip` list yData)
-    plot $ line ("truth d="++ show d0) [sort $ list xData `zip` list zData ]
+    plot $ line ("truth d="++ show dTrue) [sort $ list xData `zip` list zData ]
     plot $ line ("sample d="++ show (integer $ eval_ d'))
-      [ sort $ zip (list xData) (list z') ]
+      [ sort $ zip (list xData) (list zMH) ]
     setColors [black `withOpacity` 0.05]
-    plot $ line ("posterior d="++ show (integer $ eval_ d)) $
+    plot $ line ("posterior d="++ show (integer $ eval_ d')) $
       map (sort . zip (list xData) . list . snd) samples

@@ -89,6 +89,7 @@ evalNode env block (FoldR body hd seed ls _) = foldrConst f r xs
         r  = evalNodeRef env block seed
         xs = evalNodeRef env block ls
 
+-- TODO miniKanren
 unifyD :: Env -> DExpr -> ConstVal -> Env
 unifyD env e = unifyNodeRef env block ret
   where (ret, block) = runDExpr e
@@ -114,5 +115,10 @@ unifyNode env block (Apply "asVector" [v] _) val =
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val =
     unifyNodeRef env block (if toBool c' then a else b) val
   where c' = evalNodeRef env block c
+unifyNode env block (Apply "+" [Const a, b] _) val =
+    unifyNodeRef env block b (val - a)
+unifyNode env block (Apply "*" [Const a, b] _) val =
+    unifyNodeRef env block b (val / a)
 unifyNode _ _ FoldR{} _ = [] -- TODO
-unifyNode _ _ node _ = trace ("WARN unable to unify node "++ show node) []
+unifyNode _ _ node val = flip trace [] $
+  "WARN unable to unify node "++ show node ++" with value "++ show val
