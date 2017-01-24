@@ -46,12 +46,23 @@ type Level = Int
 data Id = Dummy Level Pointer
         | Volatile Level Pointer
         | Internal Level Pointer
-        deriving (Eq, Ord, Show)
+        deriving (Eq, Ord)
+
+instance Show Id where
+  show (Dummy l p)    = "i_"++ show l ++"_"++ show p
+  show (Volatile l p) = "x_"++ show l ++"_"++ show p
+  show (Internal l p) = "v_"++ show l ++"_"++ show p
 
 data NodeRef = Var Id Type
              | Const ConstVal
              | Index NodeRef [NodeRef]
-             deriving (Eq, Ord, Show)
+             deriving (Eq, Ord)
+
+instance Show NodeRef where
+  show (Var i t) = "("++ show i ++" :: "++ show t ++")"
+  show (Const c) = show c
+  show (Index f js) = intercalate "!" (show f : map show (reverse js))
+
 data Node = Apply { fName :: String
                   , fArgs :: [NodeRef]
                   , typeNode :: Type
@@ -117,8 +128,14 @@ data Type
     | RealT
     | SubrangeT Type (Maybe NodeRef) (Maybe NodeRef)
     | ArrayT (Maybe String) [AA.Interval NodeRef] Type
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord)
 boolT = SubrangeT IntT (Just $ Const 0) (Just $ Const 1)
+
+instance Show Type where
+  show IntT = "Z"
+  show RealT = "R"
+  show (SubrangeT t a b) = unwords ["Subrange", show t, show a, show b]
+  show (ArrayT name sh t) = unwords ["Array", show name, show sh, show t]
 
 newtype TypeOf t = TypeIs Type
 class ScalarType t where
@@ -353,6 +370,7 @@ instance (Floating t) => Floating (Expr t) where
     pi = apply "pi" RealT []
     (**) = applyClosed2 "**"
 
+    -- TODO: applying these functions to IntT should yield RealT
     exp   = applyClosed1 "exp"
     log   = applyClosed1 "log"
     sqrt  = applyClosed1 "sqrt"
@@ -393,6 +411,13 @@ asMatrix m = expr $ do
     let (ArrayT _ [r,c] t) = typeRef i
     simplify $ Apply "asMatrix" [i] (ArrayT (Just "matrix") [r,c] t)
 
+instance AA.InnerProduct (Expr [e]) (Expr e) where
+    u <.> v = expr $ do
+        i <- fromExpr $ asVector u
+        j <- fromExpr $ asVector v
+        let (ArrayT _ _ t) = typeRef i
+        simplify $ Apply "<.>" [i,j] t
+
 instance AA.LinearOperator (Expr [[e]]) (Expr [e]) (Expr [e]) where
     m #> v = expr $ do
         i <- fromExpr $ asMatrix m
@@ -404,6 +429,9 @@ instance AA.SquareMatrix (Expr [[e]]) where
     chol m = expr $ do
         i <- fromExpr $ asMatrix m
         simplify $ Apply "chol" [i] (typeRef i)
+    inv m = expr $ do
+        i <- fromExpr $ asMatrix m
+        simplify $ Apply "inv" [i] (typeRef i)
 
 instance Boolean (Expr Bool) where
     true  = apply "true" boolT []
@@ -445,8 +473,8 @@ class ExprTuple t where
     fromExprTuple :: t -> [DExpr]
     fromConstVals :: [ConstVal] -> t
 
-unify :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
-unify s t = fromExprTuple s `zip` fromExprTuple t
+zipExprTuple :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
+zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
 
 const :: ConstVal -> Expr t
 const = expr . return . Const
@@ -478,6 +506,18 @@ instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
       [erase a, erase b, erase c, erase d, erase e, erase f]
     fromConstVals [a,b,c,d,e,f] =
       (const a, const b, const c, const d, const e, const f)
+    fromConstVals _ = undefined
+instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
+    fromExprTuple (a,b,c,d,e,f,g) =
+      [erase a, erase b, erase c, erase d, erase e, erase f, erase g]
+    fromConstVals [a,b,c,d,e,f,g] =
+      (const a, const b, const c, const d, const e, const f, const g)
+    fromConstVals _ = undefined
+instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
+    fromExprTuple (a,b,c,d,e,f,g,h) =
+      [erase a, erase b, erase c, erase d, erase e, erase f, erase g, erase h]
+    fromConstVals [a,b,c,d,e,f,g,h] =
+      (const a, const b, const c, const d, const e, const f, const g, const h)
     fromConstVals _ = undefined
 
 instance Show DAG where

@@ -1,11 +1,7 @@
 .PHONY: build exec
 
-GHC_OPTS += -rtsopts -fprof-auto -fprof-cafs
-STACK_OPTS += --ghc-options="$(GHC_OPTS)"
-STACK_OPTS += --enable-executable-profiling --enable-library-profiling
-
 build:
-	stack build $(STACK_OPTS)
+	stack build --trace
 
-exec: build
-	stack exec stochaskell-exe -- +RTS -xc
+%-exe: build
+	stack exec $@ -- +RTS -xc

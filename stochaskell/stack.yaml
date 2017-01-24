@@ -2,9 +2,6 @@ flags: {}
 extra-package-dbs: []
 packages:
 - '.'
-extra-deps:
-- bimap-0.3.1
-- hmatrix-0.17.0.1
-- logfloat-0.13.3.3
-- mersenne-random-pure64-0.2.0.4
-resolver: lts-3.13
+extra-deps: []
+resolver: lts-6.27
+system-ghc: false

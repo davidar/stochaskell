@@ -129,6 +129,7 @@ instance Integral ConstVal where
 
 instance IsList ConstVal where
     type Item ConstVal = ConstVal
+    fromList [] = error "fromList [] -> ConstVal"
     fromList xs = if ok then val else error "cannot concat irregular arrays"
       where n = integer (length xs)
             (lo,hi):bs = map bounds xs
@@ -165,18 +166,22 @@ instance Ix ConstVal where
             hi = floor   <$> elems b
             ix = round   <$> elems c
 
+instance InnerProduct ConstVal ConstVal where
+    u <.> v = fromDouble $ toVector u <.> toVector v
+
 instance LinearOperator ConstVal ConstVal ConstVal where
     m #> v = fromVector $ toMatrix m #> toVector v
 
 instance SquareMatrix ConstVal where
     chol = fromMatrix . chol . toMatrix
+    inv = fromMatrix . inv . toMatrix
 
 instance Boolean ConstVal where
     true  = Exact $ fromScalar 1
     false = Exact $ fromScalar 0
     notB (Exact a) = if toScalar a == 0 then true else false
     a &&* b = fromBool $ toBool a && toBool b
-    a ||* b = fromBool $ toBool a && toBool b
+    a ||* b = fromBool $ toBool a || toBool b
 
 type instance BooleanOf ConstVal = ConstVal
 

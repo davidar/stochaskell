@@ -16,6 +16,7 @@ import Data.Expression
 import Data.Expression.Const
 import Data.Expression.Eval
 import Data.List hiding (foldr)
+import Data.Maybe
 import Data.Program
 import Data.Random.Distribution.Abstract
 import Language.Stan
@@ -64,8 +65,8 @@ plotPoly dTrue t xData zData yData d' zMH samples =
   toFile def ("poly_t"++ show t ++".png") $ do
     plot $ points "data" (list xData `zip` list yData)
     plot $ line ("truth d="++ show dTrue) [sort $ list xData `zip` list zData ]
-    plot $ line ("sample d="++ show (integer $ eval_ d'))
+    plot $ line ("sample d="++ show (integer . fromJust $ eval_ d'))
       [ sort $ zip (list xData) (list zMH) ]
     setColors [black `withOpacity` 0.05]
-    plot $ line ("posterior d="++ show (integer $ eval_ d')) $
+    plot $ line ("posterior d="++ show (integer . fromJust $ eval_ d')) $
       map (sort . zip (list xData) . list . snd) samples

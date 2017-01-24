@@ -18,7 +18,9 @@ import Data.Random.Distribution.Abstract
 import Data.Random.Distribution.Categorical (Categorical)
 import qualified Data.Random.Distribution.Categorical as Categorical
 import Data.Random.Distribution.Poisson (Poisson(..))
+import Debug.Trace
 import GHC.Exts
+import Numeric.SpecFunctions
 
 
 ------------------------------------------------------------------------------
@@ -35,6 +37,10 @@ data PNode = Dist { dName :: String
                   , typePNode :: Type
                   }
            deriving (Eq)
+
+instance Show PNode where
+  show (Dist d js t) = unwords (d : map show js) ++" :: P "++ show t
+  show (Loop sh defs body t) = unwords ["Loop", show sh, show defs, show body, show t]
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
@@ -189,54 +195,65 @@ instance MonadGuard Prog where
 ------------------------------------------------------------------------------
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
-density prog vals = flip densityPBlock pb $ do
-    (d,e) <- unify rets vals
-    let v = evalD [] e
-    unifyD [] d v
+density prog vals = flip densityPBlock pb . flip compose [] . reverse $
+    [ unifyD d v | (d,e) <- zipExprTuple rets vals, let Just v = evalD [] e ]
   where (rets, pb) = runProg prog
 
 densityPBlock :: Env -> PBlock -> LF.LogFloat
-densityPBlock env (PBlock block refs _) = LF.product $ do
+densityPBlock env (PBlock block refs _) = product $ do
     (i,d) <- zip [0..] $ reverse refs
     let ident = Volatile (dagLevel $ head block) i
     return $ case lookup ident env of
-      Just val -> densityPNode env block d val
-      Nothing  -> LF.logFloat 1
+      Just val -> let p = densityPNode env block d val
+        in trace ("density ("++ show d ++") "++ show val ++" = "++ show p) p
+      Nothing  -> error $ "no value set for "++ show ident
 
 densityPNode :: Env -> Block -> PNode -> ConstVal -> LF.LogFloat
 densityPNode env block (Dist "bernoulli" [p] _) x =
     LF.logFloat (if toBool x then p' else 1 - p')
-  where p' = toDouble $ evalNodeRef env block p
+  where p' = toDouble . fromJust $ evalNodeRef env block p
 densityPNode env block (Dist "bernoulliLogit" [l] _) a
     | x == 1 = LF.logFloat p
     | x == 0 = LF.logFloat (1 - p)
     | otherwise = LF.logFloat 0
   where x = toRational a
-        l' = toDouble $ evalNodeRef env block l
+        l' = toDouble . fromJust $ evalNodeRef env block l
         p = 1 / (1 + exp (-l'))
 densityPNode env block (Dist "categorical" cats _) x = LF.logFloat $ toDouble p
   where n = length cats `div` 2
-        ps = evalNodeRef env block <$> take n cats
-        xs = evalNodeRef env block <$> drop n cats
+        ps = fromJust . evalNodeRef env block <$> take n cats
+        xs = fromJust . evalNodeRef env block <$> drop n cats
         p = fromMaybe 0 . lookup x $ zip xs ps
+densityPNode env block (Dist "gamma" [a,b] _) x
+    | x' >= 0 = LF.logToLogFloat l
+    | otherwise = LF.logFloat 0
+  where a' = toDouble . fromJust $ evalNodeRef env block a
+        b' = toDouble . fromJust $ evalNodeRef env block b
+        x' = toDouble x
+        l = a' * log b' + (a' - 1) * log x' - b' * x' - logGamma a'
 densityPNode env block (Dist "geometric" [t] _) x = p * q^k
-  where t' = toDouble $ evalNodeRef env block t
+  where t' = toDouble . fromJust $ evalNodeRef env block t
         p = LF.logFloat t'
         q = LF.logFloat (1 - t')
         k = toInteger x
 densityPNode env block (Dist "normal" [m,s] _) x =
     LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
-  where m' = toDouble $ evalNodeRef env block m
-        s' = toDouble $ evalNodeRef env block s
+  where m' = toDouble . fromJust $ evalNodeRef env block m
+        s' = toDouble . fromJust $ evalNodeRef env block s
+densityPNode env block (Dist "poisson" [l] _) x =
+    LF.logToLogFloat $ fromIntegral k * log l' - l' - logFactorial k
+  where l' = toDouble . fromJust $ evalNodeRef env block l
+        k = toInteger x
 densityPNode env block (Dist "uniform" [a,b] _) x =
-    LF.logToLogFloat $ if a' <= x' && x' < b' then b' - a' else 0
-  where a' = toDouble $ evalNodeRef env block a
-        b' = toDouble $ evalNodeRef env block b
+    LF.logFloat $ if a' <= x' && x' < b' then 1/(b' - a') else 0
+  where a' = toDouble . fromJust $ evalNodeRef env block a
+        b' = toDouble . fromJust $ evalNodeRef env block b
         x' = toDouble x
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
-densityPNode env block (Loop shp ldag body _) a = LF.product
-    [ densityPNode (zip inps i ++ env) block' body (fromRational x)
+densityPNode env block (Loop shp ldag body _) a = product
+    [ let p = densityPNode (zip inps i ++ env) block' body (fromRational x)
+      in trace ("density ("++ show body ++") "++ show (fromRational x :: Double) ++" = "++ show p) p
     | (i,x) <- evalRange env block shp `zip` entries a ]
   where inps = inputs ldag
         block' = ldag : drop (length block - dagLevel ldag) block
@@ -249,7 +266,7 @@ densityPNode env block (Loop shp ldag body _) a = LF.product
 sampleP :: (ExprTuple t) => Prog t -> IO t
 sampleP p = do
     env <- samplePNodes [] block idents
-    return . fromConstVals $ evalTuple env rets
+    return . fromConstVals . fromJust $ evalTuple env rets
   where (rets, PBlock block refs _) = runProg p
         idents = [ (Volatile (dagLevel $ head block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
@@ -263,24 +280,30 @@ samplePNodes env block ((ident,node):rest) = do
 
 samplePNode :: Env -> Block -> PNode -> IO ConstVal
 samplePNode env block (Dist "bernoulli" [p] _) = fromBool <$> bernoulli p'
-  where p' = toDouble $ evalNodeRef env block p
+  where p' = toDouble . fromJust $ evalNodeRef env block p
 samplePNode env block (Dist "bernoulliLogit" [l] _) = fromBool <$> bernoulli p'
-  where l' = toDouble $ evalNodeRef env block l
+  where l' = toDouble . fromJust $ evalNodeRef env block l
         p' = 1 / (1 + exp (-l'))
 samplePNode env block (Dist "categorical" cats _) = fromRational <$> categorical (zip ps xs)
   where n = length cats `div` 2
-        ps = toDouble . evalNodeRef env block <$> take n cats
-        xs = toRational . evalNodeRef env block <$> drop n cats
+        ps = toDouble . fromJust . evalNodeRef env block <$> take n cats
+        xs = toRational . fromJust . evalNodeRef env block <$> drop n cats
+samplePNode env block (Dist "gamma" [a,b] _) = fromDouble <$> gamma a' (1/b')
+  where a' = toDouble . fromJust $ evalNodeRef env block a
+        b' = toDouble . fromJust $ evalNodeRef env block b
 samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric 0 p'
-  where p' = toDouble $ evalNodeRef env block p
+  where p' = toDouble . fromJust $ evalNodeRef env block p
 samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
-  where m' = toDouble $ evalNodeRef env block m
-        s' = toDouble $ evalNodeRef env block s
+  where m' = toDouble . fromJust $ evalNodeRef env block m
+        s' = toDouble . fromJust $ evalNodeRef env block s
+samplePNode env block (Dist "poisson" [a] _) = fromInteger <$> poisson a'
+  where a' = toDouble . fromJust $ evalNodeRef env block a
 samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'
-  where a' = toDouble $ evalNodeRef env block a
-        b' = toDouble $ evalNodeRef env block b
+  where a' = toDouble . fromJust $ evalNodeRef env block a
+        b' = toDouble . fromJust $ evalNodeRef env block b
 samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
 
+-- TODO: maintain shape
 samplePNode env block (Loop shp ldag hd _) = fromList <$> sequence arr
   where inps = inputs ldag
         block' = ldag : drop (length block - dagLevel ldag) block
@@ -290,6 +313,9 @@ samplePNode env block (Loop shp ldag hd _) = fromList <$> sequence arr
 ------------------------------------------------------------------------------
 -- DISTRIBUTION CONSTRUCTORS                                                --
 ------------------------------------------------------------------------------
+
+compose :: [a -> a] -> a -> a
+compose = List.foldr (.) id
 
 -- from hsc3
 chain :: Monad m => Int -> (b -> m b) -> b -> m b
@@ -306,5 +332,6 @@ mh target proposal x = do
   let f = density target
       q = density . proposal
       a = LF.fromLogFloat $ (f y * q y x) / (f x * q x y)
-  accept <- bernoulli $ if a > 1 then 1 else a
+  accept <- trace ("acceptance ratio = "++ show a) $
+    bernoulli $ if a > 1 then 1 else a
   if accept then return y else return x

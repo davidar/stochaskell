@@ -2,3 +2,4 @@
 *.png
 *.imports
 TAGS
+*_flymake.*

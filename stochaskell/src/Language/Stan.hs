@@ -176,6 +176,7 @@ stanProgram (PBlock block refs given) =
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
+-- TODO: currently only works when all returned values are vectors (no scalars)
 runStan :: (ExprTuple t) => (String -> IO String) -> Prog t -> IO [t]
 runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/generated_model"
@@ -195,6 +196,7 @@ runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     system $ basename ++" sample data file="++ basename ++".data "++
                               "output file="++ basename ++".csv "++ args
     content <- readFile $ basename ++".csv"
+    putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
 
     putStrLn "--- Removing temporary files ---"
     return $ extractCSV content
@@ -217,5 +219,5 @@ hmcStanInit p t = flip runStan p $ \basename -> do
     let fname = basename ++".init"
     fname `writeFile` unlines assigns
     return $ "init="++ fname
-  where assigns = zipWith f (fst $ runProgExprs p) (evalTuple [] t)
+  where assigns = zipWith f (fst $ runProgExprs p) (fromJust $ evalTuple [] t)
         f n x = stanNodeRef n ++" <- "++ stanConstVal x

@@ -109,6 +109,13 @@ instance (Storable t) => Indexable (ShapedVector t) Integer t where
 instance (Storable t) => Vector (ShapedVector t) Integer t where
     vector a = ShVec (head $ shape a) . LAD.fromList . A.elems $ toArray a
 
+infixr 8 <.>
+class InnerProduct v e | v -> e where
+    (<.>) :: v -> v -> e
+
+instance (LA.Numeric t) => InnerProduct (ShapedVector t) t where
+    (ShVec _ u) <.> (ShVec _ v) = (LA.<.>) u v
+
 class Matrix m i e | m -> i e, i e -> m where
     matrix :: AbstractArray i e -> m
 
@@ -133,9 +140,11 @@ instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) (ShapedVecto
 
 class SquareMatrix m where
     chol :: m -> m
+    inv  :: m -> m
 
 instance SquareMatrix (ShapedMatrix Double) where
-    chol (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.trustSym) m
+    chol (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.sym) m
+    inv (ShMat r c m) = ShMat r c $ LA.inv m
 
 class Joint m i r f | m -> i where
     joint :: (AbstractArray i r -> f) -> AbstractArray i (m r) -> m f
