@@ -13,6 +13,8 @@ import Data.Maybe
 import Debug.Trace
 
 type Env = [(Id, ConstVal)]
+emptyEnv :: Env
+emptyEnv = []
 
 builtins :: [(String, [ConstVal] -> ConstVal)]
 builtins =
@@ -24,6 +26,7 @@ builtins =
   ,("negate", negate . head)
   ,("exp", exp . head)
   ,("log", log . head)
+  ,("sqrt", sqrt . head)
   ,("pi", const pi)
   ,("asVector", head)
   ,("asMatrix", head)
@@ -58,7 +61,7 @@ evalTuple :: (ExprTuple t) => Env -> t -> Maybe [ConstVal]
 evalTuple env = sequence . map (evalD env) . fromExprTuple
 
 evalNodeRef :: Env -> Block -> NodeRef -> Maybe ConstVal
-evalNodeRef env block (Var i@(Internal level ptr) _) =
+evalNodeRef env block (Var i@(Internal level ptr) _) | lookup i env == Nothing =
   let dag = reverse block !! level
       node = fromMaybe (error $ "internal lookup failure: " ++ show i) $
         ptr `lookup` nodes dag
@@ -101,6 +104,14 @@ evalNode env block (FoldR body hd seed ls _) = do
   where [i,j] = inputs body
         f a b = fromJust $ evalNodeRef env' (body:block) hd -- TODO unsafe
           where env' = (i,a) : (j,b) : env
+
+evalBlock :: Block -> Env -> Env
+evalBlock block = compose (evalDAG block <$> reverse block)
+
+evalDAG :: Block -> DAG -> Env -> Env
+evalDAG block dag = compose [ extend ptr node | (ptr,node) <- nodes dag ]
+  where level = dagLevel dag
+        extend ptr node env = (Internal level ptr, fromJust $ evalNode env block node) : env
 
 unify :: Expr t -> ConstVal -> Env -> Env
 unify e c env = env ++ unifyNodeRef env block ret c

@@ -195,7 +195,7 @@ instance MonadGuard Prog where
 ------------------------------------------------------------------------------
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
-density prog vals = flip densityPBlock pb . flip compose [] . reverse $
+density prog vals = flip densityPBlock pb . flip compose emptyEnv . reverse $
     [ unifyD d v | (d,e) <- zipExprTuple rets vals, let Just v = evalD [] e ]
   where (rets, pb) = runProg prog
 
@@ -204,9 +204,10 @@ densityPBlock env (PBlock block refs _) = product $ do
     (i,d) <- zip [0..] $ reverse refs
     let ident = Volatile (dagLevel $ head block) i
     return $ case lookup ident env of
-      Just val -> let p = densityPNode env block d val
+      Just val -> let p = densityPNode env' block d val
         in trace ("density ("++ show d ++") "++ show val ++" = "++ show p) p
       Nothing  -> error $ "no value set for "++ show ident
+  where env' = evalBlock block env
 
 densityPNode :: Env -> Block -> PNode -> ConstVal -> LF.LogFloat
 densityPNode env block (Dist "bernoulli" [p] _) x =
@@ -313,9 +314,6 @@ samplePNode env block (Loop shp ldag hd _) = fromList <$> sequence arr
 ------------------------------------------------------------------------------
 -- DISTRIBUTION CONSTRUCTORS                                                --
 ------------------------------------------------------------------------------
-
-compose :: [a -> a] -> a -> a
-compose = List.foldr (.) id
 
 -- from hsc3
 chain :: Monad m => Int -> (b -> m b) -> b -> m b

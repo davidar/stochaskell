@@ -12,6 +12,7 @@ import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Expression.Const
 import Data.List hiding (foldr)
+import qualified Data.List as List
 import Data.Maybe
 import Data.Ratio
 import Control.Applicative ()
@@ -22,6 +23,9 @@ import GHC.Exts hiding (coerce)
 ------------------------------------------------------------------------------
 -- ORPHANS                                                                  --
 ------------------------------------------------------------------------------
+
+compose :: [a -> a] -> a -> a
+compose = List.foldr (.) id
 
 instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
     m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
