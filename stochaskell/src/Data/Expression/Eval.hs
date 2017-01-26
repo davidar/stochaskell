@@ -111,7 +111,12 @@ evalBlock block = compose (evalDAG block <$> reverse block)
 evalDAG :: Block -> DAG -> Env -> Env
 evalDAG block dag = compose [ extend ptr node | (ptr,node) <- nodes dag ]
   where level = dagLevel dag
-        extend ptr node env = (Internal level ptr, fromJust $ evalNode env block node) : env
+        extend ptr node env
+          | isJust val && lookup ident env == Nothing =
+            (ident, fromJust val) : env
+          | otherwise = env
+          where val = evalNode env block node
+                ident = Internal level ptr
 
 unify :: Expr t -> ConstVal -> Env -> Env
 unify e c env = env ++ unifyNodeRef env block ret c

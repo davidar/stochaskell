@@ -3,3 +3,4 @@
 *.imports
 TAGS
 *_flymake.*
+*.prof

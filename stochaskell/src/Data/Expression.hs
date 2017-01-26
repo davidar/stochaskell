@@ -52,6 +52,10 @@ data Id = Dummy Level Pointer
         | Internal Level Pointer
         deriving (Eq, Ord)
 
+isInternal :: Id -> Bool
+isInternal (Internal _ _) = True
+isInternal _ = False
+
 instance Show Id where
   show (Dummy l p)    = "i_"++ show l ++"_"++ show p
   show (Volatile l p) = "x_"++ show l ++"_"++ show p

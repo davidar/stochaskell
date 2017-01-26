@@ -267,7 +267,8 @@ densityPNode env block (Loop shp ldag body _) a = product
 sampleP :: (ExprTuple t) => Prog t -> IO t
 sampleP p = do
     env <- samplePNodes [] block idents
-    return . fromConstVals . fromJust $ evalTuple env rets
+    let env' = filter (not . isInternal . fst) env
+    return . fromConstVals . fromJust $ evalTuple env' rets
   where (rets, PBlock block refs _) = runProg p
         idents = [ (Volatile (dagLevel $ head block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
@@ -276,7 +277,7 @@ samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
 samplePNodes env _ [] = return env
 samplePNodes env block ((ident,node):rest) = do
     val <- samplePNode env block node
-    let env' = (ident, val) : env
+    let env' = evalBlock block $ (ident, val) : env
     samplePNodes env' block rest
 
 samplePNode :: Env -> Block -> PNode -> IO ConstVal
@@ -324,7 +325,7 @@ loop s f = do
   loop s' f
 
 -- Metropolis-Hastings
-mh :: forall r. ExprTuple r => Prog r -> (r -> Prog r) -> r -> IO r
+mh :: (ExprTuple r) => Prog r -> (r -> Prog r) -> r -> IO r
 mh target proposal x = do
   y <- sampleP (proposal x)
   let f = density target
