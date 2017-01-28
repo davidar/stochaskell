@@ -12,32 +12,12 @@ import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Expression.Const
 import Data.List hiding (foldr)
-import qualified Data.List as List
 import Data.Maybe
 import Data.Ratio
 import Control.Applicative ()
 import Control.Monad.State
 import GHC.Exts hiding (coerce)
-
-
-------------------------------------------------------------------------------
--- ORPHANS                                                                  --
-------------------------------------------------------------------------------
-
-compose :: [a -> a] -> a -> a
-compose = List.foldr (.) id
-
-instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
-    m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
-
-instance (Num t) => Num [t] where
-    (+) = zipWith (+)
-    (-) = zipWith (-)
-    (*) = zipWith (*)
-    negate = map negate
-    abs    = map abs
-    signum = map signum
-    fromInteger x = [fromInteger x]
+import Util ()
 
 
 ------------------------------------------------------------------------------
@@ -104,9 +84,10 @@ emptyBlock = [emptyDAG]
 data DExpr = DExpr { fromDExpr :: State Block NodeRef }
 runDExpr :: DExpr -> (NodeRef, Block)
 runDExpr e = runState (fromDExpr e) emptyBlock
-instance Eq DExpr where e == f = runDExpr e == runDExpr f
+instance Eq DExpr where
+  e == f = runDExpr e == runDExpr f
 instance Ord DExpr where
-    e `compare` f = runDExpr e `compare` runDExpr f
+  e `compare` f = runDExpr e `compare` runDExpr f
 
 newtype Expr t = Expr { erase :: DExpr }
 expr :: State Block NodeRef -> Expr t
@@ -115,6 +96,10 @@ fromExpr :: Expr t -> State Block NodeRef
 fromExpr = fromDExpr . erase
 runExpr :: Expr t -> (NodeRef, Block)
 runExpr  =  runDExpr . erase
+instance (Eq t) => Eq (Expr t) where
+  e == f = runExpr e == runExpr f
+instance (Ord t) => Ord (Expr t) where
+  e `compare` f = runExpr e `compare` runExpr f
 
 type B = Expr Bool
 type R = Expr Double
@@ -142,8 +127,10 @@ boolT = SubrangeT IntT (Just $ Const 0) (Just $ Const 1)
 instance Show Type where
   show IntT = "Z"
   show RealT = "R"
+  show (SubrangeT IntT (Just (Const 0)) (Just (Const 1))) = "B"
   show (SubrangeT t a b) = unwords ["Subrange", show t, show a, show b]
-  show (ArrayT name sh t) = unwords ["Array", show name, show sh, show t]
+  show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
+  show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
 
 newtype TypeOf t = TypeIs Type
 class ScalarType t where
@@ -186,6 +173,7 @@ typeIndex t = error $ "cannot index objects of type "++ show t
 
 coerce :: Type -> Type -> Type
 coerce a b | a == b = a
+coerce a b | (a == boolT && b == IntT) || (a == IntT && b == boolT) = IntT
 coerce IntT RealT = RealT
 coerce RealT IntT = RealT
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
@@ -394,6 +382,20 @@ instance (Floating t) => Floating (Expr t) where
     asinh = applyClosed1 "asinh"
     acosh = applyClosed1 "acosh"
     atanh = applyClosed1 "atanh"
+
+instance (Enum t) => Enum (Expr t)
+
+instance (Real t) => Real (Expr t) where
+    toRational e =
+      case fst (runExpr e) of
+        Const c -> real c
+        r -> error $ "cannot convert "++ show r ++" to rational"
+
+instance (Integral t) => Integral (Expr t) where
+    toInteger e =
+      case fst (runExpr e) of
+        Const c -> integer c
+        r -> error $ "cannot convert "++ show r ++" to integer"
 
 instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = expr $ do

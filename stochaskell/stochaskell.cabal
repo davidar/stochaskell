@@ -24,6 +24,7 @@ library
                      , Data.Array.Abstract
                      , Data.Random.Distribution.Abstract
                      , Language.Stan
+                     , Util
   build-depends:       Boolean
                      , array
                      , base >= 4.7 && < 5

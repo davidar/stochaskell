@@ -176,7 +176,6 @@ stanProgram (PBlock block refs given) =
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
--- TODO: currently only works when all returned values are vectors (no scalars)
 runStan :: (ExprTuple t) => (String -> IO String) -> Prog t -> IO [t]
 runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/generated_model"
@@ -206,10 +205,14 @@ runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
                 table = map (splitOn ",") . filter noComment $ lines content
                 readDouble = read :: String -> Double
                 slice xs = map (xs !!)
-                f row = fromConstVals
-                  [ fromList (real . readDouble <$> row `slice` cols)
-                  | r <- rets, let prefix = stanNodeRef r ++".",
-                    let cols = isPrefixOf prefix `findIndices` head table ]
+                f row = fromConstVals $ do
+                  r <- rets
+                  return $ case stanNodeRef r `elemIndex` head table of
+                    Just col -> real . readDouble $ row !! col
+                    Nothing ->
+                      let prefix = stanNodeRef r ++ "."
+                          cols = isPrefixOf prefix `findIndices` head table
+                      in fromList (real . readDouble <$> row `slice` cols)
 
 hmcStan :: (ExprTuple t) => Prog t -> IO [t]
 hmcStan = runStan (const $ return "")

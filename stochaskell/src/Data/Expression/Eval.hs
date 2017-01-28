@@ -11,6 +11,7 @@ import Data.Expression.Const
 import Data.Ix
 import Data.Maybe
 import Debug.Trace
+import Util
 
 type Env = [(Id, ConstVal)]
 emptyEnv :: Env
@@ -27,6 +28,8 @@ builtins =
   ,("exp", exp . head)
   ,("log", log . head)
   ,("sqrt", sqrt . head)
+  ,("true", const true)
+  ,("false", const false)
   ,("pi", const pi)
   ,("asVector", head)
   ,("asMatrix", head)
@@ -153,9 +156,14 @@ unifyNode env block (Apply "+" [a,b] _) val | isJust a' =
 unifyNode env block (Apply "*" [a,b] _) val | isJust a' =
     unifyNodeRef env block b (val / fromJust a')
   where a' = evalNodeRef env block a
+unifyNode env block (Apply "/" [a,b] _) val | isJust b' =
+    unifyNodeRef env block a (val * fromJust b')
+  where b' = evalNodeRef env block b
 unifyNode env block (Apply "#>" [a,b] _) val = -- | isJust a' =
     unifyNodeRef env block b ((inv (fromJust a')) #> val)
   where a' = evalNodeRef env block a
 unifyNode _ _ FoldR{} _ = [] -- TODO
-unifyNode _ _ node val = flip trace [] $
-  "WARN unable to unify node "++ show node ++" with value "++ show val
+unifyNode env block node val | isJust lhs && fromJust lhs == val = []
+  where lhs = evalNode env block node
+unifyNode _ _ node val = error $ -- flip trace [] $
+  "unable to unify node "++ show node ++" with value "++ show val

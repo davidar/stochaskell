@@ -21,6 +21,7 @@ import Data.Random.Distribution.Poisson (Poisson(..))
 import Debug.Trace
 import GHC.Exts
 import Numeric.SpecFunctions
+import Util
 
 
 ------------------------------------------------------------------------------
@@ -206,7 +207,7 @@ densityPBlock env (PBlock block refs _) = product $ do
     return $ case lookup ident env of
       Just val -> let p = densityPNode env' block d val
         in trace ("density ("++ show d ++") "++ show val ++" = "++ show p) p
-      Nothing  -> error $ "no value set for "++ show ident
+      Nothing  -> trace (show ident ++" is unconstrained") $ LF.logFloat 1
   where env' = evalBlock block env
 
 densityPNode :: Env -> Block -> PNode -> ConstVal -> LF.LogFloat
