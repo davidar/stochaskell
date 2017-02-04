@@ -13,10 +13,11 @@ import qualified Numeric.LinearAlgebra.Data as LAD
 list :: (IsList l, IsList l', Item l ~ Item l') => l -> l'
 list = fromList . toList
 
-zipWithA :: (Ix i) => (a -> b -> c) -> A.Array i a -> A.Array i b -> A.Array i c
+zipWithA :: (Ix i, Show i) => (a -> b -> c) -> A.Array i a -> A.Array i b -> A.Array i c
 zipWithA f a b | A.bounds a == A.bounds b =
                  A.listArray (A.bounds a) $ zipWith f (A.elems a) (A.elems b)
-               | otherwise = error "arrays not same shape"
+               | otherwise = error $ "arrays not same shape: "++ show (A.bounds a)
+                                                      ++" /= "++ show (A.bounds b)
 
 instance (Ix i, Show i) => Ix [i] where
   range (x:xs,y:ys) = [ z:zs | z <- range (x,y), zs <- range (xs,ys) ]
@@ -78,8 +79,16 @@ infixl 9 !
 class Indexable a i e | a -> i e where
     (!) :: a -> i -> e
     bounds :: a -> Interval i
+    deleteIndex :: a -> i -> a
+    insertIndex :: a -> i -> e -> a
 shape :: (Indexable a [i] e) => a -> [Interval i]
 shape x = uncurry zip . bounds $ x
+
+instance Indexable [e] Int e where
+    (!) = (!!)
+    bounds xs = (0, length xs - 1)
+    deleteIndex xs i   = take i xs ++ drop (i+1) xs
+    insertIndex xs i x = take i xs ++ [x] ++ drop i xs
 
 instance Indexable (AbstractArray i e) [i] e where
     (AArr _ f) ! i = f i
@@ -89,7 +98,7 @@ instance (Ix i) => Indexable (A.Array i e) i e where
     (!) = (A.!)
     bounds = A.bounds
 
-class (Indexable v i e) => Vector v i e | v -> i e, i e -> v where
+class (Indexable v i e) => Vector v i e | v -> i e where
     vector :: AbstractArray i e -> v
 
 data ShapedVector t = ShVec (Interval Integer) (LAD.Vector t)

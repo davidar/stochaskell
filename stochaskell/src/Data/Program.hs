@@ -45,7 +45,7 @@ instance Show PNode where
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
-                     , constraints :: [(NodeRef, ConstVal)]
+                     , constraints :: Env
                      }
             deriving (Eq)
 emptyPBlock :: PBlock
@@ -106,7 +106,7 @@ dist s = Prog $ do
         v = expr . return $ Var name (typePNode d)
     return v
 
-instance Distribution Bernoulli (Expr Double) Prog (Expr Bool) where
+instance Distribution Bernoulli R Prog B where
     sample (Bernoulli p) = dist $ do
         i <- fromExpr p
         return $ Dist "bernoulli" [i] boolT
@@ -114,7 +114,7 @@ instance Distribution Bernoulli (Expr Double) Prog (Expr Bool) where
         i <- fromExpr l
         return $ Dist "bernoulliLogit" [i] boolT
 
-instance (ScalarType t) => Distribution Categorical (Expr Double) Prog (Expr t) where
+instance (ScalarType t) => Distribution Categorical R Prog (Expr t) where
     sample cat = dist $ do
         let (ps,xs) = unzip $ Categorical.toList cat
         qs <- mapM fromExpr ps
@@ -122,33 +122,39 @@ instance (ScalarType t) => Distribution Categorical (Expr Double) Prog (Expr t) 
         let TypeIs t = typeOf :: TypeOf t
         return $ Dist "categorical" (qs ++ ys) t
 
-instance Distribution Gamma (Expr Double) Prog (Expr Double) where
+instance Distribution Gamma R Prog R where
     sample (Gamma a b) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "gamma" [i,j] RealT
 
-instance Distribution Geometric (Expr Double) Prog (Expr Integer) where
+instance Distribution Geometric R Prog Z where
     sample (Geometric p) = dist $ do
         i <- fromExpr p
         return $ Dist "geometric" [i] IntT
 
-instance Distribution Normal (Expr Double) Prog (Expr Double) where
+instance Distribution Normal R Prog R where
     sample (Normal m s) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "normal" [i,j] RealT
 
-instance Distribution Poisson (Expr Double) Prog (Expr Integer) where
+instance Distribution Poisson R Prog Z where
     sample (Poisson a) = dist $ do
         i <- fromExpr a
         return $ Dist "poisson" [i] IntT
 
-instance Distribution Uniform (Expr Double) Prog (Expr Double) where
+instance Distribution Uniform R Prog R where
     sample (Uniform a b) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "uniform" [i,j] RealT
+
+instance Distribution Uniform Z Prog Z where
+    sample (Uniform a b) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "discreteUniform" [i,j] RealT
 
 
 ------------------------------------------------------------------------------
@@ -156,7 +162,7 @@ instance Distribution Uniform (Expr Double) Prog (Expr Double) where
 ------------------------------------------------------------------------------
 
 instance forall r f. ScalarType r =>
-         Joint Prog (Expr Integer) (Expr r) (Expr f) where
+         Joint Prog Z (Expr r) (Expr f) where
   joint _ ar = Prog $ do
     sh <- liftExprBlock . sequence . flip map (shape ar) $ \(a,b) -> do
       i <- fromExpr a
@@ -185,7 +191,7 @@ instance MonadGuard Prog where
         (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
         (PBlock (dag:dags) dists given) <- get
         if i /= length (nodes dag) - 1 then undefined else do
-          let (Just (Apply "==" [j, Const a] _)) =
+          let (Just (Apply "==" [Var j _, Const a] _)) =
                 lookup i $ nodes dag
               dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
           put $ PBlock (dag':dags) dists ((j,a):given)
@@ -196,9 +202,9 @@ instance MonadGuard Prog where
 ------------------------------------------------------------------------------
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
-density prog vals = flip densityPBlock pb . flip compose emptyEnv . reverse $
-    [ unifyD d v | (d,e) <- zipExprTuple rets vals, let Just v = evalD [] e ]
+density prog vals = densityPBlock env pb
   where (rets, pb) = runProg prog
+        env = unifyTuple rets vals emptyEnv
 
 densityPBlock :: Env -> PBlock -> LF.LogFloat
 densityPBlock env (PBlock block refs _) = product $ do
@@ -247,15 +253,20 @@ densityPNode env block (Dist "poisson" [l] _) x =
   where l' = toDouble . fromJust $ evalNodeRef env block l
         k = toInteger x
 densityPNode env block (Dist "uniform" [a,b] _) x =
-    LF.logFloat $ if a' <= x' && x' < b' then 1/(b' - a') else 0
+    LF.logFloat $ if a' <= x' && x' <= b' then 1/(b' - a') else 0
   where a' = toDouble . fromJust $ evalNodeRef env block a
         b' = toDouble . fromJust $ evalNodeRef env block b
         x' = toDouble x
+densityPNode env block (Dist "discreteUniform" [a,b] _) x =
+    LF.logFloat $ if a' <= x' && x' <= b' then 1/(fromInteger $ b' - a' + 1) else 0
+  where a' = toInteger . fromJust $ evalNodeRef env block a
+        b' = toInteger . fromJust $ evalNodeRef env block b
+        x' = toInteger x
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
 densityPNode env block (Loop shp ldag body _) a = product
     [ let p = densityPNode (zip inps i ++ env) block' body (fromRational x)
-      in trace ("density ("++ show body ++") "++ show (fromRational x :: Double) ++" = "++ show p) p
+      in {-trace ("density ("++ show body ++") "++ show (fromRational x :: Double) ++" = "++ show p)-} p
     | (i,x) <- evalRange env block shp `zip` entries a ]
   where inps = inputs ldag
         block' = ldag : drop (length block - dagLevel ldag) block
@@ -304,6 +315,9 @@ samplePNode env block (Dist "poisson" [a] _) = fromInteger <$> poisson a'
 samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'
   where a' = toDouble . fromJust $ evalNodeRef env block a
         b' = toDouble . fromJust $ evalNodeRef env block b
+samplePNode env block (Dist "discreteUniform" [a,b] _) = fromInteger <$> uniform a' b'
+  where a' = toInteger . fromJust $ evalNodeRef env block a
+        b' = toInteger . fromJust $ evalNodeRef env block b
 samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
 
 -- TODO: maintain shape
@@ -326,12 +340,14 @@ loop s f = do
   loop s' f
 
 -- Metropolis-Hastings
-mh :: (ExprTuple r) => Prog r -> (r -> Prog r) -> r -> IO r
+mh :: (ExprTuple r, Show r) => Prog r -> (r -> Prog r) -> r -> IO r
 mh target proposal x = do
   y <- sampleP (proposal x)
   let f = density target
       q = density . proposal
-      a = LF.fromLogFloat $ (f y * q y x) / (f x * q x y)
-  accept <- trace ("acceptance ratio = "++ show a) $
+      b = f y / f x
+      c = q x y / q y x
+      a = LF.fromLogFloat (b / c) -- (f y * q y x) / (f x * q x y)
+  accept <- trace ("acceptance ratio = "++ show b ++" / "++ show c ++" = "++ show a) $
     bernoulli $ if a > 1 then 1 else a
   if accept then return y else return x

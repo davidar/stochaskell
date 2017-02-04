@@ -1,4 +1,4 @@
-{-# LANGUAGE MonadComprehensions #-}
+{-# LANGUAGE FlexibleInstances, MonadComprehensions, TypeFamilies #-}
 
 module Data.Expression.Eval where
 
@@ -11,6 +11,7 @@ import Data.Expression.Const
 import Data.Ix
 import Data.Maybe
 import Debug.Trace
+import GHC.Exts
 import Util
 
 type Env = [(Id, ConstVal)]
@@ -44,6 +45,8 @@ builtins =
   ,(">=", \[a,b] -> a >=* b)
   ,("<",  \[a,b] -> a <*  b)
   ,(">",  \[a,b] -> a >*  b)
+  ,("deleteIndex", \[a,i]   -> deleteIndex a [integer i])
+  ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
   ]
 
 eval :: Env -> Expr t -> Maybe ConstVal
@@ -103,9 +106,9 @@ evalNode env block (Array sh body hd _) = do
 evalNode env block (FoldR body hd seed ls _) = do
   r  <- evalNodeRef env block seed
   xs <- evalNodeRef env block ls
-  return $ foldrConst f r xs
+  foldrConst' f r xs
   where [i,j] = inputs body
-        f a b = fromJust $ evalNodeRef env' (body:block) hd -- TODO unsafe
+        f a b = evalNodeRef env' (body:block) hd
           where env' = (i,a) : (j,b) : env
 
 evalBlock :: Block -> Env -> Env
@@ -129,6 +132,10 @@ unifyD :: DExpr -> ConstVal -> Env -> Env
 unifyD e c env = env ++ unifyNodeRef env block ret c
   where (ret, block) = runDExpr e
 
+unifyTuple :: (ExprTuple t) => t -> t -> Env -> Env
+unifyTuple rets vals env = flip compose env . reverse $
+  [ unifyD d v | (d,e) <- zipExprTuple rets vals, let Just v = evalD_ e ]
+
 unifyNodeRef :: Env -> Block -> NodeRef -> ConstVal -> Env
 unifyNodeRef env block (Var (Internal level ptr) _) val =
     let dag = reverse block !! level
@@ -150,6 +157,13 @@ unifyNode env block (Apply "asVector" [v] _) val =
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isJust c' =
     unifyNodeRef env block (if toBool (fromJust c') then a else b) val
   where c' = evalNodeRef env block c
+unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isJust a' && isJust b' =
+    if fromJust a' == fromJust b' then []
+    else if fromJust a' == val then unifyNodeRef env block c true
+    else if fromJust b' == val then unifyNodeRef env block c false
+    else error "unification error in ifThenElse"
+  where a' = evalNodeRef env block a
+        b' = evalNodeRef env block b
 unifyNode env block (Apply "+" [a,b] _) val | isJust a' =
     unifyNodeRef env block b (val - fromJust a')
   where a' = evalNodeRef env block a
@@ -159,11 +173,54 @@ unifyNode env block (Apply "*" [a,b] _) val | isJust a' =
 unifyNode env block (Apply "/" [a,b] _) val | isJust b' =
     unifyNodeRef env block a (val * fromJust b')
   where b' = evalNodeRef env block b
-unifyNode env block (Apply "#>" [a,b] _) val = -- | isJust a' =
+unifyNode env block (Apply "#>" [a,b] _) val | isJust a' =
     unifyNodeRef env block b ((inv (fromJust a')) #> val)
   where a' = evalNodeRef env block a
-unifyNode _ _ FoldR{} _ = [] -- TODO
+unifyNode env block (Apply "deleteIndex" [a,i] _) val | isJust a' && dimension val == 1 =
+    unifyNodeRef env block i (integer idx)
+  where a' = evalNodeRef env block a
+        j = firstDiff (toList $ fromJust a') (toList val)
+        ([lo],_) = bounds val
+        idx = lo + integer j
+unifyNode env block (Apply "insertIndex" [a,i,e] _) val | isJust a' && dimension val == 1 =
+    unifyNodeRef env block i (integer idx) ++ unifyNodeRef env block e elt
+  where a' = evalNodeRef env block a
+        j = firstDiff (toList $ fromJust a') (toList val)
+        ([lo],_) = bounds val
+        idx = lo + integer j
+        elt = val![idx]
 unifyNode env block node val | isJust lhs && fromJust lhs == val = []
   where lhs = evalNode env block node
-unifyNode _ _ node val = error $ -- flip trace [] $
+unifyNode _ _ FoldR{} _ = trace "WARN not unifying FoldR" []
+unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
+
+instance (Enum t) => Enum (Expr t)
+
+instance (Real t) => Real (Expr t) where
+  toRational = real . fromJust . eval_
+
+instance (Integral t) => Integral (Expr t) where
+  toInteger = integer . fromJust . eval_
+
+instance IsList RVec where
+    type Item RVec = Double
+    fromList = expr . return . Const . fromList . map real
+    toList = map real . toList . fromJust . eval_
+
+instance IsList ZVec where
+    type Item ZVec = Integer
+    fromList = expr . return . Const . fromList . map integer
+    toList = map integer . toList . fromJust . eval_
+
+instance IsList BVec where
+    type Item BVec = Bool
+    fromList = expr . return . Const . fromList . map fromBool
+    toList = map toBool . toList . fromJust . eval_
+
+instance Show R    where show = show . real
+instance Show Z    where show = show . integer
+instance Show B    where show = show . toBool
+instance Show RVec where show = show . toList
+instance Show ZVec where show = show . toList
+instance Show BVec where show = show . toList

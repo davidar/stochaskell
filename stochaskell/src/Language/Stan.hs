@@ -166,10 +166,10 @@ stanDAG dag = indent $
 stanProgram :: PBlock -> String
 stanProgram (PBlock block refs given) =
     "data {\n"++ printRefs (\i n ->
-        if i `elem` map fst given
+        if getId i `elem` map (Just . fst) given
         then stanDecl (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
     "parameters {\n"++ printRefs (\i n ->
-        if i `elem` map fst given
+        if getId i `elem` map (Just . fst) given
         then "" else stanDecl (stanNodeRef i) (typePNode n)) ++"\n}\n"++
     "transformed parameters {\n"++ stanDAG (head block) ++"\n}\n"++
     "model {\n"++ printRefs (\i n -> stanPNode (stanNodeRef i) n) ++"\n}\n"
@@ -187,7 +187,7 @@ runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
 
     putStrLn "--- Sampling Stan model ---"
     let dat = unlines . flip map (constraints p) $ \(n,x) ->
-                stanNodeRef n ++" <- "++ stanConstVal x
+                stanId n ++" <- "++ stanConstVal x
     putStrLn dat
     writeFile (basename ++".data") dat
     -- TODO: avoid shell injection
@@ -220,7 +220,10 @@ hmcStan = runStan (const $ return "")
 hmcStanInit :: (ExprTuple t) => Prog t -> t -> IO [t]
 hmcStanInit p t = flip runStan p $ \basename -> do
     let fname = basename ++".init"
-    fname `writeFile` unlines assigns
+    putStrLn assigns
+    fname `writeFile` assigns
     return $ "init="++ fname
-  where assigns = zipWith f (fst $ runProgExprs p) (fromJust $ evalTuple [] t)
-        f n x = stanNodeRef n ++" <- "++ stanConstVal x
+  where assigns = unlines . map f $ unifyTuple rets t env
+        f (n,x) = stanId n ++" <- "++ stanConstVal x
+        (rets,pb) = runProg p
+        env = constraints pb

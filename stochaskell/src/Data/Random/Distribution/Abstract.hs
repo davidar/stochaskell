@@ -64,10 +64,7 @@ poisson :: Distribution Poisson s m t => s -> m t
 poisson a = sample $ Poisson a
 
 data Uniform a r = Uniform a a
-instance Distribution Uniform Double IO Double where
-    sample (Uniform 0 1) = getStdRandom random
-    sample (Uniform lo hi) = do
-      u <- uniform 0 1
-      return $ lo + (hi - lo) * u
+instance (Random t) => Distribution Uniform t IO t where
+    sample (Uniform a b) = getStdRandom $ randomR (a,b)
 uniform :: Distribution Uniform s m t => s -> s -> m t
 uniform a b = sample $ Uniform a b

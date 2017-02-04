@@ -2,6 +2,8 @@
              TypeFamilies #-}
 module Data.Expression.Const where
 
+import Prelude hiding ((<*))
+
 import Data.Array hiding ((!),bounds)
 import Data.Array.Abstract
 import Data.Boolean
@@ -24,10 +26,11 @@ real = fromRational . toRational
 
 data ConstVal = Exact  (Array [Integer] Rational)
               | Approx (Array [Integer] Double)
-              deriving (Eq, Ord)
 
 instance Show ConstVal where
-    show (Approx a) = if isScalar a then show (toScalar a) else show a
+    show c | dimension c == 1 = show (toList c)
+    show (Approx a) | isScalar a = show (toScalar a)
+    show (Approx a) = show a
     show c = show $ approx c
 
 approx :: ConstVal -> ConstVal
@@ -96,6 +99,11 @@ fromMatrix (ShMat (r,r') (c,c') m) = Approx $ listArray ([r,c],[r',c']) (toList 
 foldrConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
 foldrConst f r = foldr f r . toList
 
+foldrConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal -> Maybe ConstVal
+foldrConst' f r = foldr f' (Just r) . toList
+  where f' _ Nothing = Nothing
+        f' x (Just y) = f x y
+
 instance Num ConstVal where
     (+) = constBinOp (+)
     (-) = constBinOp (-)
@@ -149,6 +157,14 @@ instance Indexable ConstVal [Integer] ConstVal where
     (Approx a) ! i = Approx $ fromScalar (a!i)
     bounds (Exact  a) = bounds a
     bounds (Approx a) = bounds a
+    deleteIndex (Exact a) [i] | dimension (Exact a) == 1 =
+        Exact $ listArray ([lo],[hi-1]) xs
+      where ([lo],[hi]) = bounds a
+            xs = deleteIndex (elems a) (integer $ i - lo)
+    insertIndex (Exact a) [i] x | dimension (Exact a) == 1 =
+        Exact $ listArray ([lo],[hi+1]) xs
+      where ([lo],[hi]) = bounds a
+            xs = insertIndex (elems a) (integer $ i - lo) (toRational x)
 
 instance Ix ConstVal where
     range (Exact a, Exact b) | bounds a == bounds b =
@@ -188,8 +204,18 @@ type instance BooleanOf ConstVal = ConstVal
 instance IfB ConstVal where
     ifB a b c = if toBool a then b else c
 
+instance Eq ConstVal where
+    (Exact  a) == (Exact  b) = a == b
+    (Approx a) == (Approx b) = a == b
+    a == b = approx a == approx b
+
+instance Ord ConstVal where
+    (Exact  a) `compare` (Exact  b) = a `compare` b
+    (Approx a) `compare` (Approx b) = a `compare` b
+    a `compare` b = approx a `compare` approx b
+
 instance EqB ConstVal where
     a ==* b = fromBool $ a == b
 
 instance OrdB ConstVal where
-    (Exact a) <* (Exact b) = fromBool $ a < b
+    a <* b = fromBool $ a < b

@@ -46,6 +46,10 @@ data NodeRef = Var Id Type
              | Index NodeRef [NodeRef]
              deriving (Eq, Ord)
 
+getId :: NodeRef -> Maybe Id
+getId (Var i _) = Just i
+getId _ = Nothing
+
 instance Show NodeRef where
   show (Var i t) = "("++ show i ++" :: "++ show t ++")"
   show (Const c) = show c
@@ -383,20 +387,6 @@ instance (Floating t) => Floating (Expr t) where
     acosh = applyClosed1 "acosh"
     atanh = applyClosed1 "atanh"
 
-instance (Enum t) => Enum (Expr t)
-
-instance (Real t) => Real (Expr t) where
-    toRational e =
-      case fst (runExpr e) of
-        Const c -> real c
-        r -> error $ "cannot convert "++ show r ++" to rational"
-
-instance (Integral t) => Integral (Expr t) where
-    toInteger e =
-      case fst (runExpr e) of
-        Const c -> integer c
-        r -> error $ "cannot convert "++ show r ++" to integer"
-
 instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = expr $ do
         f <- fromExpr a
@@ -404,6 +394,21 @@ instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
         return $ case f of
             (Index g js) -> Index g (j:js)
             _            -> Index f [j]
+    deleteIndex a e = expr $ do
+      f <- fromExpr a
+      j <- fromExpr e
+      let (ArrayT _ [(lo,hi)] t) = typeRef f
+      hi' <- simplify $ Apply "-" [hi, Const 1] (typeRef hi)
+      let t' = ArrayT Nothing [(lo,hi')] t
+      simplify $ Apply "deleteIndex" [f,j] t'
+    insertIndex a e d = expr $ do
+      f <- fromExpr a
+      i <- fromExpr e
+      j <- fromExpr d
+      let (ArrayT _ [(lo,hi)] t) = typeRef f
+      hi' <- simplify $ Apply "+" [hi, Const 1] (typeRef hi)
+      let t' = ArrayT Nothing [(lo,hi')] t
+      simplify $ Apply "insertIndex" [f,i,j] t'
 instance (ScalarType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
     vector = asVector . array 1
 instance (ScalarType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
@@ -470,14 +475,6 @@ instance OrdB (Expr t) where
     (<=*) = apply2 "<=" boolT
     (>=*) = apply2 ">=" boolT
     (>*)  = apply2 ">"  boolT
-
-instance (Fractional e, Real e) => IsList (Expr [e]) where
-    type Item (Expr [e]) = e
-    fromList = expr . return . Const . fromList . map real
-    toList e =
-      case fst (runExpr e) of
-        Const c -> map real $ toList c
-        r -> error $ "cannot convert "++ show r ++" to list"
 
 class ExprTuple t where
     fromExprTuple :: t -> [DExpr]
