@@ -440,13 +440,17 @@ instance AA.LinearOperator (Expr [[e]]) (Expr [e]) (Expr [e]) where
         let (ArrayT _ [r,_] t) = typeRef i
         simplify $ Apply "#>" [i,j] (ArrayT (Just "vector") [r] t)
 
-instance AA.SquareMatrix (Expr [[e]]) where
+instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
     chol m = expr $ do
         i <- fromExpr $ asMatrix m
         simplify $ Apply "chol" [i] (typeRef i)
     inv m = expr $ do
         i <- fromExpr $ asMatrix m
         simplify $ Apply "inv" [i] (typeRef i)
+    det m = expr $ do
+        i <- fromExpr $ asMatrix m
+        let (ArrayT _ [_,_] t) = typeRef i
+        simplify $ Apply "det" [i] t
 
 instance Boolean (Expr Bool) where
     true  = apply "true" boolT []

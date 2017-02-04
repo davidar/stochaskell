@@ -188,9 +188,10 @@ instance InnerProduct ConstVal ConstVal where
 instance LinearOperator ConstVal ConstVal ConstVal where
     m #> v = fromVector $ toMatrix m #> toVector v
 
-instance SquareMatrix ConstVal where
+instance SquareMatrix ConstVal ConstVal where
     chol = fromMatrix . chol . toMatrix
-    inv = fromMatrix . inv . toMatrix
+    inv  = fromMatrix . inv  . toMatrix
+    det  = fromDouble . det  . toMatrix
 
 instance Boolean ConstVal where
     true  = Exact $ fromScalar 1

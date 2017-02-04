@@ -52,11 +52,11 @@ geometric a p = do
   g <- geometric 0 p
   return (fromInteger a + g)
 
-data Normal a r = Normal a a
-instance Distribution Normal Double IO Double where
-    sample (Normal m s) = Rand.sample (Rand.Normal m s)
-normal :: Distribution Normal s m t => s -> s -> m t
-normal m s = sample $ Normal m s
+data Normal a r = Normal a
+instance Distribution Normal (Double,Double) IO Double where
+    sample (Normal (m,s)) = Rand.sample (Rand.Normal m s)
+normal :: Distribution Normal (u,v) m t => u -> v -> m t
+normal m s = sample $ Normal (m,s)
 
 instance Distribution Poisson Double IO Integer where
     sample = Rand.sample

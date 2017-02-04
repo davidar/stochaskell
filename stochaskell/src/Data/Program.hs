@@ -133,11 +133,17 @@ instance Distribution Geometric R Prog Z where
         i <- fromExpr p
         return $ Dist "geometric" [i] IntT
 
-instance Distribution Normal R Prog R where
-    sample (Normal m s) = dist $ do
+instance Distribution Normal (R,R) Prog R where
+    sample (Normal (m,s)) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "normal" [i,j] RealT
+
+instance Distribution Normal (RVec,RMat) Prog RVec where
+    sample (Normal (m,s)) = dist $ do
+        i <- fromExpr m
+        j <- fromExpr s
+        return $ Dist "multi_normal" [i,j] (typeRef i)
 
 instance Distribution Poisson R Prog Z where
     sample (Poisson a) = dist $ do
@@ -248,6 +254,12 @@ densityPNode env block (Dist "normal" [m,s] _) x =
     LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
   where m' = toDouble . fromJust $ evalNodeRef env block m
         s' = toDouble . fromJust $ evalNodeRef env block s
+densityPNode env block (Dist "multi_normal" [m,s] _) x =
+    LF.logToLogFloat $ -0.5 * (real $ (x' <.> (inv s' #> x')) + log (det s') + n * log (2*pi))
+  where m' = fromJust $ evalNodeRef env block m
+        s' = fromJust $ evalNodeRef env block s
+        n = integer $ length (toList m')
+        x' = x - m'
 densityPNode env block (Dist "poisson" [l] _) x =
     LF.logToLogFloat $ fromIntegral k * log l' - l' - logFactorial k
   where l' = toDouble . fromJust $ evalNodeRef env block l
@@ -310,6 +322,13 @@ samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric 0 p'
 samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
   where m' = toDouble . fromJust $ evalNodeRef env block m
         s' = toDouble . fromJust $ evalNodeRef env block s
+samplePNode env block (Dist "multi_normal" [m,s] _) = do
+  w <- sequence [ normal 0 1 | _ <- [1..n] ]
+  let w' = fromList $ map fromDouble w
+  return $ m' + chol s' #> w'
+  where m' = fromJust $ evalNodeRef env block m
+        s' = fromJust $ evalNodeRef env block s
+        n = length (toList m')
 samplePNode env block (Dist "poisson" [a] _) = fromInteger <$> poisson a'
   where a' = toDouble . fromJust $ evalNodeRef env block a
 samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'

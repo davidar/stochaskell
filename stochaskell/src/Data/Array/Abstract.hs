@@ -125,7 +125,7 @@ class InnerProduct v e | v -> e where
 instance (LA.Numeric t) => InnerProduct (ShapedVector t) t where
     (ShVec _ u) <.> (ShVec _ v) = (LA.<.>) u v
 
-class Matrix m i e | m -> i e, i e -> m where
+class Matrix m i e | m -> i e where
     matrix :: AbstractArray i e -> m
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
@@ -147,13 +147,15 @@ class LinearOperator m u v | m -> u v where
 instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) (ShapedVector Double) where
     (ShMat _ _ m) #> (ShVec sh v) = ShVec sh . head . LAD.toColumns $ (LA.<>) m (LAD.asColumn v)
 
-class SquareMatrix m where
+class SquareMatrix m e | m -> e where
     chol :: m -> m
     inv  :: m -> m
+    det  :: m -> e
 
-instance SquareMatrix (ShapedMatrix Double) where
+instance SquareMatrix (ShapedMatrix Double) Double where
     chol (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.sym) m
-    inv (ShMat r c m) = ShMat r c $ LA.inv m
+    inv  (ShMat r c m) = ShMat r c $ LA.inv m
+    det  (ShMat _ _ m) = LA.det m
 
 class Joint m i r f | m -> i where
     joint :: (AbstractArray i r -> f) -> AbstractArray i (m r) -> m f
