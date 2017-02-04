@@ -16,7 +16,6 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Control.Monad.Guard
-                     , Data.Bool.Num
                      , Data.Expression
                      , Data.Expression.Const
                      , Data.Expression.Eval

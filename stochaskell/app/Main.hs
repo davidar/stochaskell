@@ -10,7 +10,6 @@ import Graphics.Rendering.Chart.Backend.Cairo ( toFile )
 import Control.Applicative ()
 import Control.Monad.Guard
 import Data.Array.Abstract
-import Data.Bool.Num ()
 import Data.Boolean.Overload
 import Data.Expression
 import Data.Expression.Const
