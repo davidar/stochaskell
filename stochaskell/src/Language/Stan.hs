@@ -2,6 +2,7 @@ module Language.Stan where
 
 import Control.Applicative ()
 import Data.Array.Abstract
+import qualified Data.ByteString.Char8 as C
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
@@ -10,10 +11,12 @@ import Data.List.Split
 import Data.Maybe
 import Data.Program
 import Data.Ratio
+import qualified Crypto.Hash.SHA1 as SHA1
 import GHC.Exts
 import System.Directory
 import System.IO.Temp
 import System.Process
+import Util
 
 -- TODO: better handling for exceptions to 1-based indexing
 
@@ -180,13 +183,18 @@ stanProgram (PBlock block refs given) =
 
 runStan :: (ExprTuple t) => (String -> IO String) -> Prog t -> IO [t]
 runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
-    let basename = tmpDir ++"/generated_model"
+    let basename = tmpDir ++"/stan"
     pwd <- getCurrentDirectory
+    let hash = toHex . SHA1.hash . C.pack $ stanProgram p
+        exename = pwd ++"/cache/stan/model_"++ hash
+    exeExists <- doesFileExist exename
 
-    putStrLn "--- Generating Stan code ---"
-    putStrLn $ stanProgram p
-    writeFile (basename ++".stan") $ stanProgram p
-    system $ "make -C "++ pwd ++"/cmdstan "++ basename
+    if exeExists then return () else do
+      putStrLn "--- Generating Stan code ---"
+      putStrLn $ stanProgram p
+      writeFile (exename ++".stan") $ stanProgram p
+      system $ "make -C "++ pwd ++"/cmdstan "++ exename
+      return ()
 
     putStrLn "--- Sampling Stan model ---"
     let dat = unlines . flip map (constraints p) $ \(n,x) ->
@@ -195,8 +203,8 @@ runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     writeFile (basename ++".data") dat
     -- TODO: avoid shell injection
     args <- extraArgs basename
-    system $ basename ++" sample data file="++ basename ++".data "++
-                              "output file="++ basename ++".csv "++ args
+    system $ exename ++" sample data file="++ basename ++".data "++
+                             "output file="++ basename ++".csv "++ args
     content <- readFile $ basename ++".csv"
     putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
 
