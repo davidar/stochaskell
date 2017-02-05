@@ -1,0 +1,3 @@
+[submodule "stochaskell/cmdstan"]
+	path = stochaskell/cmdstan
+	url = https://github.com/stan-dev/cmdstan.git

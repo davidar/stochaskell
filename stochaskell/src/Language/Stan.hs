@@ -11,6 +11,7 @@ import Data.Maybe
 import Data.Program
 import Data.Ratio
 import GHC.Exts
+import System.Directory
 import System.IO.Temp
 import System.Process
 
@@ -95,7 +96,6 @@ stanBuiltinFunctions =
   [("asVector",    "to_vector")
   ,("asMatrix",    "to_matrix")
   ,("chol",        "cholesky_decompose")
-  ,("ifThenElse",  "if_else")
   ,("negate",      "-")
   ]
 
@@ -114,18 +114,20 @@ stanOperators =
   ]
 
 stanNode :: Label -> Node -> String
+stanNode name (Apply "ifThenElse" [a,b,c] _) =
+    name ++" = "++ stanNodeRef a ++" ? "++ stanNodeRef b ++" : "++ stanNodeRef c ++";"
 stanNode name (Apply op [i,j] _) | s /= "" =
-    name ++" <- "++ stanNodeRef i ++" "++ s ++" "++ stanNodeRef j ++";"
+    name ++" = "++ stanNodeRef i ++" "++ s ++" "++ stanNodeRef j ++";"
   where s = fromMaybe "" $ lookup op stanOperators
 stanNode name (Apply f js _) =
-    name ++" <- "++ fromMaybe f (lookup f stanBuiltinFunctions) ++
+    name ++" = "++ fromMaybe f (lookup f stanBuiltinFunctions) ++
       "("++ stanNodeRef `commas` js ++");"
 stanNode name (Array sh dag ret _) =
     forLoop (inputs dag) sh $
         stanDAG dag ++"\n  "++
-        name ++"["++ stanId  `commas` inputs dag ++"] <- "++ stanNodeRef ret ++";"
+        name ++"["++ stanId  `commas` inputs dag ++"] = "++ stanNodeRef ret ++";"
 stanNode name (FoldR dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) =
-    name ++" <- "++ stanNodeRef seed ++";\n"++ loop
+    name ++" = "++ stanNodeRef seed ++";\n"++ loop
   where d = dagLevel dag
         idx = Dummy d 0
         [i,j] = inputs dag
@@ -134,11 +136,11 @@ stanNode name (FoldR dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) =
           forLoop [idx] [(lo,hi)] $ "  "++
            stanDecl (stanId i) s ++"\n  "++
            stanDecl (stanId j) t ++"\n  "++
-           stanId i ++" <- "++ stanId ls ++"["++
+           stanId i ++" = "++ stanId ls ++"["++
              stanNodeRef lo ++"+"++ stanNodeRef hi ++"-"++ stanId idx ++"];\n  "++
-           stanId j ++" <- "++ name ++";\n  {\n"++
+           stanId j ++" = "++ name ++";\n  {\n"++
            stanDAG dag ++"\n  "++
-           name ++" <- "++ stanNodeRef ret ++";\n  }"
+           name ++" = "++ stanNodeRef ret ++";\n  }"
 stanNode _ node = error $ "unable to codegen node "++ show node
 
 stanPNode :: Label -> PNode -> String
@@ -179,11 +181,12 @@ stanProgram (PBlock block refs given) =
 runStan :: (ExprTuple t) => (String -> IO String) -> Prog t -> IO [t]
 runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/generated_model"
+    pwd <- getCurrentDirectory
 
     putStrLn "--- Generating Stan code ---"
     putStrLn $ stanProgram p
     writeFile (basename ++".stan") $ stanProgram p
-    system $ "stan "++ basename
+    system $ "make -C "++ pwd ++"/cmdstan "++ basename
 
     putStrLn "--- Sampling Stan model ---"
     let dat = unlines . flip map (constraints p) $ \(n,x) ->
