@@ -6,7 +6,7 @@ import Control.Monad.Guard
 import Control.Monad.State
 import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
-import Data.Expression
+import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
 import qualified Data.List as List
@@ -207,6 +207,7 @@ instance MonadGuard Prog where
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
 
+-- TODO: Jacobian adjustment
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env pb
   where (rets, pb) = runProg prog
@@ -255,7 +256,7 @@ densityPNode env block (Dist "normal" [m,s] _) x =
   where m' = toDouble . fromJust $ evalNodeRef env block m
         s' = toDouble . fromJust $ evalNodeRef env block s
 densityPNode env block (Dist "multi_normal" [m,s] _) x =
-    LF.logToLogFloat $ -0.5 * (real $ (x' <.> (inv s' #> x')) + log (det s') + n * log (2*pi))
+    LF.logToLogFloat $ -0.5 * (real $ (x' <.> (s' <\> x')) + logDet s' + n * log (2*pi))
   where m' = fromJust $ evalNodeRef env block m
         s' = fromJust $ evalNodeRef env block s
         n = integer $ length (toList m')
@@ -360,11 +361,14 @@ loop s f = do
 
 -- Metropolis-Hastings
 mh :: (ExprTuple r, Show r) => Prog r -> (r -> Prog r) -> r -> IO r
-mh target proposal x = do
+mh = mhAdjust (const $ LF.logFloat 1)
+
+mhAdjust :: (ExprTuple r, Show r) => (r -> LF.LogFloat) -> Prog r -> (r -> Prog r) -> r -> IO r
+mhAdjust adjust target proposal x = do
   y <- sampleP (proposal x)
   let f = density target
       q = density . proposal
-      b = f y / f x
+      b = (f y * adjust y) / (f x * adjust x)
       c = q x y / q y x
       a = LF.fromLogFloat (b / c) -- (f y * q y x) / (f x * q x y)
   accept <- trace ("acceptance ratio = "++ show b ++" / "++ show c ++" = "++ show a) $

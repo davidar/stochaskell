@@ -142,20 +142,25 @@ instance Matrix (ShapedMatrix Double) Integer Double where
 
 infixr 8 #>
 class LinearOperator m u v | m -> u v where
-    (#>) :: m -> u -> v
+    (#>)  :: m -> u -> v
+    (<\>) :: m -> v -> u
 
 instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) (ShapedVector Double) where
-    (ShMat _ _ m) #> (ShVec sh v) = ShVec sh . head . LAD.toColumns $ (LA.<>) m (LAD.asColumn v)
+    (ShMat _ _ m)  #> (ShVec sh v) = ShVec sh . head . LAD.toColumns $ (LA.<>)  m (LAD.asColumn v)
+    (ShMat _ _ m) <\> (ShVec sh v) = ShVec sh . head . LAD.toColumns $ (LA.<\>) m (LAD.asColumn v)
 
 class SquareMatrix m e | m -> e where
-    chol :: m -> m
-    inv  :: m -> m
-    det  :: m -> e
+    chol   :: m -> m
+    inv    :: m -> m
+    det    :: m -> e
+    logDet :: m -> e
 
 instance SquareMatrix (ShapedMatrix Double) Double where
-    chol (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.sym) m
-    inv  (ShMat r c m) = ShMat r c $ LA.inv m
-    det  (ShMat _ _ m) = LA.det m
+    chol   (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.sym) m
+    inv    (ShMat r c m) = ShMat r c $ LA.inv m
+    det    (ShMat _ _ m) = LA.det m
+    logDet (ShMat _ _ m) = log_det
+      where (inv_m,(log_det,sign_det)) = LA.invlndet m
 
 class Joint m i r f | m -> i where
     joint :: (AbstractArray i r -> f) -> AbstractArray i (m r) -> m f
