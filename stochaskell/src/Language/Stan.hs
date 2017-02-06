@@ -181,8 +181,8 @@ stanProgram (PBlock block refs given) =
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
-runStan :: (ExprTuple t) => (String -> IO String) -> Prog t -> IO [t]
-runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
+runStan :: (ExprTuple t) => (String -> IO String) -> Int -> Prog t -> IO [t]
+runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/stan"
     pwd <- getCurrentDirectory
     let hash = toHex . SHA1.hash . C.pack $ stanProgram p
@@ -203,8 +203,10 @@ runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     writeFile (basename ++".data") dat
     -- TODO: avoid shell injection
     args <- extraArgs basename
-    system $ exename ++" sample data file="++ basename ++".data "++
-                             "output file="++ basename ++".csv "++ args
+    system $ exename ++" sample num_samples="++ show numSamples ++
+                              " num_warmup="++  show numSamples ++
+                       " data   file="++ basename ++".data "++
+                       " output file="++ basename ++".csv "++ args
     content <- readFile $ basename ++".csv"
     putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
 
@@ -226,15 +228,19 @@ runStan extraArgs prog = withSystemTempDirectory "stan" $ \tmpDir -> do
                       in fromList (real . readDouble <$> row `slice` cols)
 
 hmcStan :: (ExprTuple t) => Prog t -> IO [t]
-hmcStan = runStan (const $ return "")
+hmcStan = runStan (const $ return "") 1000
 
 hmcStanInit :: (ExprTuple t) => Prog t -> t -> IO [t]
-hmcStanInit p t = flip runStan p $ \basename -> do
-    let fname = basename ++".init"
-    putStrLn assigns
-    fname `writeFile` assigns
-    return $ "init="++ fname
+hmcStanInit = hmcStanInit' 1000
+
+hmcStanInit' :: (ExprTuple t) => Int -> Prog t -> t -> IO [t]
+hmcStanInit' numSamples p t = runStan extraArgs numSamples p
   where assigns = unlines . map f $ unifyTuple rets t env
         f (n,x) = stanId n ++" <- "++ stanConstVal x
         (rets,pb) = runProg p
         env = constraints pb
+        extraArgs basename = do
+          let fname = basename ++".init"
+          putStrLn assigns
+          fname `writeFile` assigns
+          return $ "init="++ fname
