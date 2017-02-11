@@ -16,7 +16,7 @@ import Data.Maybe
 import Data.Ratio
 import Control.Applicative ()
 import Control.Monad.State
-import GHC.Exts hiding (coerce)
+import qualified Numeric.LinearAlgebra as LA
 import Util ()
 
 
@@ -126,6 +126,7 @@ data Type
     | SubrangeT Type (Maybe NodeRef) (Maybe NodeRef)
     | ArrayT (Maybe String) [AA.Interval NodeRef] Type
     deriving (Eq, Ord)
+boolT :: Type
 boolT = SubrangeT IntT (Just $ Const 0) (Just $ Const 1)
 
 instance Show Type where
@@ -370,22 +371,21 @@ instance (Floating t) => Floating (Expr t) where
     pi = apply "pi" RealT []
     (**) = applyClosed2 "**"
 
-    -- TODO: applying these functions to IntT should yield RealT
-    exp   = applyClosed1 "exp"
-    log   = applyClosed1 "log"
-    sqrt  = applyClosed1 "sqrt"
-    sin   = applyClosed1 "sin"
-    cos   = applyClosed1 "cos"
-    tan   = applyClosed1 "tan"
-    asin  = applyClosed1 "asin"
-    acos  = applyClosed1 "acos"
-    atan  = applyClosed1 "atan"
-    sinh  = applyClosed1 "sinh"
-    cosh  = applyClosed1 "cosh"
-    tanh  = applyClosed1 "tanh"
-    asinh = applyClosed1 "asinh"
-    acosh = applyClosed1 "acosh"
-    atanh = applyClosed1 "atanh"
+    exp   = apply1 "exp"   RealT
+    log   = apply1 "log"   RealT
+    sqrt  = apply1 "sqrt"  RealT
+    sin   = apply1 "sin"   RealT
+    cos   = apply1 "cos"   RealT
+    tan   = apply1 "tan"   RealT
+    asin  = apply1 "asin"  RealT
+    acos  = apply1 "acos"  RealT
+    atan  = apply1 "atan"  RealT
+    sinh  = apply1 "sinh"  RealT
+    cosh  = apply1 "cosh"  RealT
+    tanh  = apply1 "tanh"  RealT
+    asinh = apply1 "asinh" RealT
+    acosh = apply1 "acosh" RealT
+    atanh = apply1 "atanh" RealT
 
 instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = expr $ do
@@ -413,6 +413,28 @@ instance (ScalarType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
     vector = asVector . array 1
 instance (ScalarType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
     matrix = asMatrix . array 2
+    a <> b = expr $ do
+        i <- fromExpr $ asMatrix a
+        j <- fromExpr $ asMatrix b
+        let (ArrayT _ [r,_] t) = typeRef i
+            (ArrayT _ [_,c] _) = typeRef j
+        simplify $ Apply "<>" [i,j] (ArrayT (Just "matrix") [r,c] t)
+
+instance (ScalarType e) => AA.Scalable (Expr e) (Expr [[e]]) where
+    a *> m = expr $ do
+        i <- fromExpr a
+        j <- fromExpr $ asMatrix m
+        simplify $ Apply "*>" [i,j] (typeRef j)
+
+instance (ScalarType e) => LA.Transposable (Expr [[e]]) (Expr [[e]]) where
+    tr m = expr $ do
+        i <- fromExpr $ asMatrix m
+        let (ArrayT _ [r,c] t) = typeRef i
+        simplify $ Apply "tr" [i] (ArrayT (Just "matrix") [c,r] t)
+    tr' m = expr $ do
+        i <- fromExpr $ asMatrix m
+        let (ArrayT _ [r,c] t) = typeRef i
+        simplify $ Apply "tr'" [i] (ArrayT (Just "matrix") [c,r] t)
 
 asVector :: Expr [e] -> Expr [e]
 asVector v = expr $ do

@@ -11,6 +11,7 @@ import Data.List.Split
 import Data.Maybe
 import Data.Program
 import Data.Ratio
+import Debug.Trace
 import qualified Crypto.Hash.SHA1 as SHA1
 import GHC.Exts
 import System.Directory
@@ -57,6 +58,10 @@ stanConstVal (Exact a) | isScalar a =
 stanConstVal (Approx a) | isScalar a = show (toScalar a)
 stanConstVal val | dimension val == 1 =
   "c("++ stanConstVal `commas` toList val ++")"
+stanConstVal val =
+  "structure("++ stanConstVal (vectorise val) ++", .Dim = "++ stanConstVal dim ++")"
+  where (lo,hi) = bounds val
+        dim = fromList $ integer <$> hi
 
 stanNodeRef :: NodeRef -> String
 stanNodeRef (Var s _) = stanId s
@@ -100,6 +105,7 @@ stanBuiltinFunctions =
   ,("asMatrix",    "to_matrix")
   ,("chol",        "cholesky_decompose")
   ,("negate",      "-")
+  ,("inv",         "inverse")
   ]
 
 stanBuiltinDistributions =
@@ -113,12 +119,16 @@ stanOperators =
   ,("/",   "/")
   ,("==",  "==")
   ,("#>",  "*")
+  ,("<>",  "*")
+  ,("*>",  "*")
   ,("**",  "^")
   ]
 
 stanNode :: Label -> Node -> String
 stanNode name (Apply "ifThenElse" [a,b,c] _) =
     name ++" = "++ stanNodeRef a ++" ? "++ stanNodeRef b ++" : "++ stanNodeRef c ++";"
+stanNode name (Apply "tr'" [a] _) =
+    name ++" = "++ stanNodeRef a ++"';"
 stanNode name (Apply op [i,j] _) | s /= "" =
     name ++" = "++ stanNodeRef i ++" "++ s ++" "++ stanNodeRef j ++";"
   where s = fromMaybe "" $ lookup op stanOperators
@@ -181,6 +191,12 @@ stanProgram (PBlock block refs given) =
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
+system' :: String -> IO ()
+system' cmd = do
+    putStrLn cmd
+    system cmd
+    return ()
+
 runStan :: (ExprTuple t) => (String -> IO String) -> Int -> Prog t -> IO [t]
 runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/stan"
@@ -193,7 +209,7 @@ runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> 
       putStrLn "--- Generating Stan code ---"
       putStrLn $ stanProgram p
       writeFile (exename ++".stan") $ stanProgram p
-      system $ "make -C "++ pwd ++"/cmdstan "++ exename
+      system' $ "make -C "++ pwd ++"/cmdstan "++ exename
       return ()
 
     putStrLn "--- Sampling Stan model ---"
@@ -203,10 +219,10 @@ runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> 
     writeFile (basename ++".data") dat
     -- TODO: avoid shell injection
     args <- extraArgs basename
-    system $ exename ++" sample num_samples="++ show numSamples ++
-                              " num_warmup="++  show numSamples ++
-                       " data   file="++ basename ++".data "++
-                       " output file="++ basename ++".csv "++ args
+    system' $ exename ++" sample num_samples="++ show numSamples ++
+                               " num_warmup="++  show numSamples ++
+                        " data   file="++ basename ++".data "++
+                        " output file="++ basename ++".csv "++ args
     content <- readFile $ basename ++".csv"
     putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
 

@@ -1,5 +1,5 @@
 {-# LANGUAGE GADTs, ImpredicativeTypes, FlexibleInstances, ScopedTypeVariables,
-             FlexibleContexts, TypeFamilies, MultiParamTypeClasses #-}
+             FlexibleContexts, TypeFamilies, MultiParamTypeClasses, MonadComprehensions #-}
 module Data.Program where
 
 import Control.Monad.Guard
@@ -128,6 +128,12 @@ instance Distribution Gamma R Prog R where
         j <- fromExpr b
         return $ Dist "gamma" [i,j] RealT
 
+instance Distribution InvGamma R Prog R where
+    sample (InvGamma a b) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "inv_gamma" [i,j] RealT
+
 instance Distribution Geometric R Prog Z where
     sample (Geometric p) = dist $ do
         i <- fromExpr p
@@ -161,6 +167,18 @@ instance Distribution Uniform Z Prog Z where
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "discreteUniform" [i,j] RealT
+
+normalChol :: Z -> RVec -> RMat -> P RVec
+normalChol n mu cov = do
+  w <- joint vector [ normal 0 1 | _ <- 1...n ]
+  return (mu + chol cov #> w)
+
+normalCond :: Z -> (Expr t -> Expr t -> R) -> Expr [t] -> RVec -> Expr t -> P R
+normalCond n cov s y x = normal m (sqrt v)
+  where c = matrix [ cov (s!i) (s!j) | i <- 1...n, j <- 1...n ] :: RMat
+        k = vector [ cov (s!i) x     | i <- 1...n ] :: RVec
+        m = y <.> (inv c #> k)
+        v = cov x x - k <.> (inv c #> k)
 
 
 ------------------------------------------------------------------------------
@@ -246,6 +264,13 @@ densityPNode env block (Dist "gamma" [a,b] _) x
         b' = toDouble . fromJust $ evalNodeRef env block b
         x' = toDouble x
         l = a' * log b' + (a' - 1) * log x' - b' * x' - logGamma a'
+densityPNode env block (Dist "inv_gamma" [a,b] _) x
+    | x' >= 0 = LF.logToLogFloat l
+    | otherwise = LF.logFloat 0
+  where a' = toDouble . fromJust $ evalNodeRef env block a
+        b' = toDouble . fromJust $ evalNodeRef env block b
+        x' = toDouble x
+        l = a' * log b' - (a' + 1) * log x' - b' / x' - logGamma a'
 densityPNode env block (Dist "geometric" [t] _) x = p * q^k
   where t' = toDouble . fromJust $ evalNodeRef env block t
         p = LF.logFloat t'
@@ -315,7 +340,10 @@ samplePNode env block (Dist "categorical" cats _) = fromRational <$> categorical
   where n = length cats `div` 2
         ps = toDouble . fromJust . evalNodeRef env block <$> take n cats
         xs = toRational . fromJust . evalNodeRef env block <$> drop n cats
-samplePNode env block (Dist "gamma" [a,b] _) = fromDouble <$> gamma a' (1/b')
+samplePNode env block (Dist "gamma" [a,b] _) = fromDouble <$> gamma a' b'
+  where a' = toDouble . fromJust $ evalNodeRef env block a
+        b' = toDouble . fromJust $ evalNodeRef env block b
+samplePNode env block (Dist "inv_gamma" [a,b] _) = fromDouble <$> invGamma a' b'
   where a' = toDouble . fromJust $ evalNodeRef env block a
         b' = toDouble . fromJust $ evalNodeRef env block b
 samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric 0 p'

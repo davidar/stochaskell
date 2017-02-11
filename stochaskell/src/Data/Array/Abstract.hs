@@ -1,7 +1,7 @@
 {-# LANGUAGE MultiParamTypeClasses, TypeFamilies, FlexibleInstances,
              TypeOperators, GADTs, FunctionalDependencies, FlexibleContexts,
              UndecidableInstances #-}
-module Data.Array.Abstract where
+module Data.Array.Abstract ( module Data.Array.Abstract, LA.tr, LA.tr' ) where
 
 import qualified Data.Array as A
 import Data.Ix
@@ -118,6 +118,17 @@ instance (Storable t) => Indexable (ShapedVector t) Integer t where
 instance (Storable t) => Vector (ShapedVector t) Integer t where
     vector a = ShVec (head $ shape a) . LAD.fromList . A.elems $ toArray a
 
+infixr 7 *>
+class Scalable a v where
+    (*>) :: a -> v -> v
+
+instance (Num e, Ix i) => Scalable e (A.Array i e) where
+    a *> v = (a *) <$> v
+instance Scalable Double (ShapedVector Double) where
+    a *> (ShVec n   v) = ShVec n   $ (LA.scale) a v
+instance Scalable Double (ShapedMatrix Double) where
+    a *> (ShMat r c m) = ShMat r c $ (LA.scale) a m
+
 infixr 8 <.>
 class InnerProduct v e | v -> e where
     (<.>) :: v -> v -> e
@@ -125,8 +136,10 @@ class InnerProduct v e | v -> e where
 instance (LA.Numeric t) => InnerProduct (ShapedVector t) t where
     (ShVec _ u) <.> (ShVec _ v) = (LA.<.>) u v
 
+infixr 8 <>
 class Matrix m i e | m -> i e where
     matrix :: AbstractArray i e -> m
+    (<>) :: m -> m -> m
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
 instance (Show t, LA.Element t) => Show (ShapedMatrix t) where
@@ -139,18 +152,24 @@ instance Matrix (ShapedMatrix Double) Integer Double where
       where ncol = fromInteger . cardinality $ shape a !! 1
             xs = A.elems $ toArray a
             r:c:_ = shape a
+    (ShMat r c m) <> (ShMat r' c' m') | c == r' = ShMat r c' $ (LA.<>) m m'
+
+instance LA.Transposable (ShapedMatrix Double) (ShapedMatrix Double) where
+    tr  (ShMat r c m) = ShMat c r $ LA.tr  m
+    tr' (ShMat r c m) = ShMat c r $ LA.tr' m
 
 infixr 8 #>
+infixl 7 <\>
 class LinearOperator m u v | m -> u v where
     (#>)  :: m -> u -> v
     (<\>) :: m -> v -> u
 
 instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) (ShapedVector Double) where
-    (ShMat _ _ m)  #> (ShVec sh v) = ShVec sh . head . LAD.toColumns $ (LA.<>)  m (LAD.asColumn v)
-    (ShMat _ _ m) <\> (ShVec sh v) = ShVec sh . head . LAD.toColumns $ (LA.<\>) m (LAD.asColumn v)
+    (ShMat r _ m)  #> (ShVec _ v) = ShVec r . head . LAD.toColumns $ (LA.<>)  m (LAD.asColumn v)
+    (ShMat _ c m) <\> (ShVec _ v) = ShVec c . head . LAD.toColumns $ (LA.<\>) m (LAD.asColumn v)
 
 class SquareMatrix m e | m -> e where
-    chol   :: m -> m
+    chol   :: m -> m -- lower-triangular
     inv    :: m -> m
     det    :: m -> e
     logDet :: m -> e

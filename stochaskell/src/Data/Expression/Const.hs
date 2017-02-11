@@ -2,13 +2,15 @@
              TypeFamilies #-}
 module Data.Expression.Const where
 
-import Prelude hiding ((<*))
+import Prelude hiding ((<*),(*>))
 
 import Data.Array hiding ((!),bounds)
 import Data.Array.Abstract
 import Data.Boolean
 import Data.Ratio
+import Debug.Trace
 import GHC.Exts
+import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra.Data as LAD
 
 toBool :: (Boolean b, Eq b) => b -> Bool
@@ -28,7 +30,7 @@ data ConstVal = Exact  (Array [Integer] Rational)
               | Approx (Array [Integer] Double)
 
 instance Show ConstVal where
-    show c | dimension c == 1 = show (toList c)
+    show c | dimension c >= 1 = show (toList c)
     show (Approx a) | isScalar a = show (toScalar a)
     show (Approx a) = show a
     show c = show $ approx c
@@ -54,6 +56,10 @@ constBinOp f (Exact  a) (Exact  b) = Exact  (zipWithA f a b)
 constBinOp f (Exact  a) (Approx b) = Approx (zipWithA f (fromRational <$> a) b)
 constBinOp f (Approx a) (Exact  b) = Approx (zipWithA f a (fromRational <$> b))
 constBinOp f (Approx a) (Approx b) = Approx (zipWithA f a b)
+
+constBinOp' :: (forall a. Floating a => a -> a -> a) -> ConstVal -> ConstVal -> ConstVal
+constBinOp' f (Approx a) (Approx b) = Approx (zipWithA f a b)
+constBinOp' f a b = constBinOp' f (approx a) (approx b)
 
 isScalar :: (Ix t, Show t) => Array [t] r -> Bool
 isScalar a = bounds a == ([],[])
@@ -104,6 +110,10 @@ foldrConst' f r = foldr f' (Just r) . toList
   where f' _ Nothing = Nothing
         f' x (Just y) = f x y
 
+-- column-major
+vectorise :: ConstVal -> ConstVal
+vectorise c | dimension c == 2 = fromList . concat $ toList <$> toList (tr' c)
+
 instance Num ConstVal where
     (+) = constBinOp (+)
     (-) = constBinOp (-)
@@ -120,6 +130,7 @@ instance Floating ConstVal where
     exp = constUnOp' exp
     log = constUnOp' log
     pi = Approx (fromScalar pi)
+    (**) = constBinOp' (**)
 
 instance Enum ConstVal where
     toEnum = Exact . fromScalar . fromIntegral
@@ -182,8 +193,16 @@ instance Ix ConstVal where
             hi = floor   <$> elems b
             ix = round   <$> elems c
 
+instance Scalable ConstVal ConstVal where
+    (Exact  a) *> (Exact  v) = Exact  $ toScalar a *> v
+    (Approx a) *> (Approx v) = Approx $ toScalar a *> v
+    a *> v = approx a *> approx v
+
 instance InnerProduct ConstVal ConstVal where
     u <.> v = fromDouble $ toVector u <.> toVector v
+
+instance Matrix ConstVal ConstVal ConstVal where
+    a <> b = fromMatrix $ toMatrix a <> toMatrix b
 
 instance LinearOperator ConstVal ConstVal ConstVal where
     m  #> v = fromVector $ toMatrix m  #> toVector v
@@ -194,6 +213,10 @@ instance SquareMatrix ConstVal ConstVal where
     inv    = fromMatrix . inv    . toMatrix
     det    = fromDouble . det    . toMatrix
     logDet = fromDouble . logDet . toMatrix
+
+instance LA.Transposable ConstVal ConstVal where
+    tr  = fromMatrix . tr  . toMatrix
+    tr' = fromMatrix . tr' . toMatrix
 
 instance Boolean ConstVal where
     true  = Exact $ fromScalar 1

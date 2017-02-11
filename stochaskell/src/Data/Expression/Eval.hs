@@ -2,7 +2,7 @@
 
 module Data.Expression.Eval where
 
-import Prelude hiding ((<*))
+import Prelude hiding ((<*),(*>))
 
 import Data.Array.Abstract
 import Data.Boolean
@@ -34,10 +34,14 @@ builtins =
   ,("pi", const pi)
   ,("asVector", head)
   ,("asMatrix", head)
+  ,("<>", \[a,b] -> a <> b)
   ,("<.>", \[u,v] -> u <.> v)
+  ,("*>", \[a,v] -> a *> v)
   ,("#>", \[m,v] -> m #> v)
   ,("chol", chol . head)
   ,("inv", inv . head)
+  ,("tr", tr . head)
+  ,("tr'", tr' . head)
   ,("ifThenElse", \[a,b,c] -> ifB a b c)
   ,("==", \[a,b] -> a ==* b)
   ,("/=", \[a,b] -> a /=* b)
@@ -174,7 +178,7 @@ unifyNode env block (Apply "/" [a,b] _) val | isJust b' =
     unifyNodeRef env block a (val * fromJust b')
   where b' = evalNodeRef env block b
 unifyNode env block (Apply "#>" [a,b] _) val | isJust a' =
-    unifyNodeRef env block b ((inv (fromJust a')) #> val)
+    unifyNodeRef env block b ((fromJust a') <\> val)
   where a' = evalNodeRef env block a
 unifyNode env block (Apply "deleteIndex" [a,i] _) val | isJust a' && dimension val == 1 =
     unifyNodeRef env block i (integer idx)
@@ -218,9 +222,15 @@ instance IsList BVec where
     fromList = expr . return . Const . fromList . map fromBool
     toList = map toBool . toList . fromJust . eval_
 
+instance IsList RMat where
+    type Item RMat = [Double]
+    fromList = expr . return . Const . fromList . map (fromList . map real)
+    toList = map (map real . toList) . toList . fromJust . eval_
+
 instance Show R    where show = show . real
 instance Show Z    where show = show . integer
 instance Show B    where show = show . toBool
 instance Show RVec where show = show . toList
 instance Show ZVec where show = show . toList
 instance Show BVec where show = show . toList
+instance Show RMat where show = show . toList

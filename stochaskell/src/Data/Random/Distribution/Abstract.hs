@@ -33,11 +33,19 @@ categorical l = sample $ Categorical.fromList l
 
 data Gamma a t = Gamma a a
 instance Distribution Gamma Double IO Double where
-    sample (Gamma a b) = Rand.sample (Rand.Gamma a b)
+    sample (Gamma a b) = Rand.sample (Rand.Gamma a (1/b))
 gamma :: Distribution Gamma s m t => s -> s -> m t
 gamma a b = sample $ Gamma a b
 exponential :: (Num s, Distribution Gamma s m t) => s -> m t
 exponential = gamma 1
+
+data InvGamma a t = InvGamma a a
+instance Distribution InvGamma Double IO Double where
+    sample (InvGamma a b) = do
+      x <- gamma a b
+      return (1 / x)
+invGamma :: Distribution InvGamma s m t => s -> s -> m t
+invGamma a b = sample $ InvGamma a b
 
 data Geometric a t = Geometric a
 instance Distribution Geometric Double IO Integer where

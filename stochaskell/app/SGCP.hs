@@ -18,18 +18,6 @@ import GHC.Exts
 import Language.Stan
 import Util
 
-normalChol :: Z -> RVec -> RMat -> P RVec
-normalChol n mu cov = do
-  w <- joint vector [ normal 0 1 | _ <- 1...n ]
-  return (mu + chol cov #> w)
-
-normalCond :: Z -> (Expr t -> Expr t -> R) -> Expr [t] -> RVec -> Expr t -> P R
-normalCond n cov s y x = normal m (sqrt v)
-  where c = matrix [ cov (s!i) (s!j) | i <- 1...n, j <- 1...n ] :: RMat
-        k = vector [ cov (s!i) x     | i <- 1...n ] :: RVec
-        m = y <.> (inv c #> k)
-        v = cov x x - k <.> (inv c #> k)
-
 kernel :: R -> R -> R -> R -> R
 kernel lsv lls2 a b = exp (lsv - (a - b)*(a - b) / (2 * exp lls2))
                       + if a == b then 1e-6 else 0
