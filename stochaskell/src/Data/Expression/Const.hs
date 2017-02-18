@@ -114,6 +114,10 @@ foldrConst' f r = foldr f' (Just r) . toList
 vectorise :: ConstVal -> ConstVal
 vectorise c | dimension c == 2 = fromList . concat $ toList <$> toList (tr' c)
 
+eye :: Interval Integer -> ConstVal
+eye (lo,hi) = Exact $ array ([lo,lo],[hi,hi])
+  [ ([i,j], if i == j then 1 else 0) | i <- [lo..hi], j <- [lo..hi] ]
+
 instance Num ConstVal where
     (+) = constBinOp (+)
     (-) = constBinOp (-)

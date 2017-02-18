@@ -24,6 +24,10 @@ toHex bytes = do
 lfact :: Integer -> LF.LogFloat
 lfact = LF.logToLogFloat . logFactorial
 
+delete :: (Eq k) => k -> [(k,v)] -> [(k,v)]
+delete k = filter p
+  where p (k',_) = k' /= k
+
 instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
     m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
 

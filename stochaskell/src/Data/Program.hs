@@ -225,7 +225,16 @@ instance MonadGuard Prog where
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
 
--- TODO: Jacobian adjustment
+densityJ :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
+densityJ prog vals = densityPBlock env pb / adjust
+  where (rets, pb) = runProg prog
+        env = unifyTuple rets vals emptyEnv
+        jacobian = [ [ diffD env d (Volatile 0 i)
+                     | i <- [0..length (actions pb) - 1] ]
+                   | d <- fromExprTuple rets ]
+        adjust = case jacobian of
+          [[j]] -> LF.logToLogFloat . real $ logDet j
+
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env pb
   where (rets, pb) = runProg prog

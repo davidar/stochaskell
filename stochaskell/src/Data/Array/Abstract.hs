@@ -172,7 +172,7 @@ class SquareMatrix m e | m -> e where
     chol   :: m -> m -- lower-triangular
     inv    :: m -> m
     det    :: m -> e
-    logDet :: m -> e
+    logDet :: m -> e -- log abs det
 
 instance SquareMatrix (ShapedMatrix Double) Double where
     chol   (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.sym) m

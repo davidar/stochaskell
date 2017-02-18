@@ -148,7 +148,7 @@ unifyNodeRef env block (Var (Internal level ptr) _) val =
     in unifyNode env block node val
 unifyNodeRef _ _ (Var ref _) val = [(ref,val)]
 unifyNodeRef _ _ (Const c) val = if c == val then [] else error $ show c ++" /= "++ show val
-unifyNodeRef env block (Index arr idx) val = [] -- TODO
+unifyNodeRef _ _ Index{} _ = trace "WARN not unifying Index" []
 
 unifyNode :: Env -> Block -> Node -> ConstVal -> Env
 unifyNode env block (Array sh body hd _) val = concat $ do -- TODO unify sh
@@ -198,6 +198,50 @@ unifyNode env block node val | isJust lhs && fromJust lhs == val = []
 unifyNode _ _ FoldR{} _ = trace "WARN not unifying FoldR" []
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
+
+diff :: Env -> Expr t -> Id -> ConstVal
+diff env e = diffNodeRef env block ret
+  where (ret, block) = runExpr e
+
+diff_ :: Expr t -> Id -> ConstVal
+diff_ = diff []
+
+diffD :: Env -> DExpr -> Id -> ConstVal
+diffD env e = diffNodeRef env block ret
+  where (ret, block) = runDExpr e
+
+diffD_ :: DExpr -> Id -> ConstVal
+diffD_ = diffD []
+
+diffNodeRef :: Env -> Block -> NodeRef -> Id -> ConstVal
+diffNodeRef env block (Var (Internal level ptr) _) var =
+    let dag = reverse block !! level
+        node = flip fromMaybe (ptr `lookup` nodes dag) $
+          error $ "pointer "++ show level ++":"++ show ptr ++" not found"
+    in diffNode env block node var
+diffNodeRef env block (Var i t) var
+  | i == var = case t of
+      IntT -> 1
+      RealT -> 1
+      (ArrayT _ [(lo,hi)] _) -> eye (integer $ fromJust lo', integer $ fromJust hi')
+        where lo' = evalNodeRef env block lo
+              hi' = evalNodeRef env block hi
+  | otherwise = 0
+diffNodeRef _ _ (Const _) _ = 0
+
+diffNode :: Env -> Block -> Node -> Id -> ConstVal
+diffNode env block (Apply "asVector" [v] _) var =
+    diffNodeRef env block v var
+diffNode env block (Apply "+" [a,b] _) var | isJust a' =
+    diffNodeRef env block b var
+  where a' = evalNodeRef (delete var env) block a
+diffNode env block (Apply "#>" [a,b] _) var | isJust a' =
+    fromJust a' <> diffNodeRef env block b var
+  where a' = evalNodeRef (delete var env) block a
+diffNode env block node var | isJust lhs = 0
+  where lhs = evalNode (delete var env) block node
+diffNode _ _ node var = error $
+  "unable to diff node "++ show node ++" wrt "++ show var
 
 instance (Enum t) => Enum (Expr t)
 
