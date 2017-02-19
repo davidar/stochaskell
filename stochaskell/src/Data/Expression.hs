@@ -157,6 +157,9 @@ internal level i = do
             then return . typeNode . fromJust . Bimap.lookupR i $ bimap dag
             else liftBlock getType
 
+typeDExpr :: DExpr -> Type
+typeDExpr = typeRef . fst . runDExpr
+
 typeRef :: NodeRef -> Type
 typeRef (Var _ t) = t
 typeRef (Const (Exact a))

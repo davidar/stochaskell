@@ -53,6 +53,15 @@ builtins =
   ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
   ]
 
+-- number of elements in a value of the given type
+numelType :: Env -> Block -> Type -> Integer
+numelType _ _ IntT = 1
+numelType _ _ RealT = 1
+numelType _ _ SubrangeT{} = 1
+numelType env block (ArrayT _ sh _) = product $ map f sh'
+  where sh' = evalShape env block sh
+        f (lo,hi) = hi - lo + 1
+
 eval :: Env -> Expr t -> Maybe ConstVal
 eval env e = evalNodeRef env block ret
   where (ret, block) = runExpr e
@@ -90,6 +99,12 @@ evalRange env block sh = range (a,b)
   where (i,j) = unzip sh
         a = fromJust . evalNodeRef env block <$> i
         b = fromJust . evalNodeRef env block <$> j
+
+evalShape :: Env -> Block -> [(NodeRef,NodeRef)] -> [(Integer,Integer)]
+evalShape env block sh = zip a b
+  where (i,j) = unzip sh
+        a = integer . fromJust . evalNodeRef env block <$> i
+        b = integer . fromJust . evalNodeRef env block <$> j
 
 evalNode :: Env -> Block -> Node -> Maybe ConstVal
 evalNode env block (Apply fn args _) = do
@@ -199,48 +214,39 @@ unifyNode _ _ FoldR{} _ = trace "WARN not unifying FoldR" []
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
 
-diff :: Env -> Expr t -> Id -> ConstVal
-diff env e = diffNodeRef env block ret
-  where (ret, block) = runExpr e
+diff :: Env -> Expr t -> Id -> Type -> ConstVal
+diff env = diffD env . erase
 
-diff_ :: Expr t -> Id -> ConstVal
+diff_ :: Expr t -> Id -> Type -> ConstVal
 diff_ = diff []
 
-diffD :: Env -> DExpr -> Id -> ConstVal
+diffD :: Env -> DExpr -> Id -> Type -> ConstVal
 diffD env e = diffNodeRef env block ret
   where (ret, block) = runDExpr e
 
-diffD_ :: DExpr -> Id -> ConstVal
+diffD_ :: DExpr -> Id -> Type -> ConstVal
 diffD_ = diffD []
 
-diffNodeRef :: Env -> Block -> NodeRef -> Id -> ConstVal
-diffNodeRef env block (Var (Internal level ptr) _) var =
+diffNodeRef :: Env -> Block -> NodeRef -> Id -> Type -> ConstVal
+diffNodeRef env block (Var (Internal level ptr) _) var t =
     let dag = reverse block !! level
         node = flip fromMaybe (ptr `lookup` nodes dag) $
           error $ "pointer "++ show level ++":"++ show ptr ++" not found"
-    in diffNode env block node var
-diffNodeRef env block (Var i t) var
-  | i == var = case t of
-      IntT -> 1
-      RealT -> 1
-      (ArrayT _ [(lo,hi)] _) -> eye (integer $ fromJust lo', integer $ fromJust hi')
-        where lo' = evalNodeRef env block lo
-              hi' = evalNodeRef env block hi
-  | otherwise = 0
-diffNodeRef _ _ (Const _) _ = 0
+    in diffNode env block node var t
+diffNodeRef env block (Var i s) var t
+  | i == var  = eye   (1, numelType env block s)
+  | otherwise = zeros (1, numelType env block s) (1, numelType env block t)
 
-diffNode :: Env -> Block -> Node -> Id -> ConstVal
-diffNode env block (Apply "asVector" [v] _) var =
-    diffNodeRef env block v var
-diffNode env block (Apply "+" [a,b] _) var | isJust a' =
-    diffNodeRef env block b var
+diffNode :: Env -> Block -> Node -> Id -> Type -> ConstVal
+diffNode env block (Apply "asVector" [v] _) var t =
+    diffNodeRef env block v var t
+diffNode env block (Apply "+" [a,b] _) var t | isJust a' =
+    diffNodeRef env block b var t
   where a' = evalNodeRef (delete var env) block a
-diffNode env block (Apply "#>" [a,b] _) var | isJust a' =
-    fromJust a' <> diffNodeRef env block b var
+diffNode env block (Apply "#>" [a,b] _) var t | isJust a' =
+    fromJust a' <> diffNodeRef env block b var t
   where a' = evalNodeRef (delete var env) block a
-diffNode env block node var | isJust lhs = 0
-  where lhs = evalNode (delete var env) block node
-diffNode _ _ node var = error $
+diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
 
 instance (Enum t) => Enum (Expr t)

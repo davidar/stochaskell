@@ -229,11 +229,14 @@ densityJ :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 densityJ prog vals = densityPBlock env pb / adjust
   where (rets, pb) = runProg prog
         env = unifyTuple rets vals emptyEnv
-        jacobian = [ [ diffD env d (Volatile 0 i)
-                     | i <- [0..length (actions pb) - 1] ]
-                   | d <- fromExprTuple rets ]
-        adjust = case jacobian of
-          [[j]] -> LF.logToLogFloat . real $ logDet j
+        jacobian = [ [ diffD env e (Volatile 0 i) (typePNode d)
+                     | (i,d) <- zip [0..] (reverse $ actions pb), typePNode d /= IntT ]
+                   | e <- fromExprTuple rets, typeDExpr e /= IntT ]
+        isLowerTri = and [ isZeros `all` drop i row | (i,row) <- zip [1..] jacobian ]
+        diagonal = [ row !! i | (i,row) <- zip [0..] jacobian ]
+        ldet = LF.logToLogFloat . real . logDet :: ConstVal -> LF.LogFloat
+        adjust | isLowerTri = product (map ldet diagonal)
+               | otherwise = error $ show jacobian ++" is not block triangular"
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env pb

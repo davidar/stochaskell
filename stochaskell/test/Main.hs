@@ -19,7 +19,7 @@ testDiff = TestCase $ assertEqual "" (eval_ a) (Just b)
         x = expr $ return (Var i t) :: RVec
         v = vector [ cast i     :: R | i <- 1...9 ] :: RVec
         a = matrix [ cast (i+j) :: R | i <- 1...9, j <- 1...9 ] :: RMat
-        b = diff_ (v + a #> x) i
+        b = diff_ (v + a #> x) i t
 
 testDensityJ = TestCase $ do
   x <- sampleP p

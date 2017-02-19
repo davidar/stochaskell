@@ -86,6 +86,7 @@ entries (Exact  a) = real <$> elems a
 entries (Approx a) = real <$> elems a
 
 toVector :: ConstVal -> ShapedVector Double
+toVector c | dimension c /= 1 = error $ "not one-dimensional: "++ show c
 toVector (Approx a) = ShVec (lo,hi) $ fromList (elems a)
   where ([lo],[hi]) = bounds a
 toVector a = toVector (approx a)
@@ -94,6 +95,7 @@ fromVector v = Approx $ listArray ([lo],[hi]) (toList v)
   where (lo,hi) = bounds v
 
 toMatrix :: ConstVal -> ShapedMatrix Double
+toMatrix c | dimension c /= 2 = error $ "not two-dimensional: "++ show c
 toMatrix (Approx a) = ShMat r c $ LAD.matrix ncol xs
   where ncol = fromInteger . cardinality $ shape a !! 1
         xs = elems a
@@ -117,6 +119,14 @@ vectorise c | dimension c == 2 = fromList . concat $ toList <$> toList (tr' c)
 eye :: Interval Integer -> ConstVal
 eye (lo,hi) = Exact $ array ([lo,lo],[hi,hi])
   [ ([i,j], if i == j then 1 else 0) | i <- [lo..hi], j <- [lo..hi] ]
+
+zeros :: Interval Integer -> Interval Integer -> ConstVal
+zeros (lo,hi) (lo',hi') = Exact $ array ([lo,lo'],[hi,hi'])
+  [ ([i,j], 0) | i <- [lo..hi], j <- [lo'..hi'] ]
+
+isZeros :: ConstVal -> Bool
+isZeros (Exact  a) = (0 ==) `all` elems a
+isZeros (Approx a) = (0 ==) `all` elems a
 
 instance Num ConstVal where
     (+) = constBinOp (+)
