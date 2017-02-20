@@ -401,7 +401,7 @@ mhAdjust :: (ExprTuple r, Show r) => (r -> LF.LogFloat) -> Prog r -> (r -> Prog 
 mhAdjust adjust target proposal x = do
   y <- sampleP (proposal x)
   putStrLn $ "proposing "++ show y
-  let f = density target
+  let f = densityJ target
       q = density . proposal
       b = (f y * adjust y) / (f x * adjust x)
       c = q x y / q y x

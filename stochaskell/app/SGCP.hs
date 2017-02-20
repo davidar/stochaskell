@@ -24,24 +24,10 @@ kernel lsv lls2 a b = exp (lsv - (a - b)*(a - b) / (2 * exp lls2))
 
 sgcp :: R -> P (R,R,R,Z,RVec,RVec,BVec)
 sgcp t = do
+  lsv <- normal 0 1
+  lls2 <- normal (log 99.9) 2
   cap <- gamma 1 1
   n <- poisson (cap * t)
-  lsv <- normal 0 1; lls2 <- normal (log 99.9) 2
-  s <- joint vector [ uniform 0 t | _ <- 1...n ]
-
-  let mu  = vector [ 0 | _ <- 1...n ]
-      cov = matrix [ kernel lsv lls2 (s!i) (s!j) | i <- 1...n, j <- 1...n ]
-  g <- normal mu cov
-
-  phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
-
-  return (lsv, lls2, cap, n, s, g, phi)
-
-sgcpChol :: R -> P (R,R,R,Z,RVec,RVec,BVec)
-sgcpChol t = do
-  cap <- gamma 1 1
-  n <- poisson (cap * t)
-  lsv <- normal 0 1; lls2 <- normal (log 99.9) 2
   s <- joint vector [ uniform 0 t | _ <- 1...n ]
 
   let mu  = vector [ 0 | _ <- 1...n ]
@@ -137,7 +123,7 @@ main = do
   rej <- sequence [ uniform 0 t | _ <- [1..m] ]
   let s = fromList $ dat ++ sort rej :: RVec
 
-  samples <- hmcStan [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcpChol t,
+  samples <- hmcStan [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
                        cap' == real cap, n' == integer n, s' == s, phi' == phi ]
   let (lsv,lls2,g) = last samples
 
@@ -160,7 +146,7 @@ main = do
     (_,_,cap,_,_,_,_) <- propose (stepCap t) (lsv,lls2,cap,n,s,g,phi)
 
     -- fit GP via Stan
-    samples <- hmcStanInit' 10 [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcpChol t,
+    samples <- hmcStanInit' 10 [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
                                  cap' == real cap, n' == integer n, s' == s, phi' == phi ] (lsv,lls2,g)
     let (lsv,lls2,g) = last samples
 
