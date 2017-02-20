@@ -75,36 +75,36 @@ designMatrix :: Z -> Z -> RVec -> RMat
 designMatrix n d x = matrix [ let p = cast (j-1) in (x!i)**p
                             | i <- 1...n, j <- 1...(d+1) ]
 
-poly :: Z -> Z -> P (RVec,R,RVec,RVec,RVec)
+poly :: Z -> Z -> P (RVec,R,RVec,RVec)
 poly n d = do
   x <- joint vector [ uniform (-4) 4 | i <- 1...n ]
   let design = designMatrix n d x
 
   let v = 10
-  q <- invGamma 1 v
+  alpha <- invGamma 1 v
 
   let mu = vector [ 0 | i <- 1...(d+1) ]
-      cov = q *> inv (tr' design <> design)
+      cov = alpha *> inv (tr' design <> design)
   beta <- normalChol (d+1) mu cov
 
   let z = design #> beta
   y <- joint vector [ normal (z!i) (sqrt v) | i <- 1...n ]
 
-  return (x,q,beta,z,y)
+  return (x,alpha,beta,y)
 
-model :: Z -> P (RVec,Z,R,RVec,RVec,RVec)
+model :: Z -> P (RVec,Z,R,RVec,RVec)
 model n = do
   d <- geometric 1 (1/10)
-  (x,q,beta,z,y) <- poly n d
-  return (x,d,q,beta,z,y)
+  (x,alpha,beta,y) <- poly n d
+  return (x,d,alpha,beta,y)
 
-jump :: Z -> (RVec,Z,R,RVec,RVec,RVec) -> P (RVec,Z,R,RVec,RVec,RVec)
-jump n (x,d,q,beta,z,y) = do
-  d' <- uniform 1 9
-  let design = designMatrix n d' x
-  beta' <- joint vector [ normal (if i <= (d+1) then beta!i else 0) 1 | i <- 1...(d'+1) ]
-  let z' = design #> beta'
-  return (x,d',q,beta',z',y)
+jump :: (RVec,Z,R,RVec,RVec) -> P (RVec,Z,R,RVec,RVec)
+jump (x,d,alpha,beta,y) = do
+  d' <- categorical [(1/2, d + 1)
+                    ,(1/2, if d > 1 then d - 1 else d)]
+  let beta0 =    vector [ if i <= (d+1) then beta!i else 0 | i <- 1...(d'+1) ] :: RVec
+  beta' <- joint vector [ normal (beta0!i) (sqrt 10)       | i <- 1...(d'+1) ]
+  return (x,d',alpha,beta',y)
 
 main :: IO ()
 main = do
@@ -113,26 +113,28 @@ main = do
       yData = list (map snd xyData)
 
   let d0 = 1
-  samples0 <- hmcStan [ (q,beta,z) | (x,q,beta,z,y) <- poly n d0,
-                                     x == xData, y == yData ]
-  plotPoly 0 xData yData d0 samples0
-  let (q0,beta0,z0) = last samples0
+  samples0 <- hmcStan [ (alpha,beta) | (x,alpha,beta,y) <- poly n d0,
+                                       x == xData, y == yData ]
+  plotPoly 0 n xData yData d0 samples0
+  let (alpha0,beta0) = last samples0
 
-  loop (1,d0,q0,beta0,z0) $ \(t,d,q,beta,z) -> do
-    (_,d',qMH,betaMH,zMH,_) <- chain 1000 (model n `mh` jump n) (xData,d,q,beta,z,yData)
-    samples <- hmcStanInit [ (q,beta,z) | (x,q,beta,z,y) <- poly n d',
-                                          x == xData, y == yData ]
-                           (qMH,betaMH,zMH)
-    plotPoly t xData yData d' samples
-    let (q',beta',z') = last samples
-    return (t+1,d',q',beta',z')
+  loop (1,d0,alpha0,beta0) $ \(t,d,alpha,beta) -> do
+    print (t,d,alpha,beta)
+    (_,d',alphaMH,betaMH,_) <- chain 1000 (model n `mh` jump) (xData,d,alpha,beta,yData)
+    samples <- hmcStanInit [ (alpha,beta) | (x,alpha,beta,y) <- poly n d',
+                                            x == xData, y == yData ]
+                           (alphaMH,betaMH)
+    plotPoly t n xData yData d' samples
+    let (alpha',beta') = last samples
+    return (t+1,d',alpha',beta')
   return ()
 
-plotPoly :: Int -> RVec -> RVec -> Z -> [(R,RVec,RVec)] -> IO ()
-plotPoly t xData yData d' samples =
+plotPoly :: Int -> Z -> RVec -> RVec -> Z -> [(R,RVec)] -> IO ()
+plotPoly t n xData yData d' samples =
   toFile def ("poly-figs/"++ show t ++".png") $ do
     plot $ points "data" (list xData `zip` list yData)
     setColors [black `withOpacity` 0.02]
     plot $ line ("posterior d="++ show d') $
       map (sort . zip (list xData) . list . extract) samples
-  where extract (_,_,z) = z
+  where design = designMatrix n d' xData
+        extract (_,beta) = design #> beta

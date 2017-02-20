@@ -230,7 +230,7 @@ densityJ prog vals = densityPBlock env pb / adjust
         diagonal = [ row !! i | (i,row) <- zip [0..] jacobian ]
         ldet = LF.logToLogFloat . real . logDet :: ConstVal -> LF.LogFloat
         adjust | isLowerTri = product (map ldet diagonal)
-               | otherwise = error $ show jacobian ++" is not block triangular"
+               | otherwise = error "jacobian is not block triangular"
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env pb
@@ -243,7 +243,7 @@ densityPBlock env (PBlock block refs _) = product $ do
     let ident = Volatile (dagLevel $ head block) i
     return $ case lookup ident env of
       Just val -> let p = densityPNode env' block d val
-        in trace ("density ("++ show d ++") "++ show val ++" = "++ show p) p
+        in {-trace ("density ("++ show d ++") "++ show val ++" = "++ show p)-} p
       Nothing  -> trace (show ident ++" is unconstrained") $ LF.logFloat 1
   where env' = evalBlock block env
 
@@ -400,11 +400,12 @@ mh = mhAdjust (const $ LF.logFloat 1)
 mhAdjust :: (ExprTuple r, Show r) => (r -> LF.LogFloat) -> Prog r -> (r -> Prog r) -> r -> IO r
 mhAdjust adjust target proposal x = do
   y <- sampleP (proposal x)
+  putStrLn $ "proposing "++ show y
   let f = density target
       q = density . proposal
       b = (f y * adjust y) / (f x * adjust x)
       c = q x y / q y x
       a = LF.fromLogFloat (b / c) -- (f y * q y x) / (f x * q x y)
-  accept <- trace ("acceptance ratio = "++ show b ++" / "++ show c ++" = "++ show a) $
-    bernoulli $ if a > 1 then 1 else a
+  putStrLn $ "acceptance ratio = "++ show b ++" / "++ show c ++" = "++ show a
+  accept <- bernoulli $ if a > 1 then 1 else a
   if accept then return y else return x
