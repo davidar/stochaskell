@@ -251,9 +251,9 @@ hmcStanInit = hmcStanInit' 1000
 
 hmcStanInit' :: (ExprTuple t) => Int -> Prog t -> t -> IO [t]
 hmcStanInit' numSamples p t = runStan extraArgs numSamples p
-  where assigns = unlines . map f $ unifyTuple rets t env
+  where assigns = unlines . map f $ unifyTuple' (definitions pb) rets t env
         f (n,x) = stanId n ++" <- "++ stanConstVal x
-        (rets,pb) = runProg p
+        (rets,pb) = runProgExprs p
         env = constraints pb
         extraArgs basename = do
           let fname = basename ++".init"

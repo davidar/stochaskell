@@ -155,8 +155,8 @@ instance Real ConstVal where
     toRational (Approx a) = toRational (toScalar a)
 
 instance Integral ConstVal where
-    toInteger (Exact a) | denominator (a![]) == 1 = numerator (a![])
-    toInteger _ = error "not an integer"
+    toInteger (Exact a) | isScalar a && denominator (a![]) == 1 = numerator (a![])
+    toInteger c = error $ show c ++" is not an integer"
     quotRem c k = let (q,r) = quotRem (toInteger c) (toInteger k)
                   in (fromInteger q, fromInteger r)
 

@@ -65,12 +65,6 @@ instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
 runProg :: Prog a -> (a, PBlock)
 runProg p = runState (fromProg p) emptyPBlock
 
-type ProgE t = Prog (Expr t)
-fromProgE :: ProgE t -> State PBlock NodeRef
-fromProgE p = head <$> fromProgExprs p
-runProgE :: ProgE t -> (NodeRef, PBlock)
-runProgE p = runState (fromProgE p) emptyPBlock
-
 fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NodeRef]
 fromProgExprs p = do
   es <- fromExprTuple <$> fromProg p
@@ -95,7 +89,7 @@ instance Monad Prog where
 -- PRIMITIVE DISTRIBUTIONS                                                  --
 ------------------------------------------------------------------------------
 
-dist :: State Block PNode -> ProgE t
+dist :: State Block PNode -> Prog (Expr t)
 dist s = Prog $ do
     d <- liftExprBlock s
     PBlock block rhs given <- get
@@ -195,7 +189,7 @@ instance forall r f. ScalarType r =>
     PBlock block dists given <- get
     let ids = [ Dummy (length block) i | i <- [1..length sh] ]
         p = ar ! [expr . return $ Var i IntT | i <- ids]
-        (_, PBlock (dag:block') [act] []) = runState (fromProgE p) $
+        (_, PBlock (dag:block') [act] []) = runState (head <$> fromProgExprs p) $
             PBlock (DAG (length block) ids Bimap.empty : block) [] []
         TypeIs t = typeOf :: TypeOf r
         loopType = ArrayT Nothing sh t
@@ -227,11 +221,11 @@ instance MonadGuard Prog where
 
 densityJ :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 densityJ prog vals = densityPBlock env pb / adjust
-  where (rets, pb) = runProg prog
-        env = unifyTuple rets vals emptyEnv
-        jacobian = [ [ diffD env e (Volatile 0 i) (typePNode d)
+  where (rets, pb) = runProgExprs prog
+        env = unifyTuple' (definitions pb) rets vals emptyEnv
+        jacobian = [ [ diffNodeRef env (definitions pb) r (Volatile 0 i) (typePNode d)
                      | (i,d) <- zip [0..] (reverse $ actions pb), typePNode d /= IntT ]
-                   | e <- fromExprTuple rets, typeDExpr e /= IntT ]
+                   | r <- rets, typeRef r /= IntT ]
         isLowerTri = and [ isZeros `all` drop i row | (i,row) <- zip [1..] jacobian ]
         diagonal = [ row !! i | (i,row) <- zip [0..] jacobian ]
         ldet = LF.logToLogFloat . real . logDet :: ConstVal -> LF.LogFloat
@@ -240,8 +234,8 @@ densityJ prog vals = densityPBlock env pb / adjust
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env pb
-  where (rets, pb) = runProg prog
-        env = unifyTuple rets vals emptyEnv
+  where (rets, pb) = runProgExprs prog
+        env = unifyTuple' (definitions pb) rets vals emptyEnv
 
 densityPBlock :: Env -> PBlock -> LF.LogFloat
 densityPBlock env (PBlock block refs _) = product $ do
@@ -330,8 +324,8 @@ sampleP :: (ExprTuple t) => Prog t -> IO t
 sampleP p = do
     env <- samplePNodes [] block idents
     let env' = filter (not . isInternal . fst) env
-    return . fromConstVals . fromJust $ evalTuple env' rets
-  where (rets, PBlock block refs _) = runProg p
+    return . fromConstVals $ map (fromJust . evalNodeRef env' block) rets
+  where (rets, PBlock block refs _) = runProgExprs p
         idents = [ (Volatile (dagLevel $ head block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
 

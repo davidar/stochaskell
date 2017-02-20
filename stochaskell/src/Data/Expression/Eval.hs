@@ -155,6 +155,11 @@ unifyTuple :: (ExprTuple t) => t -> t -> Env -> Env
 unifyTuple rets vals env = flip compose env . reverse $
   [ unifyD d v | (d,e) <- zipExprTuple rets vals, let Just v = evalD_ e ]
 
+unifyTuple' :: (ExprTuple t) => Block -> [NodeRef] -> t -> Env -> Env
+unifyTuple' block rets vals env = flip compose env . reverse $
+  [ \env' -> env' ++ unifyNodeRef env' block r v
+  | (r,e) <- zip rets $ fromExprTuple vals, let Just v = evalD_ e ]
+
 unifyNodeRef :: Env -> Block -> NodeRef -> ConstVal -> Env
 unifyNodeRef env block (Var (Internal level ptr) _) val =
     let dag = reverse block !! level
