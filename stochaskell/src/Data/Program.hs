@@ -108,6 +108,12 @@ instance Distribution Bernoulli R Prog B where
         i <- fromExpr l
         return $ Dist "bernoulliLogit" [i] boolT
 
+instance Distribution Beta R Prog R where
+    sample (Beta a b) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "beta" [i,j] RealT
+
 instance (ScalarType t) => Distribution Categorical R Prog (Expr t) where
     sample cat = dist $ do
         let (ps,xs) = unzip $ Categorical.toList cat

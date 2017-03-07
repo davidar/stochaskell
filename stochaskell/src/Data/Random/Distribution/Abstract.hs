@@ -26,6 +26,10 @@ bernoulli p = sample $ Bernoulli p
 bernoulliLogit :: Distribution Bernoulli s m t => s -> m t
 bernoulliLogit l = sample $ BernoulliLogit l
 
+data Beta a t = Beta a a
+beta :: Distribution Beta s m t => s -> s -> m t
+beta a b = sample $ Beta a b
+
 instance Distribution Categorical Double IO t where
     sample = Rand.sample
 categorical :: (Num p, Distribution Categorical p m t) => [(p,t)] -> m t

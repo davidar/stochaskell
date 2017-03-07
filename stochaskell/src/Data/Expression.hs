@@ -13,6 +13,7 @@ import Data.Boolean
 import Data.Expression.Const
 import Data.List hiding (foldr)
 import Data.Maybe
+import Data.Number.Transfinite
 import Data.Ratio
 import Control.Applicative ()
 import Control.Monad.State
@@ -540,6 +541,9 @@ instance OrdB (Expr t) where
     (<=*) = apply2 "<=" boolT
     (>=*) = apply2 ">=" boolT
     (>*)  = apply2 ">"  boolT
+
+instance Transfinite Z where
+    infinity = expr . return $ Const infinity
 
 class ExprTuple t where
     fromExprTuple :: t -> [DExpr]

@@ -7,6 +7,7 @@ import Prelude hiding ((<*),(*>))
 import Data.Array hiding ((!),bounds)
 import Data.Array.Abstract
 import Data.Boolean
+import Data.Number.Transfinite hiding (log)
 import Data.Ratio
 import Debug.Trace
 import GHC.Exts
@@ -259,3 +260,6 @@ instance EqB ConstVal where
 
 instance OrdB ConstVal where
     a <* b = fromBool $ a < b
+
+instance Transfinite ConstVal where
+    infinity = Approx $ fromScalar infinity
