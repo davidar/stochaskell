@@ -122,7 +122,7 @@ evalNode env block (Array sh body hd _) = do
     toRational <$> evalNodeRef (zip (inputs body) (map fromInteger xs) ++ env) block' hd
     | xs <- fromShape sh' ]
   return (Exact ar)
-evalNode env block (FoldR body hd seed ls _) = do
+evalNode env block (Fold Right_ body hd seed ls _) = do
   r  <- evalNodeRef env block seed
   xs <- evalNodeRef env block ls
   foldrConst' f r xs
@@ -215,7 +215,7 @@ unifyNode env block (Apply "insertIndex" [a,i,e] _) val | isJust a' && dimension
         elt = val![idx]
 unifyNode env block node val | isJust lhs && fromJust lhs == val = []
   where lhs = evalNode env block node
-unifyNode _ _ FoldR{} _ = trace "WARN not unifying FoldR" []
+unifyNode _ _ Fold{} _ = trace "WARN not unifying Fold" []
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
 

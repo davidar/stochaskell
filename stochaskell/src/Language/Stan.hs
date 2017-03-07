@@ -139,7 +139,7 @@ stanNode name (Array sh dag ret _) =
     forLoop (inputs dag) sh $
         stanDAG dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] = "++ stanNodeRef ret ++";"
-stanNode name (FoldR dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) =
+stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) =
     name ++" = "++ stanNodeRef seed ++";\n"++ loop
   where d = dagLevel dag
         idx = Dummy d 0

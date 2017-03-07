@@ -55,6 +55,8 @@ instance Show NodeRef where
   show (Const c) = show c
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
 
+data LeftRight = Left_ | Right_ deriving (Eq, Ord, Show)
+
 data Node = Apply { fName :: String
                   , fArgs :: [NodeRef]
                   , typeNode :: Type
@@ -64,7 +66,15 @@ data Node = Apply { fName :: String
                   , aHead  :: NodeRef
                   , typeNode :: Type
                   }
-          | FoldR { rDefs :: DAG
+          | Fold  { rDirection :: LeftRight
+                  , rDefs :: DAG
+                  , rHead :: NodeRef
+                  , rSeed :: NodeRef
+                  , rList :: NodeRef
+                  , typeNode :: Type
+                  }
+          | Scan  { rDirection :: LeftRight
+                  , rDefs :: DAG
                   , rHead :: NodeRef
                   , rSeed :: NodeRef
                   , rList :: NodeRef
@@ -166,7 +176,9 @@ typeRef (Const (Exact a))
   | and [ denominator x == 1 | x <- A.elems a ] = typeArray (A.bounds a) IntT
   | otherwise = typeArray (A.bounds a) RealT
 typeRef (Const (Approx a)) = typeArray (A.bounds a) RealT
-typeRef (Index a _) = let (ArrayT _ _ t) = typeRef a in t
+typeRef (Index a _) = case typeRef a of
+  (ArrayT _ _ t) -> t
+  t -> error $ "cannot index non-array type "++ show t
 
 typeArray :: ([Integer],[Integer]) -> Type -> Type
 typeArray ([],[]) = id
@@ -229,7 +241,8 @@ externRefs (DAG _ _ d) = go d
         f (Array sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
                                 ++ mapMaybe (extern . snd) sh ++ go defs'
-        f FoldR{} = [] -- TODO
+        f Fold{} = [] -- TODO
+        f Scan{} = [] -- TODO
         extern (Var (Internal _ _) _) = Nothing
         extern (Var i _) = Just i
         extern _ = Nothing
@@ -331,21 +344,44 @@ index a es = expr $ do
     js <- mapM fromExpr es
     return $ Index f js
 
-foldr :: forall a b. (ScalarType b)
-      => (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr b
-foldr f r xs = expr $ do
+foldl :: (ScalarType b) =>
+  (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr b
+foldl f r xs = expr $ foldscan False Left_ (flip f) r xs
+
+foldr :: (ScalarType b) =>
+  (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr b
+foldr f r xs = expr $ foldscan False Right_ f r xs
+
+scanl :: (ScalarType b) =>
+  (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
+scanl f r xs = expr $ foldscan True Left_ (flip f) r xs
+
+scanr :: (ScalarType b) =>
+  (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
+scanr f r xs = expr $ foldscan True Right_ f r xs
+
+foldscan :: forall a b. (ScalarType b) => Bool -> LeftRight ->
+  (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> State Block NodeRef
+foldscan isScan dir f r xs = do
     seed <- fromExpr r
     l <- fromExpr xs
     block <- get
     let d = length block
+        (ArrayT _ sh _) = typeRef l
         s = typeIndex $ typeRef l
         TypeIs t = typeOf :: TypeOf b
         i = expr . return $ Var (Dummy d 1) s
         j = expr . return $ Var (Dummy d 2) t
         (ret, dag:block') = runState (fromExpr $ f i j) $
             DAG d [Dummy d 1, Dummy d 2] Bimap.empty : block
-    put block'
-    hashcons $ FoldR dag ret seed l t
+    if varies (head block) [seed,l] ||
+       (not . null $ inputs (head block) `intersect` externRefs dag)
+      then do
+        put block'
+        hashcons $ if isScan
+          then Scan dir dag ret seed l (ArrayT Nothing sh t)
+          else Fold dir dag ret seed l t
+      else liftBlock $ foldscan isScan dir f r xs
 
 
 ------------------------------------------------------------------------------
