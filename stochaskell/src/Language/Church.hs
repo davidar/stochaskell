@@ -38,7 +38,18 @@ churchBuiltinFunctions =
   [("ifThenElse", "if")
   ]
 
-churchBuiltinDistributions = []
+churchBuiltinDistributions =
+  [("normal", "gaussian")
+  ]
+
+churchPrelude :: String
+churchPrelude = unlines
+  ["(define (pmf probs)"
+  ,"  (letrec ((go (lambda (j u)"
+  ,"                 (if (<= u (probs j)) j"
+  ,"                     (go (+ j 1) (- u (probs j)))))))"
+  ,"    (go 1 (uniform 0 1))))"
+  ]
 
 churchNode :: Label -> Node -> String
 churchNode _ (Apply "asVector" [j] _) = churchNodeRef j
@@ -77,10 +88,12 @@ churchDAG dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
 
 churchProgram :: (ExprTuple t) => Prog t -> String
 churchProgram prog =
+  churchPrelude ++"\n"++
   "(define (model) (letrec (\n"++
     churchDAG (head block) ++"\n"++
-    printedRefs ++")\n  "++ churchNodeRef ret ++"))"
+    printedRefs ++")\n  "++ printedRets ++"))"
   where (rets, (PBlock block refs _)) = runProgExprs prog
-        ret = head rets -- TODO
         printedRefs = indent . unlines $ zipWith g [0..] (reverse refs)
         g i n = "("++ churchId (Volatile 0 i) ++" "++ churchPNode n ++")"
+        printedRets | length rets == 1 = churchNodeRef (head rets)
+                    | otherwise = "(list "++ churchNodeRef `spaced` rets ++")"

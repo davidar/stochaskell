@@ -18,5 +18,15 @@ naturalDP alpha = do
       probs = vector [ (sticks!i) * (rems!i) | i <- 1...infinity ]
   return probs
 
+model :: Z -> P (RVec,ZVec,RVec)
+model n = do
+  probs <- naturalDP 1
+  params  <- joint vector [ uniform 0 100 | cls <- 1...infinity ]
+  classes <- joint vector [ pmf probs     | obs <- 1...n ]
+  values  <- joint vector [ let cls = classes!obs
+                            in normal (params!cls) 1
+                          | obs <- 1...n ]
+  return (params,classes,values)
+
 main :: IO ()
-main = putStrLn $ churchProgram (naturalDP 1)
+main = putStrLn $ churchProgram (model 1000)

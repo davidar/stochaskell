@@ -70,6 +70,10 @@ instance Distribution Normal (Double,Double) IO Double where
 normal :: Distribution Normal (u,v) m t => u -> v -> m t
 normal m s = sample $ Normal (m,s)
 
+data PMF a r = PMF a
+pmf :: Distribution PMF s m t => s -> m t
+pmf a = sample $ PMF a
+
 instance Distribution Poisson Double IO Integer where
     sample = Rand.sample
 poisson :: Distribution Poisson s m t => s -> m t

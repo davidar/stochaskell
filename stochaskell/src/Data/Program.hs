@@ -151,6 +151,11 @@ instance Distribution Normal (RVec,RMat) Prog RVec where
         j <- fromExpr s
         return $ Dist "multi_normal" [i,j] (typeRef i)
 
+instance Distribution PMF RVec Prog Z where
+    sample (PMF probs) = dist $ do
+        l <- fromExpr probs
+        return $ Dist "pmf" [l] IntT
+
 instance Distribution Poisson R Prog Z where
     sample (Poisson a) = dist $ do
         i <- fromExpr a
