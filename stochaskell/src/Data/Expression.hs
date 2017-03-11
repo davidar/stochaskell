@@ -13,7 +13,7 @@ import Data.Boolean
 import Data.Expression.Const
 import Data.List hiding (foldr)
 import Data.Maybe
-import Data.Number.Transfinite
+import Data.Number.Transfinite hiding (log)
 import Data.Ratio
 import Control.Applicative ()
 import Control.Monad.State
@@ -259,6 +259,8 @@ simplify :: Node -> State Block NodeRef
 -- TODO: eval const exprs
 simplify (Apply "+" [Const a, Const b] _) = return . Const $ a + b
 simplify (Apply "negate" [Const a] _) = return . Const $ negate a
+simplify (Apply "log" [Const a] _) = return . Const $ log a
+simplify (Apply "ifThenElse" [_,a,b] _) | a == b = return a
 simplify e = do
     dag:_ <- get
     if varies dag $ fArgs e
@@ -331,6 +333,16 @@ floatArray ar = do
        (not . null $ inputs dag `intersect` capture ar)
       then makeArray ar sh
       else liftBlock $ floatArray ar
+
+-- TODO: reduce code duplication
+floatArray' :: Node -> State Block NodeRef
+floatArray' a@(Array sh adag _ _) = do
+    dag:_ <- get
+    if varies dag (map fst sh) ||
+       varies dag (map snd sh) ||
+       (not . null $ inputs dag `intersect` externRefs adag)
+      then hashcons a
+      else liftBlock $ floatArray' a
 
 array :: (Num i, ScalarType e)
       => Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t

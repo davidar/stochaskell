@@ -200,14 +200,20 @@ instance forall r f. ScalarType r =>
     PBlock block dists given <- get
     let ids = [ Dummy (length block) i | i <- [1..length sh] ]
         p = ar ! [expr . return $ Var i IntT | i <- ids]
-        (_, PBlock (dag:block') [act] []) = runState (head <$> fromProgExprs p) $
+        (ret, PBlock (dag:block') [act] []) = runState (head <$> fromProgExprs p) $
             PBlock (DAG (length block) ids Bimap.empty : block) [] []
-        TypeIs t = typeOf :: TypeOf r
+        TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
         loopType = ArrayT Nothing sh t
         loop = Loop sh dag act loopType
     put $ PBlock block' (loop:dists) given
     let name = Volatile (length block - 1) (length dists)
-    return (expr . return $ Var name loopType :: Expr f)
+    return $ case ret of
+      Var (Volatile depth 0) _ | depth == length block ->
+        expr . return $ Var name loopType :: Expr f
+      Index vec [Var (Volatile depth 0) _] | depth == length block ->
+        expr . floatArray' $ Array sh dag (Index vec [ref]) loopType
+          where ref = Index (Var name loopType) (reverse [Var i IntT | i <- ids])
+      _ -> error $ "non-trivial transform in joint: "++ show ret
 
 
 ------------------------------------------------------------------------------
