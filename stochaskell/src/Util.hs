@@ -1,5 +1,8 @@
+{-# LANGUAGE TypeFamilies #-}
+
 module Util where
 
+import Data.Boolean
 import qualified Data.Bimap as Bimap
 import qualified Data.ByteString as B
 import qualified Data.Number.LogFloat as LF
@@ -39,3 +42,23 @@ instance (Num t) => Num [t] where
     abs    = map abs
     signum = map signum
     fromInteger x = [fromInteger x]
+
+type instance BooleanOf (a,b,c,d,e,f,g) = BooleanOf a
+
+instance ( bool ~ BooleanOf a, IfB a
+         , bool ~ BooleanOf b, IfB b
+         , bool ~ BooleanOf c, IfB c
+         , bool ~ BooleanOf d, IfB d
+         , bool ~ BooleanOf e, IfB e
+         , bool ~ BooleanOf f, IfB f
+         , bool ~ BooleanOf g, IfB g
+         ) => IfB (a,b,c,d,e,f,g) where
+  ifB cond (a,b,c,d,e,f,g) (a',b',c',d',e',f',g') =
+    ( ifB cond a a'
+    , ifB cond b b'
+    , ifB cond c c'
+    , ifB cond d d'
+    , ifB cond e e'
+    , ifB cond f f'
+    , ifB cond g g'
+    )

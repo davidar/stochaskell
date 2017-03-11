@@ -18,27 +18,33 @@ import GHC.Exts
 import Language.Stan
 import Util
 
-kernel :: R -> R -> R -> R -> R
-kernel lsv lls2 a b = exp (lsv - (a - b)*(a - b) / (2 * exp lls2))
-                      + if a == b then 1e-6 else 0
+kernelSE :: R -> R -> R -> R -> R
+kernelSE lsv lls2 a b =
+  exp (lsv - (a - b)*(a - b) / (2 * exp lls2))
+  + if a == b then 1e-6 else 0
 
-sgcp :: R -> P (R,R,R,Z,RVec,RVec,BVec)
+gpClassifier :: (R -> R -> R) -> Z -> RVec -> P (RVec,BVec)
+gpClassifier kernel n s = do
+  let mu  = vector [ 0 | _ <- 1...n ]
+      cov = matrix [ kernel (s!i) (s!j) | i <- 1...n, j <- 1...n ]
+  g <- normalChol n mu cov
+  phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
+  return (g,phi)
+
+type State = (R,R,R,Z,RVec,RVec,BVec)
+
+sgcp :: R -> P State
 sgcp t = do
   lsv <- normal 0 1
-  lls2 <- normal (log 99.9) 2
+  lls2 <- normal (log 100) 2
   cap <- gamma 1 1
   n <- poisson (cap * t)
   s <- joint vector [ uniform 0 t | _ <- 1...n ]
-
-  let mu  = vector [ 0 | _ <- 1...n ]
-      cov = matrix [ kernel lsv lls2 (s!i) (s!j) | i <- 1...n, j <- 1...n ]
-  g <- normalChol n mu cov
-
-  phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
-
+  let kernel = kernelSE lsv lls2
+  (g,phi) <- gpClassifier kernel n s
   return (lsv, lls2, cap, n, s, g, phi)
 
-stepDown :: Z -> Z -> (R,R,R,Z,RVec,RVec,BVec) -> P (R,R,R,Z,RVec,RVec,BVec)
+stepDown :: Z -> Z -> State -> P State
 stepDown k n' (lsv,lls2,cap,n,s,g,phi) = do
   i <- uniform (k+1) n'
   let s'   = deleteIndex s i
@@ -46,10 +52,11 @@ stepDown k n' (lsv,lls2,cap,n,s,g,phi) = do
       phi' = deleteIndex phi i
   return (lsv,lls2,cap,n',s',g',phi')
 
-stepUp :: R -> Z -> Z -> (R,R,R,Z,RVec,RVec,BVec) -> P (R,R,R,Z,RVec,RVec,BVec)
+stepUp :: R -> Z -> Z -> State -> P State
 stepUp t k n' (lsv,lls2,cap,n,s,g,phi) = do
   x <- uniform 0 t
-  z <- normalCond n (kernel lsv lls2) s g x
+  let kernel = kernelSE lsv lls2
+  z <- normalCond n kernel s g x
   let f i j = if x <= (s!i) then i else j
       i = foldr f n' $ vector [ i | i <- (k+1)...n ]
       s'   = insertIndex s i x
@@ -57,32 +64,26 @@ stepUp t k n' (lsv,lls2,cap,n,s,g,phi) = do
       phi' = insertIndex phi i false
   return (lsv,lls2,cap,n',s',g',phi')
 
-stepN :: R -> Z -> (R,R,R,Z,RVec,RVec,BVec) -> P (R,R,R,Z,RVec,RVec,BVec)
+stepN :: R -> Z -> State -> P State
 stepN t k state@(lsv,lls2,cap,n,s,g,phi) = do
   n' <- categorical [(1/2, n + 1)
                     ,(1/2, if n > k then n - 1 else n)]
-  (_,_,_,_,sUp,gUp,phiUp) <- stepUp t k n' state
-  (_,_,_,_,sDown,gDown,phiDown) <- stepDown k n' state
-  let s'   = if n' == (n + 1) then sUp
-        else if n' == (n - 1) then sDown
-        else s
-      g'   = if n' == (n + 1) then gUp
-        else if n' == (n - 1) then gDown
-        else g
-      phi' = if n' == (n + 1) then phiUp
-        else if n' == (n - 1) then phiDown
-        else phi
-  return (lsv,lls2,cap,n',s',g',phi')
+  stateUp   <- stepUp t k n' state
+  stateDown <- stepDown k n' state
+  return $ if n' == (n + 1) then stateUp
+      else if n' == (n - 1) then stateDown
+      else (lsv,lls2,cap,n',s,g,phi)
 
-stepS :: Z -> (R,R,R,Z,RVec,RVec,BVec) -> P (R,R,R,Z,RVec,RVec,BVec)
+stepS :: Z -> State -> P State
 stepS idx (lsv, lls2, cap, n, s, g, phi) = do
   x <- normal (s!idx) (exp (lls2/2))
-  z <- normalCond n (kernel lsv lls2) s g x
+  let kernel = kernelSE lsv lls2
+  z <- normalCond n kernel s g x
   let s' = vector [ if i == idx then x else s!i | i <- 1...n ]
       g' = vector [ if i == idx then z else g!i | i <- 1...n ]
   return (lsv, lls2, cap, n, s', g', phi)
 
-stepCap :: R -> (R,R,R,Z,RVec,RVec,BVec) -> P (R,R,R,Z,RVec,RVec,BVec)
+stepCap :: R -> State -> P State
 stepCap t (lsv, lls2, _, n, s, g, phi) = do
   let a = cast (1 + n) :: R
   cap' <- gamma a (1 + t)
