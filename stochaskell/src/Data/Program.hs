@@ -37,6 +37,11 @@ data PNode = Dist { dName :: String
                   , lBody  :: PNode
                   , typePNode :: Type
                   }
+           | HODist { dName :: String
+                    , dArg0 :: PNode
+                    , dArgs :: [NodeRef]
+                    , typePNode :: Type
+                    }
            deriving (Eq)
 
 instance Show PNode where
@@ -150,6 +155,20 @@ instance Distribution Normal (RVec,RMat) Prog RVec where
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "multi_normal" [i,j] (typeRef i)
+
+instance Distribution OrderedSample (Z, Prog (Expr t)) Prog (Expr [t]) where
+    sample (OrderedSample (n,prog)) = Prog $ do
+        i <- liftExprBlock $ fromExpr n
+        PBlock block rhs given <- get
+        let (_, PBlock block' [act] []) =
+              runState (head <$> fromProgExprs prog) $ PBlock block [] []
+            d = HODist "orderedSample" act [i] (ArrayT Nothing [(Const 1,i)] (typePNode act))
+        put $ PBlock block' (d:rhs) given
+        let depth = dagLevel $ head block
+            k = length rhs
+            name = Volatile depth k
+            v = expr . return $ Var name (typePNode d)
+        return v
 
 instance Distribution PMF RVec Prog Z where
     sample (PMF probs) = dist $ do
@@ -331,6 +350,10 @@ densityPNode env block (Loop shp ldag body _) a = product
     | (i,x) <- evalRange env block shp `zip` entries a ]
   where inps = inputs ldag
         block' = ldag : drop (length block - dagLevel ldag) block
+
+densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
+    [ densityPNode env block d (fromRational x) | x <- entries a ]
+  where n' = toInteger . fromJust $ evalNodeRef env block n
 
 
 ------------------------------------------------------------------------------

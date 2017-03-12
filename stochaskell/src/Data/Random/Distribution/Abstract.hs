@@ -70,6 +70,10 @@ instance Distribution Normal (Double,Double) IO Double where
 normal :: Distribution Normal (u,v) m t => u -> v -> m t
 normal m s = sample $ Normal (m,s)
 
+data OrderedSample a r = OrderedSample a
+orderedSample :: Distribution OrderedSample (n,d) m t => n -> d -> m t
+orderedSample n d = sample $ OrderedSample (n,d)
+
 data PMF a r = PMF a
 pmf :: Distribution PMF s m t => s -> m t
 pmf a = sample $ PMF a

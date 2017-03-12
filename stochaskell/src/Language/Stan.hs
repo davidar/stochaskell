@@ -164,6 +164,10 @@ stanPNode name (Loop sh ldag body _) =
     forLoop (inputs ldag) sh $
         let lval = name ++"["++ stanId `commas` inputs ldag ++"]"
         in stanDAG ldag ++ indent (stanPNode lval body)
+stanPNode name (HODist "orderedSample" d [n] _) =
+    forLoop [Dummy 1 1] [(Const 1,n)] $
+        let lval = name ++"["++ stanId (Dummy 1 1) ++"]"
+        in indent (stanPNode lval d)
 
 stanDAG :: DAG -> String
 stanDAG dag = indent $
