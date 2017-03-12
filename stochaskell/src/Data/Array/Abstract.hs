@@ -98,7 +98,7 @@ instance (Ix i) => Indexable (A.Array i e) i e where
     (!) = (A.!)
     bounds = A.bounds
 
-class (Indexable v i e) => Vector v i e | v -> i e where
+class (Indexable v i e) => Vector v i e | v -> i e, i e -> v where
     vector :: AbstractArray i e -> v
 
 data ShapedVector t = ShVec (Interval Integer) (LAD.Vector t)

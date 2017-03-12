@@ -13,26 +13,28 @@ import Language.Church
 
 stickBreak :: R -> P RVec
 stickBreak alpha = do
-  sticks <- joint vector [ beta 1 alpha | _ <- 1...infinity ]
-  let rems = scanl f 1 sticks where f r a = r * (1 - a)
+  sticks <- joint vector [ beta 1 alpha | i <- 1...infinity ]
+  let f r a = r * (1 - a)
+      rems = scanl f 1 sticks
       probs = vector [ (sticks!i) * (rems!i) | i <- 1...infinity ]
   return probs
 
 dirichletProcess :: R -> P R -> P (P R)
 dirichletProcess alpha base = do
   probs <- stickBreak alpha
-  atoms <- joint vector [ base | _ <- 1...infinity ] :: P RVec
+  atoms <- joint vector [ base | i <- 1...infinity ]
   let randomProcess = do
         stick <- pmf probs
         return (atoms!stick)
   return randomProcess
 
-model :: Z -> P (RVec,RVec)
-model n = do
-  paramDist <- dirichletProcess 1 (uniform 0 100)
-  params <- joint vector [ paramDist             | obs <- 1...n ]
-  values <- joint vector [ normal (params!obs) 1 | obs <- 1...n ]
+imm :: Z -> P (RVec,RVec)
+imm n = do
+  let base = uniform 0 100
+  paramDist <- dirichletProcess 1 base
+  params <- joint vector [ paramDist | j <- 1...n ]
+  values <- joint vector [ normal (params!j) 1 | j <- 1...n ]
   return (params,values)
 
 main :: IO ()
-main = putStrLn $ churchProgram (model 1000)
+main = putStrLn $ churchProgram (imm 1000)

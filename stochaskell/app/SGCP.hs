@@ -31,15 +31,23 @@ gpClassifier kernel n s = do
   phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
   return (g,phi)
 
+poissonProcess :: R -> R -> P (Z,RVec)
+poissonProcess rate t = do
+  n <- poisson (rate * t)
+  s <- orderedSample n (uniform 0 t)
+  return (n,s)
+
 type State = (R,R,R,Z,RVec,RVec,BVec)
+
+dim :: State -> Int
+dim (_,_,_,n,_,_,_) = integer n
 
 sgcp :: R -> P State
 sgcp t = do
   lsv <- normal 0 1
   lls2 <- normal (log 100) 2
   cap <- gamma 1 1
-  n <- poisson (cap * t)
-  s <- joint vector [ uniform 0 t | _ <- 1...n ]
+  (n,s) <- poissonProcess cap t
   let kernel = kernelSE lsv lls2
   (g,phi) <- gpClassifier kernel n s
   return (lsv, lls2, cap, n, s, g, phi)
@@ -84,10 +92,26 @@ stepS idx (lsv, lls2, cap, n, s, g, phi) = do
   return (lsv, lls2, cap, n, s', g', phi)
 
 stepCap :: R -> State -> P State
-stepCap t (lsv, lls2, _, n, s, g, phi) = do
+stepCap t (lsv, lls2, cap, n, s, g, phi) = do
   let a = cast (1 + n) :: R
   cap' <- gamma a (1 + t)
   return (lsv, lls2, cap', n, s, g, phi)
+
+stepGP :: R -> State -> IO State
+stepGP t (lsv,lls2,cap,n,s,g,phi) = do
+  samples <- hmcStanInit' 10 [ (lsv',lls2',g') | (lsv',lls2',cap',n',s',g',phi') <- sgcp t,
+                                cap' == cap, n' == n, s' == s, phi' == phi ] (lsv,lls2,g)
+  let (lsv',lls2',g') = last samples
+  return (lsv',lls2',cap,n,s,g',phi)
+
+step :: R -> Z -> State -> IO State
+step t k state = do
+  state <- chain 10 (sgcp t `mh` stepN t k) state
+  state <- chainRange (integer k + 1, dim state)
+                      (\i -> sgcp t `mh` stepS i) state
+  state <- (sgcp t `mh` stepCap t) state
+  state <- stepGP t state
+  return state
 
 genData :: R -> IO [Double]
 genData t = do
@@ -110,49 +134,29 @@ genData' t = do
     plot . points "data" $ zip dat (repeat 1.9)
   return $ sort dat
 
+initialise :: R -> [Double] -> IO State
+initialise t dat = do
+  let k = integer (length dat)
+      cap = real (2 * k / t)
+      m = 10
+      n = k + m
+      phi = fromList $ replicate k True ++ replicate m False :: BVec
+  rej <- sequence [ uniform 0 (real t) | _ <- [1..m] ]
+  let s = fromList $ dat ++ sort rej :: RVec
+  samples <- hmcStan [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
+                       cap' == real cap, n' == integer n, s' == s, phi' == phi ]
+  let (lsv,lls2,g) = last samples
+  return (lsv,lls2,cap,n,s,g,phi)
+
 main :: IO ()
 main = do
   let t = 50
   dat <- genData' t
-
   let k = integer (length dat)
-      cap = 2 * k / t
-      m = 10
-      n = k + m
-      phi = fromList $ replicate k True ++ replicate m False :: BVec
-
-  rej <- sequence [ uniform 0 t | _ <- [1..m] ]
-  let s = fromList $ dat ++ sort rej :: RVec
-
-  samples <- hmcStan [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
-                       cap' == real cap, n' == integer n, s' == s, phi' == phi ]
-  let (lsv,lls2,g) = last samples
-
-  let multiplicity (_,_,_,n,_,_,_) = lfact (integer n)
-      propose = mhAdjust multiplicity (sgcp t)
-
-  loop (0,lsv,lls2,cap,n,s,g,phi) $ \(iter,lsv,lls2,cap,n,s,g,phi) -> do
-    (n,s,g,phi) <- flip (chain 10) (n,s,g,phi) $ \(n,s,g,phi) -> do
-      -- propose trans-dimensional jump
-      (_,_,_,n,s,g,phi) <- propose (stepN t k) (lsv,lls2,cap,n,s,g,phi)
-      return (n,s,g,phi)
-
-    let m = integer n - k
-    (_,s,g) <- flip (chain m) (k+1,s,g) $ \(i,s,g) -> do
-      -- propose move for s!i
-      (_,_,_,_,s,g,_)  <- propose (stepS (integer i)) (lsv,lls2,cap,n,s,g,phi)
-      return (i+1,s,g)
-
-    -- update cap
-    (_,_,cap,_,_,_,_) <- propose (stepCap t) (lsv,lls2,cap,n,s,g,phi)
-
-    -- fit GP via Stan
-    samples <- hmcStanInit' 10 [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
-                                 cap' == real cap, n' == integer n, s' == s, phi' == phi ] (lsv,lls2,g)
-    let (lsv,lls2,g) = last samples
-
+  state <- initialise t dat
+  loop (0,state) $ \(iter,state) -> do
+    (lsv,lls2,cap,n,s,g,phi) <- step t k state
     toFile def ("sgcp-figs/"++ show iter ++".png") $ do
       plot $ line "rate" [sort $ zip (list s) (list g)]
       plot . points "data" $ zip (list s) [if y then 2.5 else (-2.5) | y <- toList phi]
-
-    return (iter+1,lsv,lls2,cap,n,s,g,phi)
+    return (iter+1,(lsv,lls2,cap,n,s,g,phi))

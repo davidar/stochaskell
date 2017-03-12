@@ -433,6 +433,12 @@ loop s f = do
   s' <- f s
   loop s' f
 
+chainRange :: (Num i, Monad m) => (Int,Int) -> (i -> x -> m x) -> x -> m x
+chainRange (lo,hi) f x0 = snd <$> chain (hi-lo+1) g (integer lo, x0)
+  where g (i,x) = do
+          y <- f i x
+          return (i+1,y)
+
 -- Metropolis-Hastings
 mh :: (ExprTuple r, Show r) => Prog r -> (r -> Prog r) -> r -> IO r
 mh = mhAdjust (const $ LF.logFloat 1)
