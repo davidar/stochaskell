@@ -9,8 +9,10 @@ import qualified Data.Number.LogFloat as LF
 import Numeric.SpecFunctions
 import Text.Printf (printf)
 
+-- left-to-right composition
 compose :: [a -> a] -> a -> a
-compose = foldr (.) id
+compose [] x = x
+compose (f:fs) x = compose fs $ f x
 
 selectItems :: [a] -> [Bool] -> [a]
 selectItems xs ps = map fst . filter snd $ zip xs ps

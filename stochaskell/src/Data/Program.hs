@@ -10,6 +10,7 @@ import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
 import qualified Data.List as List
+import qualified Data.Map.Strict as Map
 import Data.Maybe
 import qualified Data.Number.LogFloat as LF
 import qualified Data.Random as Rand
@@ -54,7 +55,7 @@ data PBlock = PBlock { definitions :: Block
                      }
             deriving (Eq)
 emptyPBlock :: PBlock
-emptyPBlock = PBlock emptyBlock [] []
+emptyPBlock = PBlock emptyBlock [] emptyEnv
 
 -- lift into Block
 liftExprBlock :: MonadState PBlock m => State Block b -> m b
@@ -160,8 +161,8 @@ instance Distribution OrderedSample (Z, Prog (Expr t)) Prog (Expr [t]) where
     sample (OrderedSample (n,prog)) = Prog $ do
         i <- liftExprBlock $ fromExpr n
         PBlock block rhs given <- get
-        let (_, PBlock block' [act] []) =
-              runState (head <$> fromProgExprs prog) $ PBlock block [] []
+        let (_, PBlock block' [act] _) =
+              runState (head <$> fromProgExprs prog) $ PBlock block [] emptyEnv
             d = HODist "orderedSample" act [i] (ArrayT Nothing [(Const 1,i)] (typePNode act))
         put $ PBlock block' (d:rhs) given
         let depth = dagLevel $ head block
@@ -219,8 +220,8 @@ instance forall r f. ScalarType r =>
     PBlock block dists given <- get
     let ids = [ Dummy (length block) i | i <- [1..length sh] ]
         p = ar ! [expr . return $ Var i IntT | i <- ids]
-        (ret, PBlock (dag:block') [act] []) = runState (head <$> fromProgExprs p) $
-            PBlock (DAG (length block) ids Bimap.empty : block) [] []
+        (ret, PBlock (dag:block') [act] _) = runState (head <$> fromProgExprs p) $
+            PBlock (DAG (length block) ids Bimap.empty : block) [] emptyEnv
         TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
         loopType = ArrayT Nothing sh t
         loop = Loop sh dag act loopType
@@ -248,19 +249,20 @@ instance MonadGuard Prog where
           let (Just (Apply "==" [Var j _, Const a] _)) =
                 lookup i $ nodes dag
               dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
-          put $ PBlock (dag':dags) dists ((j,a):given)
+          put $ PBlock (dag':dags) dists (Map.insert j a given)
 
 
 ------------------------------------------------------------------------------
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
 
-densityJ :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
-densityJ prog vals = densityPBlock env pb / adjust
-  where (rets, pb) = runProgExprs prog
-        env = unifyTuple' (definitions pb) rets vals emptyEnv
-        jacobian = [ [ diffNodeRef env (definitions pb) r (Volatile 0 i) (typePNode d)
-                     | (i,d) <- zip [0..] (reverse $ actions pb), typePNode d /= IntT ]
+density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
+density prog vals = densityPBlock env' pb / adjust
+  where (rets, pb@(PBlock block acts _)) = runProgExprs prog
+        env = unifyTuple' block rets vals emptyEnv
+        env' = evalBlock block env
+        jacobian = [ [ diffNodeRef env' block r (Volatile 0 i) (typePNode d)
+                     | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
                    | r <- rets, typeRef r /= IntT ]
         isLowerTri = and [ isZeros `all` drop i row | (i,row) <- zip [1..] jacobian ]
         diagonal = [ row !! i | (i,row) <- zip [0..] jacobian ]
@@ -268,20 +270,20 @@ densityJ prog vals = densityPBlock env pb / adjust
         adjust | isLowerTri = product (map ldet diagonal)
                | otherwise = error "jacobian is not block triangular"
 
-density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
-density prog vals = densityPBlock env pb
-  where (rets, pb) = runProgExprs prog
-        env = unifyTuple' (definitions pb) rets vals emptyEnv
+density' :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
+density' prog vals = densityPBlock env' pb
+  where (rets, pb@(PBlock block _ _)) = runProgExprs prog
+        env = unifyTuple' block rets vals emptyEnv
+        env' = evalBlock block env
 
 densityPBlock :: Env -> PBlock -> LF.LogFloat
 densityPBlock env (PBlock block refs _) = product $ do
     (i,d) <- zip [0..] $ reverse refs
     let ident = Volatile (dagLevel $ head block) i
-    return $ case lookup ident env of
-      Just val -> let p = densityPNode env' block d val
+    return $ case Map.lookup ident env of
+      Just val -> let p = densityPNode env block d val
         in {-trace ("density ("++ show d ++") "++ show val ++" = "++ show p)-} p
       Nothing  -> trace (show ident ++" is unconstrained") $ LF.logFloat 1
-  where env' = evalBlock block env
 
 densityPNode :: Env -> Block -> PNode -> ConstVal -> LF.LogFloat
 densityPNode env block (Dist "bernoulli" [p] _) x =
@@ -345,7 +347,7 @@ densityPNode env block (Dist "discreteUniform" [a,b] _) x =
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
 densityPNode env block (Loop shp ldag body _) a = product
-    [ let p = densityPNode (zip inps i ++ env) block' body (fromRational x)
+    [ let p = densityPNode (Map.fromList (zip inps i) `Map.union` env) block' body (fromRational x)
       in {-trace ("density ("++ show body ++") "++ show (fromRational x :: Double) ++" = "++ show p)-} p
     | (i,x) <- evalRange env block shp `zip` entries a ]
   where inps = inputs ldag
@@ -362,8 +364,8 @@ densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
 
 sampleP :: (ExprTuple t) => Prog t -> IO t
 sampleP p = do
-    env <- samplePNodes [] block idents
-    let env' = filter (not . isInternal . fst) env
+    env <- samplePNodes emptyEnv block idents
+    let env' = Map.filterWithKey (\k _ -> not $ isInternal k) env
     return . fromConstVals $ map (fromJust . evalNodeRef env' block) rets
   where (rets, PBlock block refs _) = runProgExprs p
         idents = [ (Volatile (dagLevel $ head block) i, d)
@@ -373,7 +375,7 @@ samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
 samplePNodes env _ [] = return env
 samplePNodes env block ((ident,node):rest) = do
     val <- samplePNode env block node
-    let env' = evalBlock block $ (ident, val) : env
+    let env' = evalBlock block $ Map.insert ident val env
     samplePNodes env' block rest
 
 samplePNode :: Env -> Block -> PNode -> IO ConstVal
@@ -418,7 +420,8 @@ samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
 samplePNode env block (Loop shp ldag hd _) = fromList <$> sequence arr
   where inps = inputs ldag
         block' = ldag : drop (length block - dagLevel ldag) block
-        arr = [ samplePNode (zip inps idx ++ env) block' hd | idx <- evalRange env block shp ]
+        arr = [ samplePNode (Map.fromList (zip inps idx) `Map.union` env) block' hd
+              | idx <- evalRange env block shp ]
 
 
 ------------------------------------------------------------------------------
@@ -447,11 +450,11 @@ mhAdjust :: (ExprTuple r, Show r) => (r -> LF.LogFloat) -> Prog r -> (r -> Prog 
 mhAdjust adjust target proposal x = do
   y <- sampleP (proposal x)
   putStrLn $ "proposing "++ show y
-  let f = densityJ target
-      q = density . proposal
+  let f = density target
+      q = density' . proposal
       b = (f y * adjust y) / (f x * adjust x)
       c = q x y / q y x
       a = LF.fromLogFloat (b / c) -- (f y * q y x) / (f x * q x y)
   putStrLn $ "acceptance ratio = "++ show b ++" / "++ show c ++" = "++ show a
   accept <- bernoulli $ if a > 1 then 1 else a
-  if accept then return y else return x
+  return $ if accept then y else x

@@ -8,6 +8,7 @@ import Data.Expression.Const
 import Data.Expression.Eval
 import Data.List
 import Data.List.Split
+import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
 import Data.Ratio
@@ -185,10 +186,10 @@ stanDAG dag = indent $
 stanProgram :: PBlock -> String
 stanProgram (PBlock block refs given) =
     "data {\n"++ printRefs (\i n ->
-        if getId i `elem` map (Just . fst) given
+        if getId i `elem` map (Just . fst) (Map.toList given)
         then stanDecl (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
     "parameters {\n"++ printRefs (\i n ->
-        if getId i `elem` map (Just . fst) given
+        if getId i `elem` map (Just . fst) (Map.toList given)
         then "" else stanDecl (stanNodeRef i) (typePNode n)) ++"\n}\n"++
     "transformed parameters {\n"++ stanDAG (head block) ++"\n}\n"++
     "model {\n"++ printRefs (\i n -> stanPNode (stanNodeRef i) n) ++"\n}\n"
@@ -217,7 +218,7 @@ runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> 
       return ()
 
     putStrLn "--- Sampling Stan model ---"
-    let dat = unlines . flip map (constraints p) $ \(n,x) ->
+    let dat = unlines . flip map (Map.toList $ constraints p) $ \(n,x) ->
                 stanId n ++" <- "++ stanConstVal x
     putStrLn dat
     writeFile (basename ++".data") dat
@@ -255,7 +256,7 @@ hmcStanInit = hmcStanInit' 1000
 
 hmcStanInit' :: (ExprTuple t) => Int -> Prog t -> t -> IO [t]
 hmcStanInit' numSamples p t = runStan extraArgs numSamples p
-  where assigns = unlines . map f $ unifyTuple' (definitions pb) rets t env
+  where assigns = unlines . map f . Map.toList $ unifyTuple' (definitions pb) rets t env
         f (n,x) = stanId n ++" <- "++ stanConstVal x
         (rets,pb) = runProgExprs p
         env = constraints pb
