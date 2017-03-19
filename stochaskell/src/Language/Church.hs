@@ -1,11 +1,14 @@
 module Language.Church where
 
+import Data.Array.Abstract
 import Data.Expression
 import Data.Expression.Const
 import Data.List
+import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
 import Data.Ratio
+import GHC.Exts
 
 type Label = String
 
@@ -27,6 +30,8 @@ churchConstVal (Exact a) | isScalar a =
         n = numerator c
         d = denominator c
 churchConstVal (Approx a) | isScalar a = show (toScalar a)
+churchConstVal val | dimension val == 1 =
+  "(list "++ churchConstVal `spaced` toList val ++")"
 
 churchNodeRef :: NodeRef -> String
 churchNodeRef (Var s _) = churchId s
@@ -49,6 +54,7 @@ churchPrelude = unlines
   ,"                 (if (<= u (probs j)) j"
   ,"                     (go (+ j 1) (- u (probs j)))))))"
   ,"    (go 1 (uniform 0 1))))"
+  ,"(define (bernoulli p) (if (flip p) 1 0))"
   ]
 
 churchNode :: Label -> Node -> String
@@ -86,14 +92,30 @@ churchDAG dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = churchId $ Internal (dagLevel dag) i
   in "("++ name ++" "++ churchNode name n ++")"
 
+churchConstraint :: Id -> ConstVal -> String
+churchConstraint k v | dimension v == 1 =
+  "(equal? (map "++ churchId k ++" (iota "++ show hi ++" "++ show lo ++")) "++ churchConstVal v ++")"
+  where ([lo],[hi]) = bounds v
+churchConstraint k v = "(equal? "++ churchId k ++" "++ churchConstVal v ++")"
+
 churchProgram :: (ExprTuple t) => Prog t -> String
-churchProgram prog =
+churchProgram prog
+  | Map.null given =
   churchPrelude ++"\n"++
   "(define (model) (letrec (\n"++
     churchDAG (head block) ++"\n"++
     printedRefs ++")\n  "++ printedRets ++"))"
-  where (rets, (PBlock block refs _)) = runProgExprs prog
+  | otherwise =
+  churchPrelude ++"\n"++
+  "(query (define p (letrec (\n"++
+    churchDAG (head block) ++"\n"++
+    printedRefs ++")\n  "++
+    "(pair "++ printedRets ++" (and\n"++
+    indent (unlines printedConds) ++"))))\n  "++
+    "(car p) (cdr p))"
+  where (rets, (PBlock block refs given)) = runProgExprs prog
         printedRefs = indent . unlines $ zipWith g [0..] (reverse refs)
         g i n = "("++ churchId (Volatile 0 i) ++" "++ churchPNode n ++")"
         printedRets | length rets == 1 = churchNodeRef (head rets)
                     | otherwise = "(list "++ churchNodeRef `spaced` rets ++")"
+        printedConds = [churchConstraint k v | (k,v) <- Map.toList given]
