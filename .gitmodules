@@ -1,3 +1,6 @@
 [submodule "stochaskell/cmdstan"]
 	path = stochaskell/cmdstan
 	url = https://github.com/stan-dev/cmdstan.git
+[submodule "stochaskell/webchurch"]
+	path = stochaskell/webchurch
+	url = https://github.com/probmods/webchurch.git

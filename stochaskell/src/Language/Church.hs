@@ -9,6 +9,9 @@ import Data.Maybe
 import Data.Program
 import Data.Ratio
 import GHC.Exts
+import System.Directory
+import System.IO.Temp
+import System.Process
 
 type Label = String
 
@@ -107,7 +110,7 @@ churchProgram prog
     printedRefs ++")\n  "++ printedRets ++"))"
   | otherwise =
   churchPrelude ++"\n"++
-  "(query (define p (letrec (\n"++
+  "(mh-query 1000 10 (define p (letrec (\n"++
     churchDAG (head block) ++"\n"++
     printedRefs ++")\n  "++
     "(pair "++ printedRets ++" (and\n"++
@@ -119,3 +122,12 @@ churchProgram prog
         printedRets | length rets == 1 = churchNodeRef (head rets)
                     | otherwise = "(list "++ churchNodeRef `spaced` rets ++")"
         printedConds = [churchConstraint k v | (k,v) <- Map.toList given]
+
+mhChurch :: (ExprTuple t, Read t) => Prog t -> IO [t]
+mhChurch prog = withSystemTempDirectory "church" $ \tmpDir -> do
+  pwd <- getCurrentDirectory
+  let fname = tmpDir ++"/program.church"
+  fname `writeFile` churchProgram prog
+  out <- readProcess (pwd ++"/webchurch/church") [fname] ""
+  let samples = words $ drop 1 $ take (length out - 2) out
+  return $ map read samples
