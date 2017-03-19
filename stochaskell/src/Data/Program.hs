@@ -362,6 +362,9 @@ densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
 -- SAMPLING                                                                 --
 ------------------------------------------------------------------------------
 
+simulate :: (ExprTuple t) => Prog t -> IO t
+simulate = sampleP
+
 sampleP :: (ExprTuple t) => Prog t -> IO t
 sampleP p = do
     env <- samplePNodes emptyEnv block idents
@@ -422,6 +425,10 @@ samplePNode env block (Loop shp ldag hd _) = fromList <$> sequence arr
         block' = ldag : drop (length block - dagLevel ldag) block
         arr = [ samplePNode (Map.fromList (zip inps idx) `Map.union` env) block' hd
               | idx <- evalRange env block shp ]
+
+samplePNode env block (HODist "orderedSample" d [n] _) =
+  (fromList . List.sort) <$> sequence [samplePNode env block d | _ <- [1..n']]
+  where n' = toInteger . fromJust $ evalNodeRef env block n
 
 
 ------------------------------------------------------------------------------
