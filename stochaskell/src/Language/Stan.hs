@@ -22,17 +22,12 @@ import Util
 
 -- TODO: better handling for exceptions to 1-based indexing
 
-type Label = String
-
 ------------------------------------------------------------------------------
 -- UTILITY FUNCTIONS                                                        --
 ------------------------------------------------------------------------------
 
 commas :: (a -> String) -> [a] -> String
 commas f xs = intercalate ", " $ map f xs
-
-indent :: String -> String
-indent = intercalate "\n" . map ("  "++) . lines
 
 forLoop :: [Id] -> [Interval NodeRef] -> String -> String
 forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"

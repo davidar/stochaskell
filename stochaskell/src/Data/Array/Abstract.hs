@@ -119,7 +119,7 @@ instance (Storable t) => Vector (ShapedVector t) Integer t where
     vector a = ShVec (head $ shape a) . LAD.fromList . A.elems $ toArray a
 
 infixr 7 *>
-class Scalable a v where
+class Scalable a v | v -> a where
     (*>) :: a -> v -> v
 
 instance (Num e, Ix i) => Scalable e (A.Array i e) where

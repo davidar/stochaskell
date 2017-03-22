@@ -3,7 +3,7 @@
              FlexibleContexts, ConstraintKinds #-}
 module Data.Expression where
 
-import Prelude hiding (const,foldr)
+import Prelude hiding (const,foldl,foldr,scanl,scanr)
 
 import qualified Data.Array as A
 import qualified Data.Array.Abstract as AA
@@ -11,7 +11,7 @@ import Data.Array.Abstract ((!))
 import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Expression.Const
-import Data.List hiding (foldr)
+import Data.List hiding (foldl,foldr,scanl,scanr)
 import Data.Maybe
 import Data.Number.Transfinite hiding (log)
 import Data.Ratio
@@ -104,6 +104,7 @@ instance Eq DExpr where
 instance Ord DExpr where
   e `compare` f = runDExpr e `compare` runDExpr f
 
+type Expression t = Expr t
 newtype Expr t = Expr { erase :: DExpr }
 expr :: State Block NodeRef -> Expr t
 expr = Expr . DExpr
@@ -116,9 +117,9 @@ instance (Eq t) => Eq (Expr t) where
 instance (Ord t) => Ord (Expr t) where
   e `compare` f = runExpr e `compare` runExpr f
 
-type B = Expr Bool
-type R = Expr Double
-type Z = Expr Integer
+type B = Expression Bool
+type R = Expression Double
+type Z = Expression Integer
 type BVec = Expr [Bool]
 type RVec = Expr [Double]
 type ZVec = Expr [Integer]
@@ -365,6 +366,10 @@ foldr :: (ScalarType b) =>
   (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr b
 foldr f r xs = expr $ foldscan False Right_ f r xs
 
+scan :: (ScalarType b) =>
+  (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
+scan = scanl
+
 scanl :: (ScalarType b) =>
   (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
 scanl f r xs = expr $ foldscan True Left_ (flip f) r xs
@@ -472,6 +477,11 @@ instance (ScalarType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
             (ArrayT _ [_,c] _) = typeRef j
         simplify $ Apply "<>" [i,j] (ArrayT (Just "matrix") [r,c] t)
 
+instance AA.Scalable R RVec where
+    a *> v = expr $ do
+        i <- fromExpr a
+        j <- fromExpr $ asVector v
+        simplify $ Apply "*>" [i,j] (typeRef j)
 instance (ScalarType e) => AA.Scalable (Expr e) (Expr [[e]]) where
     a *> m = expr $ do
         i <- fromExpr a

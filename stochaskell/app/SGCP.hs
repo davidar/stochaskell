@@ -1,26 +1,14 @@
 {-# LANGUAGE FlexibleContexts, MonadComprehensions, NoMonomorphismRestriction, RebindableSyntax #-}
 
 module Main where
-import Prelude hiding ((==),(/=),(<),(>),(<=),(>=),foldr)
 
-import Graphics.Rendering.Chart.Easy ( plot, line, points, def )
-import Graphics.Rendering.Chart.Backend.Cairo ( toFile )
-import Control.Applicative ()
-import Control.Monad.Guard
-import Data.Array.Abstract
-import Data.Boolean.Overload -- TODO: no infix declaration
-import Data.Expression
-import Data.Expression.Const
-import Data.List hiding (foldr)
-import Data.Program
-import Data.Random.Distribution.Abstract
-import GHC.Exts
-import Language.Stan
-import Util
+import Data.List (sort)
+import Graphics.Rendering.Chart.Easy (plot,line,points,def)
+import Graphics.Rendering.Chart.Backend.Cairo (toFile)
+import Language.Stochaskell
 
-kernelSE :: R -> R -> R -> R -> R
 kernelSE lsv lls2 a b =
-  exp (lsv - (a - b)*(a - b) / (2 * exp lls2))
+  exp (lsv - (a - b)^2 / (2 * exp lls2))
   + if a == b then 1e-6 else 0
 
 gpClassifier :: (R -> R -> R) -> Z -> RVec -> P (RVec,BVec)
@@ -154,9 +142,11 @@ main = do
   dat <- genData' t
   let k = integer (length dat)
   state <- initialise t dat
-  loop (0,state) $ \(iter,state) -> do
+  flip (chain 300) (0,state) $ \(iter,state) -> do
+    putStrLn $ "*** CURRENT STATE: "++ show state
     (lsv,lls2,cap,n,s,g,phi) <- step t k state
     toFile def ("sgcp-figs/"++ show iter ++".png") $ do
       plot $ line "rate" [sort $ zip (list s) (list g)]
       plot . points "data" $ zip (list s) [if y then 2.5 else (-2.5) | y <- toList phi]
     return (iter+1,(lsv,lls2,cap,n,s,g,phi))
+  return ()

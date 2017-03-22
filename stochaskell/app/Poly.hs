@@ -2,21 +2,11 @@
              NoMonomorphismRestriction, FlexibleContexts, TypeFamilies #-}
 module Main where
 
-import Prelude hiding ((==),(/=),(<),(>),(<=),(>=),(*>),foldr)
-
+import Data.List (sort)
 import Graphics.Rendering.Chart.Easy
     ( plot, line, points, def, setColors, black, withOpacity )
 import Graphics.Rendering.Chart.Backend.Cairo ( toFile )
-import Control.Applicative ()
-import Control.Monad.Guard
-import Data.Array.Abstract
-import Data.Boolean.Overload
-import Data.Expression
-import Data.Expression.Const
-import Data.List hiding (foldr)
-import Data.Program
-import Data.Random.Distribution.Abstract
-import Language.Stan
+import Language.Stochaskell
 
 xyData :: [(Double,Double)]
 xyData = [

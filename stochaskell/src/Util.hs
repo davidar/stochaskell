@@ -1,13 +1,20 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts, TypeFamilies #-}
 
 module Util where
 
 import Data.Boolean
 import qualified Data.Bimap as Bimap
 import qualified Data.ByteString as B
+import Data.List
 import qualified Data.Number.LogFloat as LF
+import GHC.Exts
 import Numeric.SpecFunctions
 import Text.Printf (printf)
+
+type Label = String
+
+indent :: String -> String
+indent = intercalate "\n" . map ("  "++) . lines
 
 -- left-to-right composition
 compose :: [a -> a] -> a -> a
@@ -33,6 +40,10 @@ delete :: (Eq k) => k -> [(k,v)] -> [(k,v)]
 delete k = filter p
   where p (k',_) = k' /= k
 
+linspace :: (IsList l, e ~ Item l, Fractional e, Integral i) => e -> e -> i -> l
+linspace lo hi n = fromList [lo + step * fromIntegral i | i <- [0..n-1]]
+  where step = (hi - lo)/(fromIntegral n - 1)
+
 instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
     m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
 
@@ -43,7 +54,7 @@ instance (Num t) => Num [t] where
     negate = map negate
     abs    = map abs
     signum = map signum
-    fromInteger x = [fromInteger x]
+    --fromInteger x = [fromInteger x]
 
 type instance BooleanOf (a,b,c,d,e,f,g) = BooleanOf a
 

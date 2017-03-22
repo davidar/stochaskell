@@ -3,7 +3,6 @@ module Language.Church where
 import Data.Array.Abstract
 import Data.Expression
 import Data.Expression.Const
-import Data.List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
@@ -12,14 +11,10 @@ import GHC.Exts
 import System.Directory
 import System.IO.Temp
 import System.Process
-
-type Label = String
+import Util
 
 spaced :: (a -> String) -> [a] -> String
 spaced f = unwords . map f
-
-indent :: String -> String
-indent = intercalate "\n" . map ("  "++) . lines
 
 churchId :: Id -> String
 churchId (Dummy    level i) = "i_"++ show level ++"_"++ show i
@@ -101,13 +96,19 @@ churchConstraint k v | dimension v == 1 =
   where ([lo],[hi]) = bounds v
 churchConstraint k v = "(equal? "++ churchId k ++" "++ churchConstVal v ++")"
 
+churchResult :: Label -> Type -> String
+churchResult name (ArrayT _ [(lo,hi)] _) =
+  "(map "++ name ++" (iota "++ churchNodeRef hi ++" "++ churchNodeRef lo ++"))"
+churchResult name _ = name
+
 churchProgram :: (ExprTuple t) => Prog t -> String
 churchProgram prog
   | Map.null given =
   churchPrelude ++"\n"++
   "(define (model) (letrec (\n"++
     churchDAG (head block) ++"\n"++
-    printedRefs ++")\n  "++ printedRets ++"))"
+    printedRefs ++")\n  "++ printedRets ++"))\n"++
+  finalLine
   | otherwise =
   churchPrelude ++"\n"++
   "(mh-query 1000 10 (define p (letrec (\n"++
@@ -121,7 +122,18 @@ churchProgram prog
         g i n = "("++ churchId (Volatile 0 i) ++" "++ churchPNode n ++")"
         printedRets | length rets == 1 = churchNodeRef (head rets)
                     | otherwise = "(list "++ churchNodeRef `spaced` rets ++")"
+        finalLine | length rets == 1 = churchResult "(model)" $ typeRef (head rets)
+                  | otherwise = "(model)"
         printedConds = [churchConstraint k v | (k,v) <- Map.toList given]
+
+simChurchVec :: (Read t) => Prog (Expr [t]) -> IO [t]
+simChurchVec prog = withSystemTempDirectory "church" $ \tmpDir -> do
+  pwd <- getCurrentDirectory
+  let fname = tmpDir ++"/program.church"
+  fname `writeFile` churchProgram prog
+  out <- readProcess (pwd ++"/webchurch/church") [fname] ""
+  let samples = words $ drop 1 $ take (length out - 2) out
+  return $ map read samples
 
 mhChurch :: (ExprTuple t, Read t) => Prog t -> IO [t]
 mhChurch prog = withSystemTempDirectory "church" $ \tmpDir -> do

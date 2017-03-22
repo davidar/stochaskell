@@ -23,6 +23,7 @@ library
                      , Data.Array.Abstract
                      , Data.Random.Distribution.Abstract
                      , Language.Stan
+                     , Language.Stochaskell
                      , Language.Church
                      , Util
   build-depends:       Boolean
@@ -48,9 +49,7 @@ executable dp-exe
   hs-source-dirs:      app
   main-is:             DP.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  build-depends:       Boolean
-                     , base
-                     , logfloat
+  build-depends:       base
                      , stochaskell
   default-language:    Haskell2010
 
@@ -58,10 +57,9 @@ executable poly-exe
   hs-source-dirs:      app
   main-is:             Poly.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  build-depends:       Boolean
+  build-depends:       base
                      , Chart
                      , Chart-cairo
-                     , base
                      , stochaskell
   default-language:    Haskell2010
 
@@ -69,10 +67,9 @@ executable sgcp-exe
   hs-source-dirs:      app
   main-is:             SGCP.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  build-depends:       Boolean
+  build-depends:       base
                      , Chart
                      , Chart-cairo
-                     , base
                      , stochaskell
   default-language:    Haskell2010
 
