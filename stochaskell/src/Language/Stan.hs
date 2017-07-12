@@ -121,6 +121,7 @@ stanOperators =
   ]
 
 stanNode :: Label -> Node -> String
+stanNode _ (Apply "getExternal" _ _) = ""
 stanNode name (Apply "ifThenElse" [a,b,c] _) =
     name ++" = "++ stanNodeRef a ++" ? "++ stanNodeRef b ++" : "++ stanNodeRef c ++";"
 stanNode name (Apply "tr'" [a] _) =
@@ -166,12 +167,12 @@ stanPNode name (HODist "orderedSample" d [n] _) =
         in indent (stanPNode lval d)
 
 stanDAG :: DAG -> String
-stanDAG dag = indent $
-    extract (\name -> stanDecl name . typeNode) ++
-    extract stanNode
+stanDAG dag = indent $ extract decl ++ extract stanNode
   where extract f = unlines . flip map (nodes dag) $ \(i,n) ->
                         let name = stanId $ Internal (dagLevel dag) i
                         in f name n
+        decl _ (Apply "getExternal" _ _) = ""
+        decl name node = stanDecl name $ typeNode node
 
 
 ------------------------------------------------------------------------------

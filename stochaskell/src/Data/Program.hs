@@ -103,8 +103,10 @@ dist s = Prog $ do
     let depth = dagLevel $ head block
         k = length rhs
         name = Volatile depth k
-        v = expr . return $ Var name (typePNode d)
-    return v
+        t = typePNode d
+        v = Var name t
+    _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
+    return (expr $ return v)
 
 instance Distribution Bernoulli R Prog B where
     sample (Bernoulli p) = dist $ do
@@ -168,8 +170,10 @@ instance (ScalarType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (E
         let depth = dagLevel $ head block
             k = length rhs
             name = Volatile depth k
-            v = expr . return $ Var name (typePNode d)
-        return v
+            t = typePNode d
+            v = Var name t
+        _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
+        return (expr $ return v)
 
 instance Distribution PMF RVec Prog Z where
     sample (PMF probs) = dist $ do
@@ -227,12 +231,14 @@ instance forall r f. ScalarType r =>
         loop = Loop sh dag act loopType
     put $ PBlock block' (loop:dists) given
     let name = Volatile (length block - 1) (length dists)
+        v = Var name loopType
+    _ <- liftExprBlock . simplify $ Apply "getExternal" [v] loopType
     return $ case ret of
       Var (Volatile depth 0) _ | depth == length block ->
-        expr . return $ Var name loopType :: Expr f
+        expr $ return v :: Expr f
       Index vec [Var (Volatile depth 0) _] | depth == length block ->
         expr . floatArray' $ Array sh dag (Index vec [ref]) loopType
-          where ref = Index (Var name loopType) (reverse [Var i IntT | i <- ids])
+          where ref = Index v (reverse [Var i IntT | i <- ids])
       _ -> error $ "non-trivial transform in joint: "++ show ret
 
 

@@ -231,6 +231,7 @@ liftBlock s = do
 varies :: DAG -> [NodeRef] -> Bool
 varies (DAG level inp _) xs = level == 0 || any p xs
   where p (Var (Internal l _) _) = l == level
+        p (Var (Volatile l _) _) = l == level
         p (Var s _) = s `elem` inp
         p (Const _ _) = False
         p (Index a is) = p a || any p is

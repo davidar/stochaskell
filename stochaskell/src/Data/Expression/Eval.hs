@@ -36,6 +36,7 @@ builtins =
   ,("pi", const pi)
   ,("asVector", head)
   ,("asMatrix", head)
+  ,("getExternal", head)
   ,("<>", \[a,b] -> a <> b)
   ,("<.>", \[u,v] -> u <.> v)
   ,("*>", \[a,v] -> a *> v)
