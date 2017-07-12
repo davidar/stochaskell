@@ -26,6 +26,13 @@ bernoulli p = sample $ Bernoulli p
 bernoulliLogit :: Distribution Bernoulli s m t => s -> m t
 bernoulliLogit l = sample $ BernoulliLogit l
 
+data Bernoullis p t = Bernoullis p
+                    | BernoulliLogits p
+bernoullis :: Distribution Bernoullis s m t => s -> m t
+bernoullis p = sample $ Bernoullis p
+bernoulliLogits :: Distribution Bernoullis s m t => s -> m t
+bernoulliLogits l = sample $ BernoulliLogits l
+
 data Beta a t = Beta a a
 beta :: Distribution Beta s m t => s -> s -> m t
 beta a b = sample $ Beta a b
@@ -70,6 +77,10 @@ instance Distribution Normal (Double,Double) IO Double where
 normal :: Distribution Normal (u,v) m t => u -> v -> m t
 normal m s = sample $ Normal (m,s)
 
+data Normals a r = Normals a
+normals :: Distribution Normals (u,v) m t => u -> v -> m t
+normals m s = sample $ Normals (m,s)
+
 data OrderedSample a r = OrderedSample a
 orderedSample :: Distribution OrderedSample (n,d) m t => n -> d -> m t
 orderedSample n d = sample $ OrderedSample (n,d)
@@ -88,3 +99,7 @@ instance (Random t) => Distribution Uniform t IO t where
     sample (Uniform a b) = getStdRandom $ randomR (a,b)
 uniform :: Distribution Uniform s m t => s -> s -> m t
 uniform a b = sample $ Uniform a b
+
+data Uniforms a r = Uniforms a a
+uniforms :: Distribution Uniforms s m t => s -> s -> m t
+uniforms a b = sample $ Uniforms a b

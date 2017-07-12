@@ -107,6 +107,16 @@ instance Distribution Bernoulli R Prog B where
         i <- fromExpr l
         return $ Dist "bernoulliLogit" [i] boolT
 
+instance Distribution Bernoullis RVec Prog BVec where
+    sample (Bernoullis p) = dist $ do
+        i <- fromExpr p
+        let (ArrayT _ [n] _) = typeRef i
+        return $ Dist "bernoullis" [i] (ArrayT Nothing [n] boolT)
+    sample (BernoulliLogits l) = dist $ do
+        i <- fromExpr l
+        let (ArrayT _ [n] _) = typeRef i
+        return $ Dist "bernoulliLogits" [i] (ArrayT Nothing [n] boolT)
+
 instance Distribution Beta R Prog R where
     sample (Beta a b) = dist $ do
         i <- fromExpr a
@@ -143,6 +153,12 @@ instance Distribution Normal (R,R) Prog R where
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "normal" [i,j] RealT
+
+instance Distribution Normals (RVec,RVec) Prog RVec where
+    sample (Normals (m,s)) = dist $ do
+        i <- fromExpr m
+        j <- fromExpr s
+        return $ Dist "normals" [i,j] (typeRef i)
 
 instance Distribution Normal (RVec,RMat) Prog RVec where
     sample (Normal (m,s)) = dist $ do
@@ -181,6 +197,12 @@ instance Distribution Uniform R Prog R where
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "uniform" [i,j] RealT
+
+instance Distribution Uniforms RMat Prog RMat where
+    sample (Uniforms a b) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "uniforms" [i,j] (typeRef i)
 
 instance Distribution Uniform Z Prog Z where
     sample (Uniform a b) = dist $ do
@@ -384,6 +406,10 @@ samplePNode env block (Dist "bernoulli" [p] _) = fromBool <$> bernoulli p'
 samplePNode env block (Dist "bernoulliLogit" [l] _) = fromBool <$> bernoulli p'
   where l' = toDouble . fromJust $ evalNodeRef env block l
         p' = 1 / (1 + exp (-l'))
+samplePNode env block (Dist "bernoulliLogits" [l] _) = do
+  z <- sequence $ map bernoulliLogit l'
+  return $ fromList (map fromBool z)
+  where l' = map toDouble . toList . fromJust $ evalNodeRef env block l
 samplePNode env block (Dist "categorical" cats _) = fromRational <$> categorical (zip ps xs)
   where n = length cats `div` 2
         ps = toDouble . fromJust . evalNodeRef env block <$> take n cats
@@ -399,6 +425,11 @@ samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric 0 p'
 samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
   where m' = toDouble . fromJust $ evalNodeRef env block m
         s' = toDouble . fromJust $ evalNodeRef env block s
+samplePNode env block (Dist "normals" [m,s] _) = do
+  z <- sequence $ zipWith normal m' s'
+  return $ fromList (map fromDouble z)
+  where m' = map toDouble . toList . fromJust $ evalNodeRef env block m
+        s' = map toDouble . toList . fromJust $ evalNodeRef env block s
 samplePNode env block (Dist "multi_normal" [m,s] _) = do
   w <- sequence [ normal 0 1 | _ <- [1..n] ]
   let w' = fromList $ map fromDouble w
@@ -411,6 +442,11 @@ samplePNode env block (Dist "poisson" [a] _) = fromInteger <$> poisson a'
 samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'
   where a' = toDouble . fromJust $ evalNodeRef env block a
         b' = toDouble . fromJust $ evalNodeRef env block b
+samplePNode env block (Dist "uniforms" [a,b] (ArrayT _ sh _)) = do
+  z <- sequence $ zipWith normal a' b'
+  return $ listArray' (evalShape env block sh) (map fromDouble z)
+  where a' = map toDouble . elems' . fromJust $ evalNodeRef env block a
+        b' = map toDouble . elems' . fromJust $ evalNodeRef env block b
 samplePNode env block (Dist "discreteUniform" [a,b] _) = fromInteger <$> uniform a' b'
   where a' = toInteger . fromJust $ evalNodeRef env block a
         b' = toInteger . fromJust $ evalNodeRef env block b
