@@ -157,13 +157,13 @@ instance Distribution Normal (RVec,RMat) Prog RVec where
         j <- fromExpr s
         return $ Dist "multi_normal" [i,j] (typeRef i)
 
-instance Distribution OrderedSample (Z, Prog (Expr t)) Prog (Expr [t]) where
+instance (ScalarType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (Expr [t]) where
     sample (OrderedSample (n,prog)) = Prog $ do
         i <- liftExprBlock $ fromExpr n
         PBlock block rhs given <- get
         let (_, PBlock block' [act] _) =
               runState (head <$> fromProgExprs prog) $ PBlock block [] emptyEnv
-            d = HODist "orderedSample" act [i] (ArrayT Nothing [(Const 1,i)] (typePNode act))
+            d = HODist "orderedSample" act [i] (ArrayT Nothing [(Const 1 IntT,i)] (typePNode act))
         put $ PBlock block' (d:rhs) given
         let depth = dagLevel $ head block
             k = length rhs
@@ -246,7 +246,7 @@ instance MonadGuard Prog where
         (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
         (PBlock (dag:dags) dists given) <- get
         if i /= length (nodes dag) - 1 then undefined else do
-          let (Just (Apply "==" [Var j _, Const a] _)) =
+          let (Just (Apply "==" [Var j _, Const a _] _)) =
                 lookup i $ nodes dag
               dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
           put $ PBlock (dag':dags) dists (Map.insert j a given)

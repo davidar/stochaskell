@@ -90,7 +90,7 @@ evalNodeRef env block (Var i@(Internal level ptr) _) =
         ptr `lookup` nodes dag
   in evalNode env block node
 evalNodeRef _ _ (Var _ _) = Nothing
-evalNodeRef _ _ (Const c) = Just c
+evalNodeRef _ _ (Const c _) = Just c
 evalNodeRef env block (Index arr idx) = do
   a <- evalNodeRef env block arr
   js <- sequence (evalNodeRef env block <$> idx) -- TODO: should this be reversed?
@@ -165,7 +165,7 @@ unifyNodeRef env block (Var (Internal level ptr) _) val =
           error $ "pointer "++ show level ++":"++ show ptr ++" not found"
     in unifyNode env block node val
 unifyNodeRef _ _ (Var ref _) val = Map.singleton ref val
-unifyNodeRef _ _ (Const c) val = if c == val then emptyEnv else error $ show c ++" /= "++ show val
+unifyNodeRef _ _ (Const c _) val = if c == val then emptyEnv else error $ show c ++" /= "++ show val
 unifyNodeRef _ _ Index{} _ = trace "WARN not unifying Index" emptyEnv
 
 unifyNode :: Env -> Block -> Node -> ConstVal -> Env
@@ -252,32 +252,32 @@ diffNode env block (Apply "#>" [a,b] _) var t | isJust a' =
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
 
-instance (Enum t) => Enum (Expr t)
+instance (ScalarType t, Enum t) => Enum (Expr t)
 
-instance (Real t) => Real (Expr t) where
+instance (ScalarType t, Real t) => Real (Expr t) where
   toRational = real . fromJust . eval_
 
-instance (Integral t) => Integral (Expr t) where
+instance (ScalarType t, Integral t) => Integral (Expr t) where
   toInteger = integer . fromJust . eval_
 
 instance IsList RVec where
     type Item RVec = Double
-    fromList = expr . return . Const . fromList . map real
+    fromList = expr . return . flip Const undefined . fromList . map real
     toList = map real . toList . fromJust . eval_
 
 instance IsList ZVec where
     type Item ZVec = Integer
-    fromList = expr . return . Const . fromList . map integer
+    fromList = expr . return . flip Const undefined . fromList . map integer
     toList = map integer . toList . fromJust . eval_
 
 instance IsList BVec where
     type Item BVec = Bool
-    fromList = expr . return . Const . fromList . map fromBool
+    fromList = expr . return . flip Const undefined . fromList . map fromBool
     toList = map toBool . toList . fromJust . eval_
 
 instance IsList RMat where
     type Item RMat = [Double]
-    fromList = expr . return . Const . fromList . map (fromList . map real)
+    fromList = expr . return . flip Const undefined . fromList . map (fromList . map real)
     toList = map (map real . toList) . toList . fromJust . eval_
 
 instance Show R    where show = show . real
@@ -291,7 +291,7 @@ instance Show RMat where show = show . toList
 wrapReadsPrec :: (Read a) => (a -> t) -> Int -> ReadS t
 wrapReadsPrec f d s = [(f x, s') | (x, s') <- readsPrec d s]
 
-instance Read R    where readsPrec = wrapReadsPrec (expr . return . Const . fromDouble)
+instance Read R    where readsPrec = wrapReadsPrec (expr . return . flip Const RealT . fromDouble)
 instance Read Z    where readsPrec = wrapReadsPrec fromInteger
 instance Read B    where readsPrec = wrapReadsPrec fromBool
 instance Read RVec where readsPrec = wrapReadsPrec fromList

@@ -33,7 +33,7 @@ churchConstVal val | dimension val == 1 =
 
 churchNodeRef :: NodeRef -> String
 churchNodeRef (Var s _) = churchId s
-churchNodeRef (Const c) = churchConstVal c
+churchNodeRef (Const c _) = churchConstVal c
 churchNodeRef (Index f js) =
   "("++ churchNodeRef f ++" "++ churchNodeRef `spaced` reverse js ++")"
 
@@ -126,7 +126,7 @@ churchProgram prog
                   | otherwise = "(model)"
         printedConds = [churchConstraint k v | (k,v) <- Map.toList given]
 
-simChurchVec :: (Read t) => Prog (Expr [t]) -> IO [t]
+simChurchVec :: (Read t, ScalarType t) => Prog (Expr [t]) -> IO [t]
 simChurchVec prog = withSystemTempDirectory "church" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   let fname = tmpDir ++"/program.church"

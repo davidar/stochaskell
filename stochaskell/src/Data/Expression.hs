@@ -43,7 +43,7 @@ instance Show Id where
   show (Internal l p) = "v_"++ show l ++"_"++ show p
 
 data NodeRef = Var Id Type
-             | Const ConstVal
+             | Const ConstVal Type
              | Index NodeRef [NodeRef]
              deriving (Eq, Ord)
 
@@ -52,8 +52,8 @@ getId (Var i _) = Just i
 getId _ = Nothing
 
 instance Show NodeRef where
-  show (Var i t) = "("++ show i ++" :: "++ show t ++")"
-  show (Const c) = show c
+  show (Var   i t) = "("++ show i ++" :: "++ show t ++")"
+  show (Const c t) = "("++ show c ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
 
 data LeftRight = Left_ | Right_ deriving (Eq, Ord, Show)
@@ -139,12 +139,12 @@ data Type
     | ArrayT (Maybe String) [AA.Interval NodeRef] Type
     deriving (Eq, Ord)
 boolT :: Type
-boolT = SubrangeT IntT (Just $ Const 0) (Just $ Const 1)
+boolT = SubrangeT IntT (Just $ Const 0 IntT) (Just $ Const 1 IntT)
 
 instance Show Type where
   show IntT = "Z"
   show RealT = "R"
-  show (SubrangeT IntT (Just (Const 0)) (Just (Const 1))) = "B"
+  show (SubrangeT IntT (Just (Const 0 IntT)) (Just (Const 1 IntT))) = "B"
   show (SubrangeT t a b) = unwords ["Subrange", show t, show a, show b]
   show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
   show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
@@ -158,6 +158,9 @@ instance ScalarType Bool where
     typeOf = TypeIs boolT
 instance ScalarType Double where
     typeOf = TypeIs RealT
+instance forall t. (ScalarType t) => ScalarType [t] where
+    typeOf = TypeIs t
+      where TypeIs t = typeOf :: TypeOf t
 
 internal :: Level -> Pointer -> State Block NodeRef
 internal level i = do
@@ -174,10 +177,7 @@ typeDExpr = typeRef . fst . runDExpr
 
 typeRef :: NodeRef -> Type
 typeRef (Var _ t) = t
-typeRef (Const (Exact a))
-  | and [ denominator x == 1 | x <- A.elems a ] = typeArray (A.bounds a) IntT
-  | otherwise = typeArray (A.bounds a) RealT
-typeRef (Const (Approx a)) = typeArray (A.bounds a) RealT
+typeRef (Const _ t) = t
 typeRef (Index a _) = case typeRef a of
   (ArrayT _ _ t) -> t
   t -> error $ "cannot index non-array type "++ show t
@@ -185,7 +185,7 @@ typeRef (Index a _) = case typeRef a of
 typeArray :: ([Integer],[Integer]) -> Type -> Type
 typeArray ([],[]) = id
 typeArray (lo,hi) = ArrayT Nothing $ zip (f lo) (f hi)
-  where f = map $ Const . fromInteger
+  where f = map $ flip Const IntT . fromInteger
 
 typeIndex :: Type -> Type
 typeIndex (ArrayT _ [_] t) = t
@@ -232,7 +232,7 @@ varies :: DAG -> [NodeRef] -> Bool
 varies (DAG level inp _) xs = level == 0 || any p xs
   where p (Var (Internal l _) _) = l == level
         p (Var s _) = s `elem` inp
-        p (Const _) = False
+        p (Const _ _) = False
         p (Index a is) = p a || any p is
 
 -- collect External references
@@ -258,9 +258,11 @@ externRefs (DAG _ _ d) = go d
 -- simplify and float constants
 simplify :: Node -> State Block NodeRef
 -- TODO: eval const exprs
-simplify (Apply "+" [Const a, Const b] _) = return . Const $ a + b
-simplify (Apply "negate" [Const a] _) = return . Const $ negate a
-simplify (Apply "log" [Const a] _) = return . Const $ log a
+simplify (Apply "+" [Const a _, Const b _] t) = return $ Const (a + b) t
+simplify (Apply "*" [Const a _, Const b _] t) = return $ Const (a * b) t
+simplify (Apply "negate" [Const a _] t) = return $ Const (negate a) t
+simplify (Apply "log" [Const a _] t) = return $ Const (log a) t
+simplify (Apply "exp" [Const a _] t) = return $ Const (exp a) t
 simplify (Apply "ifThenElse" [_,a,b] _) | a == b = return a
 simplify e = do
     dag:_ <- get
@@ -321,7 +323,7 @@ makeArray ar sh = do
     hashcons $ Array sh dag ret (ArrayT Nothing sh t)
 
 -- constant floating
-floatArray :: (Num i, ScalarType t)
+floatArray :: (Num i, ScalarType i, ScalarType t)
            => AA.AbstractArray (Expr i) (Expr t) -> State Block NodeRef
 floatArray ar = do
     dag:_ <- get
@@ -345,7 +347,7 @@ floatArray' a@(Array sh adag _ _) = do
       then hashcons a
       else liftBlock $ floatArray' a
 
-array :: (Num i, ScalarType e)
+array :: (Num i, ScalarType i, ScalarType e)
       => Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t
 array n a = if length sh == n
                 then expr $ floatArray a
@@ -406,10 +408,11 @@ foldscan isScan dir f r xs = do
 -- INSTANCES                                                                --
 ------------------------------------------------------------------------------
 
-fromRational' :: Rational -> Expr t
-fromRational' = expr . return . Const . fromRational
+fromRational' :: forall t. (ScalarType t) => Rational -> Expr t
+fromRational' = expr . return . flip Const t . fromRational
+  where TypeIs t = typeOf :: TypeOf t
 
-instance (Num t) => Num (Expr t) where
+instance (ScalarType t, Num t) => Num (Expr t) where
     (+) = applyClosed2 "+"
     (-) = applyClosed2 "-"
     (*) = applyClosed2 "*"
@@ -420,11 +423,11 @@ instance (Num t) => Num (Expr t) where
 
     fromInteger x = fromRational' (x % 1)
 
-instance (Fractional t) => Fractional (Expr t) where
+instance (ScalarType t, Fractional t) => Fractional (Expr t) where
     fromRational = fromRational'
     (/) = applyClosed2 "/"
 
-instance (Floating t) => Floating (Expr t) where
+instance (ScalarType t, Floating t) => Floating (Expr t) where
     pi = apply "pi" RealT []
     (**) = applyClosed2 "**"
 
@@ -455,7 +458,7 @@ instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
       f <- fromExpr a
       j <- fromExpr e
       let (ArrayT _ [(lo,hi)] t) = typeRef f
-      hi' <- simplify $ Apply "-" [hi, Const 1] (typeRef hi)
+      hi' <- simplify $ Apply "-" [hi, Const 1 IntT] (typeRef hi)
       let t' = ArrayT Nothing [(lo,hi')] t
       simplify $ Apply "deleteIndex" [f,j] t'
     insertIndex a e d = expr $ do
@@ -463,7 +466,7 @@ instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
       i <- fromExpr e
       j <- fromExpr d
       let (ArrayT _ [(lo,hi)] t) = typeRef f
-      hi' <- simplify $ Apply "+" [hi, Const 1] (typeRef hi)
+      hi' <- simplify $ Apply "+" [hi, Const 1 IntT] (typeRef hi)
       let t' = ArrayT Nothing [(lo,hi')] t
       simplify $ Apply "insertIndex" [f,i,j] t'
 instance (ScalarType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
@@ -565,7 +568,7 @@ instance OrdB (Expr t) where
     (>*)  = apply2 ">"  boolT
 
 instance Transfinite Z where
-    infinity = expr . return $ Const infinity
+    infinity = expr . return $ Const infinity IntT
 
 class ExprTuple t where
     fromExprTuple :: t -> [DExpr]
@@ -574,44 +577,59 @@ class ExprTuple t where
 zipExprTuple :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
 zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
 
-const :: ConstVal -> Expr t
-const = expr . return . Const
+const :: forall t. (ScalarType t) => ConstVal -> Expr t
+const c = expr . return . Const c $ ArrayT Nothing sh t
+  where (lo,hi) = AA.bounds c
+        sh = map f lo `zip` map f hi
+          where f = flip Const IntT . fromInteger
+        TypeIs t = typeOf :: TypeOf t
 
-instance ExprTuple (Expr a) where
+instance (ScalarType a) => ExprTuple (Expr a) where
     fromExprTuple (a) = [erase a]
     fromConstVals [a] = (const a)
     fromConstVals _ = undefined
-instance ExprTuple (Expr a, Expr b) where
+instance (ScalarType a, ScalarType b) =>
+         ExprTuple (Expr a, Expr b) where
     fromExprTuple (a,b) = [erase a, erase b]
     fromConstVals [a,b] = (const a, const b)
     fromConstVals _ = undefined
-instance ExprTuple (Expr a, Expr b, Expr c) where
+instance (ScalarType a, ScalarType b, ScalarType c) =>
+         ExprTuple (Expr a, Expr b, Expr c) where
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
     fromConstVals [a,b,c] = (const a, const b, const c)
     fromConstVals _ = undefined
-instance ExprTuple (Expr a, Expr b, Expr c, Expr d) where
+instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d) =>
+         ExprTuple (Expr a, Expr b, Expr c, Expr d) where
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
     fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
     fromConstVals _ = undefined
-instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
+instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
+          ScalarType e) =>
+         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
     fromExprTuple (a,b,c,d,e) =
       [erase a, erase b, erase c, erase d, erase e]
     fromConstVals [a,b,c,d,e] =
       (const a, const b, const c, const d, const e)
     fromConstVals _ = undefined
-instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
+instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
+          ScalarType e, ScalarType f) =>
+         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
     fromExprTuple (a,b,c,d,e,f) =
       [erase a, erase b, erase c, erase d, erase e, erase f]
     fromConstVals [a,b,c,d,e,f] =
       (const a, const b, const c, const d, const e, const f)
     fromConstVals _ = undefined
-instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
+instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
+          ScalarType e, ScalarType f, ScalarType g) =>
+         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
     fromExprTuple (a,b,c,d,e,f,g) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g]
     fromConstVals [a,b,c,d,e,f,g] =
       (const a, const b, const c, const d, const e, const f, const g)
     fromConstVals _ = undefined
-instance ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
+instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
+          ScalarType e, ScalarType f, ScalarType g, ScalarType h) =>
+         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
     fromExprTuple (a,b,c,d,e,f,g,h) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g, erase h]
     fromConstVals [a,b,c,d,e,f,g,h] =

@@ -61,7 +61,7 @@ stanConstVal val =
 
 stanNodeRef :: NodeRef -> String
 stanNodeRef (Var s _) = stanId s
-stanNodeRef (Const c) = stanConstVal c
+stanNodeRef (Const c _) = stanConstVal c
 stanNodeRef (Index f js) =
     stanNodeRef f ++"["++ stanNodeRef `commas` reverse js ++"]"
 
@@ -161,7 +161,7 @@ stanPNode name (Loop sh ldag body _) =
         let lval = name ++"["++ stanId `commas` inputs ldag ++"]"
         in stanDAG ldag ++ indent (stanPNode lval body)
 stanPNode name (HODist "orderedSample" d [n] _) =
-    forLoop [Dummy 1 1] [(Const 1,n)] $
+    forLoop [Dummy 1 1] [(Const 1 IntT,n)] $
         let lval = name ++"["++ stanId (Dummy 1 1) ++"]"
         in indent (stanPNode lval d)
 
