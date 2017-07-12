@@ -10,6 +10,7 @@ module Language.Stochaskell
   , module Data.Random.Distribution.Abstract
   , module GHC.Exts
   , module Language.Church
+  , module Language.Edward
   , module Language.Stan
   , module Util
   ) where
@@ -27,5 +28,6 @@ import Data.Program
 import Data.Random.Distribution.Abstract
 import GHC.Exts (IsList(..))
 import Language.Church
+import Language.Edward
 import Language.Stan
 import Util

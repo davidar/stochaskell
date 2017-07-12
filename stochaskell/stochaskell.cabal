@@ -16,15 +16,16 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Control.Monad.Guard
+                     , Data.Array.Abstract
                      , Data.Expression
                      , Data.Expression.Const
                      , Data.Expression.Eval
                      , Data.Program
-                     , Data.Array.Abstract
                      , Data.Random.Distribution.Abstract
+                     , Language.Church
+                     , Language.Edward
                      , Language.Stan
                      , Language.Stochaskell
-                     , Language.Church
                      , Util
   build-depends:       Boolean
                      , array
