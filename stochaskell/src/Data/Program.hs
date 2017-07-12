@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs, ImpredicativeTypes, FlexibleInstances, ScopedTypeVariables,
-             FlexibleContexts, TypeFamilies, MultiParamTypeClasses, MonadComprehensions #-}
+             FlexibleContexts, TypeFamilies, MultiParamTypeClasses,
+             MonadComprehensions, GeneralizedNewtypeDeriving #-}
 module Data.Program where
 
 import Control.Monad.Guard
@@ -65,7 +66,8 @@ liftExprBlock s = do
     put $ PBlock block' rhs given
     return ret
 
-data Prog t = Prog { fromProg :: State PBlock t }
+newtype Prog t = Prog { fromProg :: State PBlock t }
+  deriving (Functor,Applicative,Monad)
 type P t = Prog t
 instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
 runProg :: Prog a -> (a, PBlock)
@@ -78,17 +80,6 @@ fromProgExprs p = do
 
 runProgExprs :: (ExprTuple t) => Prog t -> ([NodeRef], PBlock)
 runProgExprs p = runState (fromProgExprs p) emptyPBlock
-
-instance Functor Prog where
-    fmap = liftM
-instance Applicative Prog where
-    pure  = return
-    (<*>) = ap
-instance Monad Prog where
-    return = Prog . return
-    act >>= k = Prog $ do
-        x <- fromProg act
-        fromProg (k x)
 
 
 ------------------------------------------------------------------------------
@@ -195,7 +186,7 @@ instance Distribution Uniform Z Prog Z where
     sample (Uniform a b) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
-        return $ Dist "discreteUniform" [i,j] RealT
+        return $ Dist "discreteUniform" [i,j] IntT
 
 normalChol :: Z -> RVec -> RMat -> P RVec
 normalChol n mu cov = do
@@ -425,8 +416,7 @@ samplePNode env block (Dist "discreteUniform" [a,b] _) = fromInteger <$> uniform
         b' = toInteger . fromJust $ evalNodeRef env block b
 samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
 
--- TODO: maintain shape
-samplePNode env block (Loop shp ldag hd _) = fromList <$> sequence arr
+samplePNode env block (Loop shp ldag hd _) = listArray' (evalShape env block shp) <$> sequence arr
   where inps = inputs ldag
         block' = ldag : drop (length block - dagLevel ldag) block
         arr = [ samplePNode (Map.fromList (zip inps idx) `Map.union` env) block' hd

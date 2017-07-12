@@ -160,9 +160,10 @@ instance LA.Transposable (ShapedMatrix Double) (ShapedMatrix Double) where
 
 infixr 8 #>
 infixl 7 <\>
-class LinearOperator m u v | m -> u v where
+class LinearOperator m u v | m -> u v where -- TODO: rm u
     (#>)  :: m -> u -> v
     (<\>) :: m -> v -> u
+    diag  :: v -> m
 
 instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) (ShapedVector Double) where
     (ShMat r _ m)  #> (ShVec _ v) = ShVec r . head . LAD.toColumns $ (LA.<>)  m (LAD.asColumn v)

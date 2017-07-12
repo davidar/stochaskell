@@ -16,6 +16,9 @@ type Label = String
 indent :: String -> String
 indent = intercalate "\n" . map ("  "++) . lines
 
+commas :: (a -> String) -> [a] -> String
+commas f xs = intercalate ", " $ map f xs
+
 -- left-to-right composition
 compose :: [a -> a] -> a -> a
 compose [] x = x

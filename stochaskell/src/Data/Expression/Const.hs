@@ -129,6 +129,14 @@ isZeros :: ConstVal -> Bool
 isZeros (Exact  a) = (0 ==) `all` elems a
 isZeros (Approx a) = (0 ==) `all` elems a
 
+listArray' :: [Interval Integer] -> [ConstVal] -> ConstVal
+listArray' sh xs = if any isApprox xs then approx a else a
+  where a = Exact $ listArray (unzip sh) (toRational <$> xs)
+
+elems' :: ConstVal -> [ConstVal]
+elems' (Exact  a) = map fromRational (elems a)
+elems' (Approx a) = map fromDouble   (elems a)
+
 instance Num ConstVal where
     (+) = constBinOp (+)
     (-) = constBinOp (-)

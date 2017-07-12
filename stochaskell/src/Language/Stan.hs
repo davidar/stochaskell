@@ -26,9 +26,6 @@ import Util
 -- UTILITY FUNCTIONS                                                        --
 ------------------------------------------------------------------------------
 
-commas :: (a -> String) -> [a] -> String
-commas f xs = intercalate ", " $ map f xs
-
 forLoop :: [Id] -> [Interval NodeRef] -> String -> String
 forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
     where f i (a,b) =

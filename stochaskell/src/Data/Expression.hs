@@ -527,6 +527,10 @@ instance AA.LinearOperator (Expr [[e]]) (Expr [e]) (Expr [e]) where
         j <- fromExpr $ asVector v
         let (ArrayT _ [r,_] t) = typeRef i
         simplify $ Apply "#>" [i,j] (ArrayT (Just "vector") [r] t)
+    diag v = expr $ do
+        i <- fromExpr $ asVector v
+        let (ArrayT _ [n] t) = typeRef i
+        simplify $ Apply "diag" [i] (ArrayT (Just "matrix") [n,n] t)
 
 instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
     chol m = expr $ do
