@@ -187,6 +187,12 @@ typeArray ([],[]) = id
 typeArray (lo,hi) = ArrayT Nothing $ zip (f lo) (f hi)
   where f = map $ flip Const IntT . fromInteger
 
+typeDims :: Type -> [(NodeRef,NodeRef)]
+typeDims IntT = []
+typeDims RealT = []
+typeDims (SubrangeT t _ _) = typeDims t
+typeDims (ArrayT _ d _) = d
+
 typeIndex :: Type -> Type
 typeIndex (ArrayT _ [_] t) = t
 typeIndex (ArrayT (Just "matrix") (_:sh) t) = ArrayT (Just "row_vector") sh t

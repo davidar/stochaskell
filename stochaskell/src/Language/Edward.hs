@@ -3,6 +3,7 @@ module Language.Edward where
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.List
+import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
 import Data.Ratio
@@ -38,6 +39,16 @@ edBuiltinDistributions =
   ,("uniforms",        ["Uniform"])
   ]
 
+edPrelude :: String
+edPrelude = unlines
+  ["import sys"
+  ,"from collections import OrderedDict"
+  ,"import edward as ed"
+  ,"from edward.models import *"
+  ,"import numpy as np"
+  ,"import tensorflow as tf"
+  ]
+
 edNode :: [PNode] -> Label -> Node -> String
 edNode r _ (Apply "getExternal" [Var i@(Volatile 0 k) _] _) =
   edPNode (edId i) (r!!k)
@@ -66,18 +77,36 @@ edNode r name (Array sh dag ret (ArrayT _ _ t))
 edNode _ _ n = error $ "edNode "++ show n
 
 edPNode :: Label -> PNode -> String
-edPNode name (Dist f args _) | lookup f edBuiltinDistributions /= Nothing =
-  name ++" = "++ c ++ "("++ ps ++")"
+edPNode name (Dist f args t) | lookup f edBuiltinDistributions /= Nothing =
+  name ++" = "++ c ++ "("++ ps ++")\n"++
+  "dim_"++ name ++" = ["++ g `commas` typeDims t ++"]"
   where c:params = fromJust $ lookup f edBuiltinDistributions
         h p a = p ++"="++ edNodeRef a
         ps | null params = edNodeRef `commas` args
            | otherwise = intercalate ", " (zipWith h params args)
+        g (a,b) = edNodeRef b ++"-"++ edNodeRef a ++"+1"
 
 edDAG :: [PNode] -> DAG -> String
 edDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = edId $ Internal (dagLevel dag) i
   in edNode r name n
 
-edProgram :: (ExprTuple t) => Prog t -> String
-edProgram prog = edDAG (reverse refs) (head block)
+edProgram :: (ExprTuple t) => Int -> Prog t -> String
+edProgram numSamples prog =
+  edPrelude ++"\n"++
+  "if True:\n"++
+    edDAG (reverse refs) (head block) ++"\n"++
+  "latent = "++ printedRets ++"\n"++
+  "data = "++ printedConds ++"\n"++
+  "inference = ed.HMC(latent, data)\n"++
+  "stdout = sys.stdout; sys.stdout = sys.stderr\n"++
+  "inference.run(step_size=0.01, n_steps=10)\n"++
+  "sys.stdout = stdout\n"++
+  "for q in latent.values(): print q.params.eval().tolist()"
   where (rets, (PBlock block refs given)) = runProgExprs prog
+        printedRets = "OrderedDict(["++ g `commas` rets ++"])"
+        g r = "("++ edNodeRef r ++", Empirical(params=tf.Variable(tf.zeros("++
+                "["++ show numSamples ++"] + dim_"++ edNodeRef r ++"))))"
+        printedConds = "{"++ intercalate ", "
+          [edId k ++": np.array("++ show v ++")"
+          | (k,v) <- Map.toList given] ++"}"
