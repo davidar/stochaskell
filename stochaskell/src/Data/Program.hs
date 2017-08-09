@@ -443,7 +443,7 @@ samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'
   where a' = toDouble . fromJust $ evalNodeRef env block a
         b' = toDouble . fromJust $ evalNodeRef env block b
 samplePNode env block (Dist "uniforms" [a,b] (ArrayT _ sh _)) = do
-  z <- sequence $ zipWith normal a' b'
+  z <- sequence $ zipWith uniform a' b'
   return $ listArray' (evalShape env block sh) (map fromDouble z)
   where a' = map toDouble . elems' . fromJust $ evalNodeRef env block a
         b' = map toDouble . elems' . fromJust $ evalNodeRef env block b
