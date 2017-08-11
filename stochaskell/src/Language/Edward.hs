@@ -7,6 +7,8 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
 import Data.Ratio
+import System.Directory
+import System.Process
 import Util
 
 dtype :: Type -> String
@@ -91,8 +93,8 @@ edDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = edId $ Internal (dagLevel dag) i
   in edNode r name n
 
-edProgram :: (ExprTuple t) => Int -> Prog t -> String
-edProgram numSamples prog =
+edProgram :: (ExprTuple t) => Int -> Int -> Double -> Prog t -> String
+edProgram numSamples numSteps stepSize prog =
   edPrelude ++"\n"++
   "if True:\n"++
     edDAG (reverse refs) (head block) ++"\n"++
@@ -100,9 +102,10 @@ edProgram numSamples prog =
   "data = "++ printedConds ++"\n"++
   "inference = ed.HMC(latent, data)\n"++
   "stdout = sys.stdout; sys.stdout = sys.stderr\n"++
-  "inference.run(step_size=0.01, n_steps=10)\n"++
+  "inference.run(step_size="++ show stepSize ++
+               ",n_steps="++ show numSteps ++")\n"++
   "sys.stdout = stdout\n"++
-  "for q in latent.values(): print q.params.eval().tolist()"
+  "print(zip(*[q.params.eval().tolist() for q in latent.values()]))"
   where (rets, (PBlock block refs given)) = runProgExprs prog
         printedRets = "OrderedDict(["++ g `commas` rets ++"])"
         g r = "("++ edNodeRef r ++", Empirical(params=tf.Variable(tf.zeros("++
@@ -110,3 +113,10 @@ edProgram numSamples prog =
         printedConds = "{"++ intercalate ", "
           [edId k ++": np.array("++ show v ++")"
           | (k,v) <- Map.toList given] ++"}"
+
+hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> Prog t -> IO [t]
+hmcEdward numSamples numSteps stepSize prog = do
+  pwd <- getCurrentDirectory
+  out <- readProcess (pwd ++"/edward/env/bin/python") [] $
+    edProgram numSamples numSteps stepSize prog
+  return (read out)
