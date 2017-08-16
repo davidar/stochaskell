@@ -11,6 +11,7 @@ module Language.Stochaskell
   , module GHC.Exts
   , module Language.Church
   , module Language.Edward
+  , module Language.PyMC3
   , module Language.Stan
   , module Util
   ) where
@@ -29,5 +30,6 @@ import Data.Random.Distribution.Abstract
 import GHC.Exts (IsList(..))
 import Language.Church
 import Language.Edward
+import Language.PyMC3
 import Language.Stan
 import Util

@@ -24,6 +24,7 @@ library
                      , Data.Random.Distribution.Abstract
                      , Language.Church
                      , Language.Edward
+                     , Language.PyMC3
                      , Language.Stan
                      , Language.Stochaskell
                      , Util
