@@ -1,6 +1,6 @@
-.PHONY: build exec
+.PHONY: build
 
-build:
+build: edward/env pymc3/env
 	stack build --trace
 
 %-exe: build
@@ -9,3 +9,7 @@ build:
 %.prof: build
 	stack exec $* -- +RTS -p
 	grep '[0-9][0-9][.]' $@
+
+%/env: %/requirements.txt
+	virtualenv $@
+	$@/bin/pip install -Ur $<
