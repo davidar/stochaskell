@@ -3,5 +3,5 @@ extra-package-dbs: []
 packages:
 - '.'
 extra-deps: []
-resolver: lts-6.27
+resolver: lts-9.0
 system-ghc: false

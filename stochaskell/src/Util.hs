@@ -47,9 +47,6 @@ linspace :: (IsList l, e ~ Item l, Fractional e, Integral i) => e -> e -> i -> l
 linspace lo hi n = fromList [lo + step * fromIntegral i | i <- [0..n-1]]
   where step = (hi - lo)/(fromIntegral n - 1)
 
-instance (Ord k, Ord v) => Ord (Bimap.Bimap k v) where
-    m `compare` n = Bimap.toAscList m `compare` Bimap.toAscList n
-
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
     (-) = zipWith (-)
