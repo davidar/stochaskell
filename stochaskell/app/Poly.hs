@@ -103,16 +103,16 @@ main = do
       yData = list (map snd xyData)
 
   let d0 = 1
-  samples0 <- hmcStan [ (alpha,beta) | (x,alpha,beta,y) <- poly n d0,
-                                       x == xData, y == yData ]
+  samples0 <- hmcStan 1000 [ (alpha,beta) | (x,alpha,beta,y) <- poly n d0,
+                                            x == xData, y == yData ]
   plotPoly 0 n xData yData d0 samples0
   let (alpha0,beta0) = last samples0
 
   loop (1,d0,alpha0,beta0) $ \(t,d,alpha,beta) -> do
     print (t,d,alpha,beta)
     (_,d',alphaMH,betaMH,_) <- chain 1000 (model n `mh` jump) (xData,d,alpha,beta,yData)
-    samples <- hmcStanInit [ (alpha,beta) | (x,alpha,beta,y) <- poly n d',
-                                            x == xData, y == yData ]
+    samples <- hmcStanInit 1000 [ (alpha,beta) | (x,alpha,beta,y) <- poly n d',
+                                                 x == xData, y == yData ]
                            (alphaMH,betaMH)
     plotPoly t n xData yData d' samples
     let (alpha',beta') = last samples

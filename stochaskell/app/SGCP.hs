@@ -87,8 +87,8 @@ stepCap t (lsv, lls2, cap, n, s, g, phi) = do
 
 stepGP :: R -> State -> IO State
 stepGP t (lsv,lls2,cap,n,s,g,phi) = do
-  samples <- hmcStanInit' 10 [ (lsv',lls2',g') | (lsv',lls2',cap',n',s',g',phi') <- sgcp t,
-                                cap' == cap, n' == n, s' == s, phi' == phi ] (lsv,lls2,g)
+  samples <- hmcStanInit 10 [ (lsv',lls2',g') | (lsv',lls2',cap',n',s',g',phi') <- sgcp t,
+                              cap' == cap, n' == n, s' == s, phi' == phi ] (lsv,lls2,g)
   let (lsv',lls2',g') = last samples
   return (lsv',lls2',cap,n,s,g',phi)
 
@@ -131,8 +131,8 @@ initialise t dat = do
       phi = fromList $ replicate k True ++ replicate m False :: BVec
   rej <- sequence [ uniform 0 (real t) | _ <- [1..m] ]
   let s = fromList $ dat ++ sort rej :: RVec
-  samples <- hmcStan [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
-                       cap' == real cap, n' == integer n, s' == s, phi' == phi ]
+  samples <- hmcStan 1000 [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
+                            cap' == real cap, n' == integer n, s' == s, phi' == phi ]
   let (lsv,lls2,g) = last samples
   return (lsv,lls2,cap,n,s,g,phi)
 

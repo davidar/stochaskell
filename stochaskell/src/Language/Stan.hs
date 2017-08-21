@@ -26,11 +26,11 @@ import Util
 -- UTILITY FUNCTIONS                                                        --
 ------------------------------------------------------------------------------
 
-forLoop :: [Id] -> [Interval NodeRef] -> String -> String
+forLoop :: [String] -> [Interval NodeRef] -> String -> String
 forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
     where f i (a,b) =
-            "for ("++ stanId i ++" in "++ stanNodeRef a
-                                  ++":"++ stanNodeRef b ++") "
+            "for ("++ i ++" in "++ stanNodeRef a
+                           ++":"++ stanNodeRef b ++") "
 
 
 ------------------------------------------------------------------------------
@@ -101,9 +101,15 @@ stanBuiltinFunctions =
   ,("inv",         "inverse")
   ]
 
+stanVectorisedDistributions =
+  [("bernoulliLogits", "bernoulli_logit")
+  ,("normals",         "normal")
+  ,("uniforms",        "uniform")
+  ]
+
 stanBuiltinDistributions =
   [("bernoulliLogit",  "bernoulli_logit")
-  ]
+  ] ++ stanVectorisedDistributions
 
 stanOperators =
   [("+",   "+")
@@ -130,7 +136,7 @@ stanNode name (Apply f js _) =
     name ++" = "++ fromMaybe f (lookup f stanBuiltinFunctions) ++
       "("++ stanNodeRef `commas` js ++");"
 stanNode name (Array sh dag ret _) =
-    forLoop (inputs dag) sh $
+    forLoop (map stanId $ inputs dag) sh $
         stanDAG dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] = "++ stanNodeRef ret ++";"
 stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) =
@@ -140,7 +146,7 @@ stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) 
         [i,j] = inputs dag
         s = typeIndex at
         loop =
-          forLoop [idx] [(lo,hi)] $ "  "++
+          forLoop [stanId idx] [(lo,hi)] $ "  "++
            stanDecl (stanId i) s ++"\n  "++
            stanDecl (stanId j) t ++"\n  "++
            stanId i ++" = "++ stanId ls ++"["++
@@ -151,15 +157,23 @@ stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) 
 stanNode _ node = error $ "unable to codegen node "++ show node
 
 stanPNode :: Label -> PNode -> String
+stanPNode name (Dist f args t) | isJust f' && length dims > 1 =
+  forLoop idxs dims $
+    "  "++ name ++ idxs' ++" ~ "++ fromJust f' ++"("++ g `commas` args ++");"
+  where f' = lookup f stanVectorisedDistributions
+        dims = typeDims t
+        idxs = [name ++"_index_"++ show i | i <- [1..length dims]]
+        idxs' = "["++ intercalate "," idxs ++"]"
+        g arg = stanNodeRef arg ++ idxs'
 stanPNode name (Dist f args _) =
     name ++" ~ "++ fromMaybe f (lookup f stanBuiltinDistributions) ++
       "("++ stanNodeRef `commas` args ++");"
 stanPNode name (Loop sh ldag body _) =
-    forLoop (inputs ldag) sh $
+    forLoop (map stanId $ inputs ldag) sh $
         let lval = name ++"["++ stanId `commas` inputs ldag ++"]"
         in stanDAG ldag ++ indent (stanPNode lval body)
 stanPNode name (HODist "orderedSample" d [n] _) =
-    forLoop [Dummy 1 1] [(Const 1 IntT,n)] $
+    forLoop [stanId (Dummy 1 1)] [(Const 1 IntT,n)] $
         let lval = name ++"["++ stanId (Dummy 1 1) ++"]"
         in indent (stanPNode lval d)
 
@@ -184,15 +198,16 @@ stanProgram (PBlock block refs given) =
     "parameters {\n"++ printRefs (\i n ->
         if getId i `elem` map (Just . fst) (Map.toList given)
         then "" else stanDecl (stanNodeRef i) (typePNode n)) ++"\n}\n"++
-    "transformed parameters {\n"++ stanDAG (head block) ++"\n}\n"++
-    "model {\n"++ printRefs (\i n -> stanPNode (stanNodeRef i) n) ++"\n}\n"
+    "model {\n"++
+      stanDAG (head block) ++"\n\n"++
+      printRefs (\i n -> stanPNode (stanNodeRef i) n) ++"\n}\n"
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
 system' :: String -> IO ()
 system' cmd = do
     putStrLn cmd
-    system cmd
+    _ <- system cmd
     return ()
 
 runStan :: (ExprTuple t) => (String -> IO String) -> Int -> Prog t -> IO [t]
@@ -213,7 +228,7 @@ runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> 
     putStrLn "--- Sampling Stan model ---"
     let dat = unlines . flip map (Map.toList $ constraints p) $ \(n,x) ->
                 stanId n ++" <- "++ stanConstVal x
-    putStrLn dat
+    --putStrLn dat
     writeFile (basename ++".data") dat
     -- TODO: avoid shell injection
     args <- extraArgs basename
@@ -221,15 +236,17 @@ runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> 
                                " num_warmup="++  show numSamples ++
                         " data   file="++ basename ++".data "++
                         " output file="++ basename ++".csv "++ args
-    content <- readFile $ basename ++".csv"
+    content <- lines <$> readFile (basename ++".csv")
+    putStrLn . unlines $ filter (('#'==) . head) content
     putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
 
     putStrLn "--- Removing temporary files ---"
+    -- TODO: will fail if any rets are deterministic transforms of parameters
     return $ extractCSV content
   where (rets,p) = runProgExprs prog
         extractCSV content = map f (tail table)
           where noComment row = row /= "" && head row /= '#'
-                table = map (splitOn ",") . filter noComment $ lines content
+                table = map (splitOn ",") $ filter noComment content
                 readDouble = read :: String -> Double
                 slice xs = map (xs !!)
                 f row = fromConstVals $ do
@@ -241,14 +258,11 @@ runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> 
                           cols = isPrefixOf prefix `findIndices` head table
                       in fromList (real . readDouble <$> row `slice` cols)
 
-hmcStan :: (ExprTuple t) => Prog t -> IO [t]
-hmcStan = runStan (const $ return "") 1000
+hmcStan :: (ExprTuple t) => Int -> Prog t -> IO [t]
+hmcStan = runStan (const $ return "")
 
-hmcStanInit :: (ExprTuple t) => Prog t -> t -> IO [t]
-hmcStanInit = hmcStanInit' 1000
-
-hmcStanInit' :: (ExprTuple t) => Int -> Prog t -> t -> IO [t]
-hmcStanInit' numSamples p t = runStan extraArgs numSamples p
+hmcStanInit :: (ExprTuple t) => Int -> Prog t -> t -> IO [t]
+hmcStanInit numSamples p t = runStan extraArgs numSamples p
   where assigns = unlines . map f . Map.toList $ unifyTuple' (definitions pb) rets t env
         f (n,x) = stanId n ++" <- "++ stanConstVal x
         (rets,pb) = runProgExprs p
