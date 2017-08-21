@@ -44,6 +44,20 @@ isApprox :: ConstVal -> Bool
 isApprox (Approx _) = True
 isApprox (Exact  _) = False
 
+broadcast :: (ConstVal,ConstVal) -> (ConstVal,ConstVal)
+broadcast (a',b')
+  | bounds a == bounds b = (a,b)
+  | bounds a == ([],[]) =
+    let n = length . range $ bounds b
+    in (approx' $ listArray' (shape b) (replicate n a), b)
+  | bounds b == ([],[]) =
+    let n = length . range $ bounds a
+    in (a, approx' $ listArray' (shape a) (replicate n b))
+  | otherwise = error $ "unable to broadcast incompatible dimensions: "++
+                        show (bounds a) ++", "++ show (bounds b)
+  where approx' = if isApprox a' || isApprox b' then approx else id
+        (a,b) = (approx' a', approx' b')
+
 constUnOp :: (forall a. Fractional a => a -> a) -> ConstVal -> ConstVal
 constUnOp f (Exact  a) = Exact  (f <$> a)
 constUnOp f (Approx a) = Approx (f <$> a)
@@ -53,10 +67,9 @@ constUnOp' f (Exact  a) = Approx (f . fromRational <$> a)
 constUnOp' f (Approx a) = Approx (f <$> a)
 
 constBinOp :: (forall a. Fractional a => a -> a -> a) -> ConstVal -> ConstVal -> ConstVal
-constBinOp f (Exact  a) (Exact  b) = Exact  (zipWithA f a b)
-constBinOp f (Exact  a) (Approx b) = Approx (zipWithA f (fromRational <$> a) b)
-constBinOp f (Approx a) (Exact  b) = Approx (zipWithA f a (fromRational <$> b))
-constBinOp f (Approx a) (Approx b) = Approx (zipWithA f a b)
+constBinOp f a b = case broadcast (a,b) of
+  (Exact  a, Exact  b) -> Exact  (zipWithA f a b)
+  (Approx a, Approx b) -> Approx (zipWithA f a b)
 
 constBinOp' :: (forall a. Floating a => a -> a -> a) -> ConstVal -> ConstVal -> ConstVal
 constBinOp' f (Approx a) (Approx b) = Approx (zipWithA f a b)

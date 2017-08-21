@@ -54,7 +54,10 @@ instance (Num t) => Num [t] where
     negate = map negate
     abs    = map abs
     signum = map signum
-    --fromInteger x = [fromInteger x]
+    fromInteger x = repeat $ fromInteger x
+
+instance (Fractional t) => Fractional [t] where
+  (/) = zipWith (/)
 
 type instance BooleanOf (a,b,c,d,e,f,g) = BooleanOf a
 

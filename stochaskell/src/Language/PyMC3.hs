@@ -88,7 +88,8 @@ pmProgram numSamples prog =
   pmPrelude ++"\n"++
   "with pm.Model() as model:\n"++
     pmDAG (reverse refs, given) (head block) ++"\n  "++
-    "trace = pm.sample("++ show numSamples ++")\n  "++
+    "trace = pm.sample("++ show numSamples ++
+               ", tune="++ show numSamples ++")\n  "++
     "print(zip("++ g `commas` rets ++"))"
   where (rets, (PBlock block refs given)) = runProgExprs prog
         g r = "trace['"++ pmNodeRef r ++"'].tolist()"
