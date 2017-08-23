@@ -52,7 +52,17 @@ main = do
       bStan = mean (map snd samples)
 
   ticPyMC3 <- getPOSIXTime
-  samples <- hmcPyMC3 1000 post
+  let method = defaultPyMC3Inference
+        { pmDraws = 1000
+        , pmStep = Just HamiltonianMC
+          { pathLength = numSteps * stepSize
+          , stepRand = "lambda _:"++ show stepSize
+          , stepScale = stepSize
+          }
+        , pmInit = Nothing
+        , pmTune = 1000
+        }
+  samples <- runPyMC3 method post
   tocPyMC3 <- getPOSIXTime
   let wPyMC3 = mean (map fst samples)
       bPyMC3 = mean (map snd samples)

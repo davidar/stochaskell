@@ -1,3 +1,5 @@
+{-# LANGUAGE RecordWildCards #-}
+
 module Language.PyMC3 where
 
 import Data.Expression hiding (const)
@@ -83,20 +85,61 @@ pmDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = pmId $ Internal (dagLevel dag) i
   in pmNode r name n
 
-pmProgram :: (ExprTuple t) => Int -> Prog t -> String
-pmProgram numSamples prog =
+pmProgram :: (ExprTuple t) => Prog t -> String
+pmProgram prog =
   pmPrelude ++"\n"++
   "with pm.Model() as model:\n"++
-    pmDAG (reverse refs, given) (head block) ++"\n  "++
-    "trace = pm.sample("++ show numSamples ++
-               ", tune="++ show numSamples ++")\n  "++
-    "print(zip("++ g `commas` rets ++"))"
-  where (rets, (PBlock block refs given)) = runProgExprs prog
-        g r = "trace['"++ pmNodeRef r ++"'].tolist()"
+    pmDAG (reverse refs, given) (head block)
+  where (PBlock block refs given) = snd $ runProgExprs prog
 
-hmcPyMC3 :: (ExprTuple t, Read t) => Int -> Prog t -> IO [t]
-hmcPyMC3 numSamples prog = do
+data PyMC3Inference
+  = PyMC3Sample
+    { pmDraws :: Int
+    , pmStep :: Maybe PyMC3Step
+    , pmInit :: Maybe String
+    , pmTune :: Int
+    }
+
+instance Show PyMC3Inference where
+  show PyMC3Sample{..} = "pm.sample(draws="++ show pmDraws
+                                ++",step="++ maybe "None" show pmStep
+                                ++",init="++ maybe "None" show pmInit
+                                ++",tune="++ show pmTune
+                                ++")"
+
+data PyMC3Step
+  = NUTS
+  | Metropolis
+  | Slice
+  | HamiltonianMC
+    { pathLength :: Double
+    , stepRand :: String
+    , stepScale :: Double
+    }
+
+instance Show PyMC3Step where
+  show NUTS = "pm.NUTS()"
+  show Metropolis = "pm.Metropolis()"
+  show Slice = "pm.Slice()"
+  show HamiltonianMC{..} = "pm.HamiltonianMC(path_length="++ show pathLength
+                                         ++",step_rand="++ stepRand
+                                         ++",step_scale="++ show stepScale
+                                         ++")"
+
+defaultPyMC3Inference :: PyMC3Inference
+defaultPyMC3Inference = PyMC3Sample
+  { pmDraws = 500
+  , pmStep = Nothing
+  , pmInit = Just "auto"
+  , pmTune = 500
+  }
+
+runPyMC3 :: (ExprTuple t, Read t) => PyMC3Inference -> Prog t -> IO [t]
+runPyMC3 sample prog = do
   pwd <- getCurrentDirectory
   out <- readProcess (pwd ++"/pymc3/env/bin/python") [] $
-    pmProgram numSamples prog
+    pmProgram prog ++"\n  "++
+    "trace = "++ show sample ++"; print(zip("++ g `commas` rets ++"))"
   return (read out)
+  where rets = fst $ runProgExprs prog
+        g r = "trace['"++ pmNodeRef r ++"'].tolist()"
