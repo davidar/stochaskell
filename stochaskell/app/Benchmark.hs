@@ -33,9 +33,20 @@ main = do
     plot $ points "false" $ map (\(a:b:[]) -> (a,b)) (list xData `selectItems` (not <$> list yData))
 
   let post = [ (w,b) | (x,w,b,y) <- model n d, x == xData, y == yData ]
+      numSteps = 10
+      stepSize = 0.01
 
   ticStan <- getPOSIXTime
-  samples <- hmcStan 1000 post
+  let method = defaultStanMethod
+        { numSamples = 1000
+        , numWarmup = 1000
+        , adaptEngaged = False
+        , hmcEngine = StanStaticHMCEngine
+          { intTime = numSteps * stepSize }
+        , hmcMetric = StanUnitEMetric
+        , hmcStepSize = stepSize
+        }
+  samples <- runStan method post Nothing
   tocStan <- getPOSIXTime
   let wStan = mean (map fst samples)
       bStan = mean (map snd samples)
@@ -47,7 +58,7 @@ main = do
       bPyMC3 = mean (map snd samples)
 
   ticEdward <- getPOSIXTime
-  samples <- drop 1000 <$> hmcEdward 2000 10 0.01 post
+  samples <- drop 1000 <$> hmcEdward 2000 numSteps stepSize post
   tocEdward <- getPOSIXTime
   let wEdward = mean (map fst samples)
       bEdward = mean (map snd samples)

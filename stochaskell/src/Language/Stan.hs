@@ -1,6 +1,8 @@
+{-# LANGUAGE RecordWildCards #-}
 module Language.Stan where
 
 import Control.Applicative ()
+import Control.Monad
 import Data.Array.Abstract
 import qualified Data.ByteString.Char8 as C
 import Data.Expression hiding (const)
@@ -17,7 +19,6 @@ import qualified Crypto.Hash.SHA1 as SHA1
 import GHC.Exts
 import System.Directory
 import System.IO.Temp
-import System.Process
 import Util
 
 -- TODO: better handling for exceptions to 1-based indexing
@@ -204,38 +205,106 @@ stanProgram (PBlock block refs given) =
   where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
           where g i n = f (Var (Volatile 0 i) (typePNode n)) n
 
-system' :: String -> IO ()
-system' cmd = do
-    putStrLn cmd
-    _ <- system cmd
-    return ()
+stanDump :: Env -> String
+stanDump = unlines . map f . Map.toList
+  where f (n,x) = stanId n ++" <- "++ stanConstVal x
 
-runStan :: (ExprTuple t) => (String -> IO String) -> Int -> Prog t -> IO [t]
-runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> do
+
+------------------------------------------------------------------------------
+-- CMDSTAN INTEGRATION                                                      --
+------------------------------------------------------------------------------
+
+data StanMethod
+  = StanSample
+    { numSamples :: Int
+    , numWarmup :: Int
+    , saveWarmup :: Bool
+    , thin :: Int
+    , adaptEngaged :: Bool
+    , hmcEngine :: StanHMCEngine
+    , hmcMetric :: StanHMCMetric
+    , hmcStepSize :: Double
+    , hmcStepSizeJitter :: Double
+    }
+
+instance Show StanMethod where
+  show StanSample{..} = unwords
+    ["method=sample"
+    ,"num_samples="++ show numSamples
+    ,"num_warmup="++ show numWarmup
+    ,"save_warmup="++ if saveWarmup then "1" else "0"
+    ,"thin="++ show thin
+    ,"adapt engaged="++ if adaptEngaged then "1" else "0"
+    ,"algorithm=hmc", show hmcEngine, show hmcMetric
+    ,"stepsize="++ show hmcStepSize
+    ,"stepsize_jitter="++ show hmcStepSizeJitter
+    ]
+
+data StanHMCEngine
+  = StanStaticHMCEngine
+    { intTime :: Double
+    }
+  | StanNUTSEngine
+    { maxDepth :: Int
+    }
+
+instance Show StanHMCEngine where
+  show StanStaticHMCEngine{..} = "engine=static int_time="++ show intTime
+  show StanNUTSEngine{..} = "engine=nuts max_depth="++ show maxDepth
+
+data StanHMCMetric
+  = StanUnitEMetric
+  | StanDiagEMetric
+  | StanDenseEMetric
+
+instance Show StanHMCMetric where
+  show StanUnitEMetric  = "metric=unit_e"
+  show StanDiagEMetric  = "metric=diag_e"
+  show StanDenseEMetric = "metric=dense_e"
+
+defaultStanMethod :: StanMethod
+defaultStanMethod = StanSample
+  { numSamples = 1000
+  , numWarmup = 1000
+  , saveWarmup = False
+  , thin = 1
+  , adaptEngaged = True
+  , hmcEngine = StanNUTSEngine
+    { maxDepth = 10 }
+  , hmcMetric = StanDiagEMetric
+  , hmcStepSize = 1.0
+  , hmcStepSizeJitter = 0.0
+  }
+
+runStan :: (ExprTuple t) => StanMethod -> Prog t -> Maybe t -> IO [t]
+runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/stan"
     pwd <- getCurrentDirectory
     let hash = toHex . SHA1.hash . C.pack $ stanProgram p
         exename = pwd ++"/cache/stan/model_"++ hash
     exeExists <- doesFileExist exename
 
-    if exeExists then return () else do
+    unless exeExists $ do
       putStrLn "--- Generating Stan code ---"
       putStrLn $ stanProgram p
       writeFile (exename ++".stan") $ stanProgram p
-      system' $ "make -C "++ pwd ++"/cmdstan "++ exename
-      return ()
+      system_ $ "make -C "++ pwd ++"/cmdstan "++ exename
+
+    when (isJust init) $
+      writeFile (basename ++".init") $
+        stanDump (unifyTuple' (definitions p) rets (fromJust init) (constraints p))
 
     putStrLn "--- Sampling Stan model ---"
-    let dat = unlines . flip map (Map.toList $ constraints p) $ \(n,x) ->
-                stanId n ++" <- "++ stanConstVal x
-    --putStrLn dat
+    let dat = stanDump (constraints p)
     writeFile (basename ++".data") dat
     -- TODO: avoid shell injection
-    args <- extraArgs basename
-    system' $ exename ++" sample num_samples="++ show numSamples ++
-                               " num_warmup="++  show numSamples ++
-                        " data   file="++ basename ++".data "++
-                        " output file="++ basename ++".csv "++ args
+    system_ $ unwords
+      [exename
+      ,show method
+      ,"data file="++ basename ++".data"
+      ,"init="++ if isJust init then basename ++".init" else "0"
+      ,"output file="++ basename ++".csv"
+      ]
     content <- lines <$> readFile (basename ++".csv")
     putStrLn . unlines $ filter (('#'==) . head) content
     putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
@@ -258,17 +327,11 @@ runStan extraArgs numSamples prog = withSystemTempDirectory "stan" $ \tmpDir -> 
                           cols = isPrefixOf prefix `findIndices` head table
                       in fromList (real . readDouble <$> row `slice` cols)
 
+-- TODO: deprecate these
 hmcStan :: (ExprTuple t) => Int -> Prog t -> IO [t]
-hmcStan = runStan (const $ return "")
+hmcStan n prog = runStan method prog Nothing
+  where method = defaultStanMethod { numSamples = n, numWarmup = n }
 
 hmcStanInit :: (ExprTuple t) => Int -> Prog t -> t -> IO [t]
-hmcStanInit numSamples p t = runStan extraArgs numSamples p
-  where assigns = unlines . map f . Map.toList $ unifyTuple' (definitions pb) rets t env
-        f (n,x) = stanId n ++" <- "++ stanConstVal x
-        (rets,pb) = runProgExprs p
-        env = constraints pb
-        extraArgs basename = do
-          let fname = basename ++".init"
-          putStrLn assigns
-          fname `writeFile` assigns
-          return $ "init="++ fname
+hmcStanInit n prog t = runStan method prog (Just t)
+  where method = defaultStanMethod { numSamples = n, numWarmup = n }

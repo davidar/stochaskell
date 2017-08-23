@@ -9,6 +9,7 @@ import Data.List
 import qualified Data.Number.LogFloat as LF
 import GHC.Exts
 import Numeric.SpecFunctions
+import System.Process
 import Text.Printf (printf)
 
 type Label = String
@@ -46,6 +47,12 @@ delete k = filter p
 linspace :: (IsList l, e ~ Item l, Fractional e, Integral i) => e -> e -> i -> l
 linspace lo hi n = fromList [lo + step * fromIntegral i | i <- [0..n-1]]
   where step = (hi - lo)/(fromIntegral n - 1)
+
+system_ :: String -> IO ()
+system_ cmd = do
+    putStrLn cmd
+    _ <- system cmd
+    return ()
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
