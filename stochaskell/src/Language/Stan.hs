@@ -14,6 +14,8 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
 import Data.Ratio
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Debug.Trace
 import qualified Crypto.Hash.SHA1 as SHA1
 import GHC.Exts
@@ -138,7 +140,7 @@ stanNode name (Apply f js _) =
       "("++ stanNodeRef `commas` js ++");"
 stanNode name (Array sh dag ret _) =
     forLoop (map stanId $ inputs dag) sh $
-        stanDAG dag ++"\n  "++
+        stanDAG Nothing dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] = "++ stanNodeRef ret ++";"
 stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) =
     name ++" = "++ stanNodeRef seed ++";\n"++ loop
@@ -153,7 +155,7 @@ stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) 
            stanId i ++" = "++ stanId ls ++"["++
              stanNodeRef lo ++"+"++ stanNodeRef hi ++"-"++ stanId idx ++"];\n  "++
            stanId j ++" = "++ name ++";\n  {\n"++
-           stanDAG dag ++"\n  "++
+           stanDAG Nothing dag ++"\n  "++
            name ++" = "++ stanNodeRef ret ++";\n  }"
 stanNode _ node = error $ "unable to codegen node "++ show node
 
@@ -172,17 +174,18 @@ stanPNode name (Dist f args _) =
 stanPNode name (Loop sh ldag body _) =
     forLoop (map stanId $ inputs ldag) sh $
         let lval = name ++"["++ stanId `commas` inputs ldag ++"]"
-        in stanDAG ldag ++ indent (stanPNode lval body)
+        in stanDAG Nothing ldag ++ indent (stanPNode lval body)
 stanPNode name (HODist "orderedSample" d [n] _) =
     forLoop [stanId (Dummy 1 1)] [(Const 1 IntT,n)] $
         let lval = name ++"["++ stanId (Dummy 1 1) ++"]"
         in indent (stanPNode lval d)
 
-stanDAG :: DAG -> String
-stanDAG dag = indent $ extract decl ++ extract stanNode
-  where extract f = unlines . flip map (nodes dag) $ \(i,n) ->
-                        let name = stanId $ Internal (dagLevel dag) i
-                        in f name n
+stanDAG :: Maybe (Set Id) -> DAG -> String
+stanDAG whitelist dag = indent $ extract decl ++ extract stanNode
+  where level = dagLevel dag
+        extract f = unlines . flip map (nodes dag) $ \(i,n) ->
+          if isJust whitelist && Internal level i `Set.notMember` fromJust whitelist
+          then "" else f (stanId $ Internal level i) n
         decl _ (Apply "getExternal" _ _) = ""
         decl name node = stanDecl name $ typeNode node
 
@@ -194,16 +197,28 @@ stanDAG dag = indent $ extract decl ++ extract stanNode
 stanProgram :: PBlock -> String
 stanProgram (PBlock block refs given) =
     "data {\n"++ printRefs (\i n ->
-        if getId i `elem` map (Just . fst) (Map.toList given)
+        if getId i `elem` map Just (Map.keys given)
         then stanDecl (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
     "parameters {\n"++ printRefs (\i n ->
-        if getId i `elem` map (Just . fst) (Map.toList given)
+        if getId i `elem` map Just (Map.keys given)
         then "" else stanDecl (stanNodeRef i) (typePNode n)) ++"\n}\n"++
     "model {\n"++
-      stanDAG (head block) ++"\n\n"++
-      printRefs (\i n -> stanPNode (stanNodeRef i) n) ++"\n}\n"
-  where printRefs f = indent . unlines $ zipWith g [0..] (reverse refs)
-          where g i n = f (Var (Volatile 0 i) (typePNode n)) n
+      stanDAG (Just tparams) (head block) ++"\n\n"++
+      printRefs (\i n -> if Set.member (fromJust $ getId i) tparams
+                  then stanPNode (stanNodeRef i) n
+                  else "") ++"\n}\n"
+  where printRefs f = indent . unlines . map g $ Map.toAscList samples
+          where g (i,n) = f (Var i (typePNode n)) n
+        dependsPNode (Dist _ args _) =
+          Set.unions $ map (dependsNodeRef block) args
+        samples = Map.fromList $ map (Volatile 0) [0..] `zip` reverse refs
+        params = Map.keysSet samples Set.\\ Map.keysSet given
+        dependents xs = Set.union xs . Map.keysSet $
+          Map.filter (not . Set.null . Set.intersection xs . dependsPNode) samples
+        dparams = fixpt dependents params
+        tparams = Set.foldr Set.union dparams $ Set.map g dparams
+          where g i = let n = fromJust $ Map.lookup i samples
+                      in Set.filter isInternal $ dependsPNode n
 
 stanDump :: Env -> String
 stanDump = unlines . map f . Map.toList

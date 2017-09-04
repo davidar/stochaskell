@@ -15,6 +15,8 @@ import Data.List hiding (foldl,foldr,scanl,scanr)
 import Data.Maybe
 import Data.Number.Transfinite hiding (log)
 import Data.Ratio
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Control.Applicative ()
 import Control.Monad.State
 import qualified Numeric.LinearAlgebra as LA
@@ -28,9 +30,9 @@ import Util ()
 type Pointer = Int
 type Level = Int
 
-data Id = Dummy Level Pointer
-        | Volatile Level Pointer
-        | Internal Level Pointer
+data Id = Dummy    { idLevel :: Level, idPointer :: Pointer }
+        | Volatile { idLevel :: Level, idPointer :: Pointer }
+        | Internal { idLevel :: Level, idPointer :: Pointer }
         deriving (Eq, Ord)
 
 isInternal :: Id -> Bool
@@ -256,6 +258,25 @@ externRefs (DAG _ _ d) = go d
         extern (Var i _) = Just i
         extern _ = Nothing
         -- TODO Index
+
+-- recursive data dependencies
+dependsNodeRef :: Block -> NodeRef -> Set Id
+dependsNodeRef block (Var i@(Internal level ptr) _) =
+  let node = fromMaybe (error $ "internal lookup failure: " ++ show i) $
+        ptr `lookup` nodes (reverse block !! level)
+  in Set.insert i (dependsNode block node)
+dependsNodeRef _ (Var i _) = Set.singleton i
+dependsNodeRef _ (Const _ _) = Set.empty
+
+dependsNode :: Block -> Node -> Set Id
+dependsNode block (Apply _ args _) =
+  Set.unions $ map (dependsNodeRef block) args
+dependsNode block (Array sh body hd _) =
+  Set.unions $ map (d . fst) sh ++ map (d . snd) sh ++ [hdeps]
+  where d = dependsNodeRef block
+        block' = body : drop (length block - dagLevel body) block
+        hdeps = Set.filter ((dagLevel body >) . idLevel) $
+          dependsNodeRef block' hd
 
 
 ------------------------------------------------------------------------------

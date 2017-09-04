@@ -3,7 +3,6 @@
 module Util where
 
 import Data.Boolean
-import qualified Data.Bimap as Bimap
 import qualified Data.ByteString as B
 import Data.List
 import qualified Data.Number.LogFloat as LF
@@ -13,6 +12,10 @@ import System.Process
 import Text.Printf (printf)
 
 type Label = String
+
+fixpt :: (Eq a) => (a -> a) -> a -> a
+fixpt f x | f x == x  = x
+          | otherwise = fixpt f (f x)
 
 indent :: String -> String
 indent = intercalate "\n" . map ("  "++) . lines
