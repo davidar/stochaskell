@@ -71,8 +71,9 @@ constBinOp f a b = case broadcast (a,b) of
   (Approx a, Approx b) -> Approx (zipWithA f a b)
 
 constBinOp' :: (forall a. Floating a => a -> a -> a) -> ConstVal -> ConstVal -> ConstVal
-constBinOp' f (Approx a) (Approx b) = Approx (zipWithA f a b)
-constBinOp' f a b = constBinOp' f (approx a) (approx b)
+constBinOp' f a b = case broadcast (a,b) of
+  (Approx a, Approx b) -> Approx (zipWithA f a b)
+  (Exact  a, Exact  b) -> Approx (zipWithA f (fromIntegral <$> a) (fromIntegral <$> b))
 
 isScalar :: (Ix t, Show t) => Array [t] r -> Bool
 isScalar a = bounds a == ([],[])
