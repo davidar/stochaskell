@@ -53,8 +53,6 @@ edPrelude = unlines
 edNode :: [PNode] -> Label -> Node -> String
 edNode r _ (Apply "getExternal" [Var i@(Volatile 0 k) _] _) =
   edPNode (edId i) (r!!k)
-edNode _ name (Apply "asVector" [j] _) = name ++" = "++ edNodeRef j
-edNode _ name (Apply "asMatrix" [j] _) = name ++" = "++ edNodeRef j
 edNode _ name (Apply op [i,j] _) | s /= "" =
   name ++" = "++ edNodeRef i ++" "++ s ++" "++ edNodeRef j
   where s = fromMaybe "" $ lookup op edOperators

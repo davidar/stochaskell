@@ -35,8 +35,6 @@ builtins =
   ,("true", const true)
   ,("false", const false)
   ,("pi", const pi)
-  ,("asVector", head)
-  ,("asMatrix", head)
   ,("getExternal", head)
   ,("<>", \[a,b] -> a <> b)
   ,("<.>", \[u,v] -> u <.> v)
@@ -176,8 +174,6 @@ unifyNode env block (Array sh body hd _) val = Map.unions $ do -- TODO unify sh
     let env' = Map.fromList (inputs body `zip` map fromInteger idx) `Map.union` env
     return $ unifyNodeRef env' block' hd (val ! idx)
   where block' = body : drop (length block - dagLevel body) block
-unifyNode env block (Apply "asVector" [v] _) val =
-    unifyNodeRef env block v val
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isJust c' =
     unifyNodeRef env block (if toBool (fromJust c') then a else b) val
   where c' = evalNodeRef env block c
@@ -243,8 +239,6 @@ diffNodeRef env block (Var i s) var t
   | otherwise = zeros (1, numelType env block s) (1, numelType env block t)
 
 diffNode :: Env -> Block -> Node -> Id -> Type -> ConstVal
-diffNode env block (Apply "asVector" [v] _) var t =
-    diffNodeRef env block v var t
 diffNode env block (Apply "+" [a,b] _) var t | isJust a' =
     diffNodeRef env block b var t
   where a' = evalNodeRef (Map.delete var env) block a

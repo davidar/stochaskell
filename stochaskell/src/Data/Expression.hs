@@ -338,9 +338,9 @@ capture ar = externRefs adag
   where (_,adag:_) = runExpr $ ar ! replicate (length $ AA.shape ar) 0
 
 makeArray :: forall i t. (ScalarType t)
-          => AA.AbstractArray (Expr i) (Expr t)
+          => Maybe String -> AA.AbstractArray (Expr i) (Expr t)
           -> [AA.Interval NodeRef] -> State Block NodeRef
-makeArray ar sh = do
+makeArray l ar sh = do
     block <- get
     let ids = [ Dummy (length block) i | i <- [1..length sh] ]
         e = ar ! [ expr . return $ Var i IntT | i <- ids ]
@@ -348,12 +348,13 @@ makeArray ar sh = do
             DAG (length block) ids Bimap.empty : block
         TypeIs t = typeOf :: TypeOf t
     put block'
-    hashcons $ Array sh dag ret (ArrayT Nothing sh t)
+    hashcons $ Array sh dag ret (ArrayT l sh t)
 
 -- constant floating
 floatArray :: (Num i, ScalarType i, ScalarType t)
-           => AA.AbstractArray (Expr i) (Expr t) -> State Block NodeRef
-floatArray ar = do
+           => Maybe String -> AA.AbstractArray (Expr i) (Expr t)
+           -> State Block NodeRef
+floatArray l ar = do
     dag:_ <- get
     sh <- sequence . flip map (AA.shape ar) $ \interval -> do
         i <- fromExpr $ fst interval
@@ -362,8 +363,8 @@ floatArray ar = do
     if varies dag (map fst sh) ||
        varies dag (map snd sh) ||
        (not . null $ inputs dag `intersect` capture ar)
-      then makeArray ar sh
-      else liftBlock $ floatArray ar
+      then makeArray l ar sh
+      else liftBlock $ floatArray l ar
 
 -- TODO: reduce code duplication
 floatArray' :: Node -> State Block NodeRef
@@ -376,9 +377,9 @@ floatArray' a@(Array sh adag _ _) = do
       else liftBlock $ floatArray' a
 
 array :: (Num i, ScalarType i, ScalarType e)
-      => Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t
-array n a = if length sh == n
-                then expr $ floatArray a
+      => Maybe String -> Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t
+array l n a = if length sh == n
+                then expr $ floatArray l a
                 else error "dimension mismatch"
   where sh = AA.shape a
 
@@ -496,12 +497,12 @@ instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
       let t' = ArrayT Nothing [(lo,hi')] t
       simplify $ Apply "insertIndex" [f,i,j] t'
 instance (ScalarType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
-    vector = asVector . array 1
+    vector = array (Just "vector") 1
 instance (ScalarType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
-    matrix = asMatrix . array 2
+    matrix = array (Just "matrix") 2
     a <> b = expr $ do
-        i <- fromExpr $ asMatrix a
-        j <- fromExpr $ asMatrix b
+        i <- fromExpr a
+        j <- fromExpr b
         let (ArrayT _ [r,_] t) = typeRef i
             (ArrayT _ [_,c] _) = typeRef j
         simplify $ Apply "<>" [i,j] (ArrayT (Just "matrix") [r,c] t)
@@ -509,64 +510,54 @@ instance (ScalarType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
 instance AA.Scalable R RVec where
     a *> v = expr $ do
         i <- fromExpr a
-        j <- fromExpr $ asVector v
+        j <- fromExpr v
         simplify $ Apply "*>" [i,j] (typeRef j)
 instance (ScalarType e) => AA.Scalable (Expr e) (Expr [[e]]) where
     a *> m = expr $ do
         i <- fromExpr a
-        j <- fromExpr $ asMatrix m
+        j <- fromExpr m
         simplify $ Apply "*>" [i,j] (typeRef j)
 
 instance (ScalarType e) => LA.Transposable (Expr [[e]]) (Expr [[e]]) where
     tr m = expr $ do
-        i <- fromExpr $ asMatrix m
+        i <- fromExpr m
         let (ArrayT _ [r,c] t) = typeRef i
         simplify $ Apply "tr" [i] (ArrayT (Just "matrix") [c,r] t)
     tr' m = expr $ do
-        i <- fromExpr $ asMatrix m
+        i <- fromExpr m
         let (ArrayT _ [r,c] t) = typeRef i
         simplify $ Apply "tr'" [i] (ArrayT (Just "matrix") [c,r] t)
 
-asVector :: Expr [e] -> Expr [e]
-asVector v = expr $ do
-    i <- fromExpr v
-    let (ArrayT _ [n] t) = typeRef i
-    simplify $ Apply "asVector" [i] (ArrayT (Just "vector") [n] t)
-
-asMatrix :: Expr [[e]] -> Expr [[e]]
-asMatrix m = expr $ do
-    i <- fromExpr m
-    let (ArrayT _ [r,c] t) = typeRef i
-    simplify $ Apply "asMatrix" [i] (ArrayT (Just "matrix") [r,c] t)
-
 instance AA.InnerProduct (Expr [e]) (Expr e) where
     u <.> v = expr $ do
-        i <- fromExpr $ asVector u
-        j <- fromExpr $ asVector v
+        i <- fromExpr u
+        j <- fromExpr v
         let (ArrayT _ _ t) = typeRef i
         simplify $ Apply "<.>" [i,j] t
 
 instance AA.LinearOperator (Expr [[e]]) (Expr [e]) (Expr [e]) where
     m #> v = expr $ do
-        i <- fromExpr $ asMatrix m
-        j <- fromExpr $ asVector v
+        i <- fromExpr m
+        j <- fromExpr v
         let (ArrayT _ [r,_] t) = typeRef i
         simplify $ Apply "#>" [i,j] (ArrayT (Just "vector") [r] t)
     diag v = expr $ do
-        i <- fromExpr $ asVector v
+        i <- fromExpr v
         let (ArrayT _ [n] t) = typeRef i
         simplify $ Apply "diag" [i] (ArrayT (Just "matrix") [n,n] t)
 
 instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
     chol m = expr $ do
-        i <- fromExpr $ asMatrix m
-        simplify $ Apply "chol" [i] (typeRef i)
+        i <- fromExpr m
+        let (ArrayT _ sh t) = typeRef i
+        simplify $ Apply "chol" [i] (ArrayT (Just "matrix") sh t)
     inv m = expr $ do
-        i <- fromExpr $ asMatrix m
-        simplify $ Apply "inv" [i] (typeRef i)
+        i <- fromExpr m
+        let (ArrayT _ sh t) = typeRef i
+        simplify $ Apply "inv" [i] (ArrayT (Just "matrix") sh t)
     det m = expr $ do
-        i <- fromExpr $ asMatrix m
-        let (ArrayT _ [_,_] t) = typeRef i
+        i <- fromExpr m
+        let (ArrayT _ _ t) = typeRef i
         simplify $ Apply "det" [i] t
 
 instance Boolean (Expr Bool) where

@@ -86,11 +86,10 @@ stanDecl name t = stanType t ++" "++ name ++";"
 ------------------------------------------------------------------------------
 
 stanBuiltinFunctions =
-  [("asVector",    "to_vector")
-  ,("asMatrix",    "to_matrix")
-  ,("chol",        "cholesky_decompose")
-  ,("negate",      "-")
-  ,("inv",         "inverse")
+  [("chol",        ["cholesky_decompose", "to_matrix"])
+  ,("det",         ["determinant",        "to_matrix"])
+  ,("inv",         ["inverse",            "to_matrix"])
+  ,("negate",      ["-"])
   ]
 
 stanVectorisedDistributions =
@@ -107,13 +106,20 @@ stanOperators =
   [("+",   "+")
   ,("-",   "-")
   ,("*",   "*")
+  ,("*>",  "*")
   ,("/",   "/")
   ,("==",  "==")
-  ,("#>",  "*")
-  ,("<>",  "*")
-  ,("*>",  "*")
   ,("**",  "^")
   ]
+
+stanMatrixOperators =
+  [("#>",  ("to_matrix", "*", "to_vector"))
+  ,("<>",  ("to_matrix", "*", "to_matrix"))
+  ]
+
+stanCompose :: [String] -> String -> String
+stanCompose [] x = x
+stanCompose (f:fs) x = f ++"("++ stanCompose fs x ++")"
 
 stanNode :: Label -> Node -> String
 stanNode _ (Apply "getExternal" _ _) = ""
@@ -124,9 +130,12 @@ stanNode name (Apply "tr'" [a] _) =
 stanNode name (Apply op [i,j] _) | s /= "" =
     name ++" = "++ stanNodeRef i ++" "++ s ++" "++ stanNodeRef j ++";"
   where s = fromMaybe "" $ lookup op stanOperators
-stanNode name (Apply f js _) =
-    name ++" = "++ fromMaybe f (lookup f stanBuiltinFunctions) ++
-      "("++ stanNodeRef `commas` js ++");"
+stanNode name (Apply op [i,j] _) | isJust $ lookup op stanMatrixOperators =
+    name ++" = "++ a ++"("++ stanNodeRef i ++") "++ b ++" "++ c ++"("++ stanNodeRef j ++");"
+  where (a,b,c) = fromJust $ lookup op stanMatrixOperators
+stanNode name (Apply f js _) | isJust $ lookup f stanBuiltinFunctions =
+    name ++" = "++ stanCompose fs (stanNodeRef `commas` js) ++";"
+  where fs = fromJust $ lookup f stanBuiltinFunctions
 stanNode name (Array sh dag ret _) =
     forLoop (map stanId $ inputs dag) sh $
         stanDAG Nothing dag ++"\n  "++

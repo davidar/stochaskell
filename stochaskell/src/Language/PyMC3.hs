@@ -46,8 +46,6 @@ pmPrelude = unlines
 pmNode :: ([PNode],Env) -> Label -> Node -> String
 pmNode (r,given) _ (Apply "getExternal" [Var i@(Volatile 0 k) _] _) =
   pmPNode (pmId i) (r!!k) (Map.lookup i given)
-pmNode _ name (Apply "asVector" [j] _) = name ++" = "++ pmNodeRef j
-pmNode _ name (Apply "asMatrix" [j] _) = name ++" = "++ pmNodeRef j
 pmNode _ name (Apply "#>" [i,j] _) =
   name ++" = "++ pmNodeRef i ++".dot("++ pmNodeRef j ++")"
 pmNode _ name (Apply op [i,j] _) | s /= "" =

@@ -51,7 +51,6 @@ churchPrelude = unlines
   ]
 
 churchNode :: Label -> Node -> String
-churchNode _ (Apply "asVector" [j] _) = churchNodeRef j
 churchNode _ (Apply f js _) =
   "("++ fromMaybe f (lookup f churchBuiltinFunctions) ++" "++
     churchNodeRef `spaced` js ++")"
