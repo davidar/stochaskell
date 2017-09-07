@@ -33,6 +33,11 @@ instance (Ix i, Show i) => Ix [i] where
           unsafeIndex ([],[]) [] = 0
           unsafeIndex _ _ = undefined
 
+rrange :: (Ix i) => ([i],[i]) -> [[i]]
+rrange (x:xs,y:ys) = [ z:zs | zs <- rrange (xs,ys), z <- range (x,y) ]
+rrange ([],[]) = [[]]
+rrange _ = []
+
 type Interval i = (i,i)
 cardinality :: (Num a) => Interval a -> a
 cardinality (a,b) = b - a + 1

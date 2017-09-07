@@ -436,10 +436,6 @@ foldscan isScan dir f r xs = do
 -- INSTANCES                                                                --
 ------------------------------------------------------------------------------
 
-fromRational' :: forall t. (ScalarType t) => Rational -> Expr t
-fromRational' = expr . return . flip Const t . fromRational
-  where TypeIs t = typeOf :: TypeOf t
-
 instance (ScalarType t, Num t) => Num (Expr t) where
     (+) = applyClosed2 "+"
     (-) = applyClosed2 "-"
@@ -449,10 +445,12 @@ instance (ScalarType t, Num t) => Num (Expr t) where
     abs    = applyClosed1 "abs"
     signum = applyClosed1 "signum"
 
-    fromInteger x = fromRational' (x % 1)
+    fromInteger  = expr . return . flip Const t . fromInteger
+      where TypeIs t = typeOf :: TypeOf t
 
 instance (ScalarType t, Fractional t) => Fractional (Expr t) where
-    fromRational = fromRational'
+    fromRational = expr . return . flip Const t . fromRational
+      where TypeIs t = typeOf :: TypeOf t
     (/) = applyClosed2 "/"
 
 instance (ScalarType t, Floating t) => Floating (Expr t) where

@@ -4,6 +4,7 @@ module Data.Expression.Eval where
 
 import Prelude hiding ((<*),(*>))
 
+import Data.Array (listArray)
 import Data.Array.Abstract
 import Data.Boolean
 import Data.Expression hiding (const)
@@ -126,7 +127,7 @@ evalNode env block (Array sh body hd _) = do
           Map.fromList (inputs body `zip` map fromInteger xs) `Map.union` env
     in toRational <$> evalNodeRef env' block' hd
     | xs <- fromShape sh' ]
-  return (Exact ar)
+  return $ fromRationalArray ar
 evalNode env block (Fold Right_ body hd seed ls _) = do
   r  <- evalNodeRef env block seed
   xs <- evalNodeRef env block ls
@@ -273,12 +274,19 @@ instance IsList ZVec where
 
 instance IsList BVec where
     type Item BVec = Bool
-    fromList = expr . return . flip Const undefined . fromList . map fromBool
+    fromList xs = expr . return $ Const c t
+      where c = fromList $ map fromBool xs
+            t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] boolT
     toList = map toBool . toList . fromJust . eval_
 
 instance IsList RMat where
     type Item RMat = [Double]
-    fromList = expr . return . flip Const undefined . fromList . map (fromList . map real)
+    fromList xs = expr . return $ Const c t
+      where n = toInteger $ length xs
+            m = toInteger . length $ xs!!1
+            c = Approx $ listArray ([1,1],[n,m]) (concat xs)
+            t = ArrayT Nothing [(Const 1 IntT, Const (fromInteger n) IntT)
+                               ,(Const 1 IntT, Const (fromInteger m) IntT)] RealT
     toList = map (map real . toList) . toList . fromJust . eval_
 
 instance Show R    where show = show . real

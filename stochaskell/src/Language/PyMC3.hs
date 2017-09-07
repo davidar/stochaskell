@@ -21,7 +21,6 @@ pmId (Internal level i) =  "value_"++ show level ++"_"++ show i
 
 pmNodeRef :: NodeRef -> String
 pmNodeRef (Var s _) = pmId s
-pmNodeRef (Const (Exact a) IntT) = show . numerator $ toScalar a
 pmNodeRef (Const c _) = show c
 
 pmBuiltinFunctions =

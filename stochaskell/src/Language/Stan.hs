@@ -1,10 +1,12 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedStrings, RecordWildCards #-}
 module Language.Stan where
 
 import Control.Applicative ()
 import Control.Monad
-import Data.Array.Abstract
+import qualified Data.Array as A
+import Data.Array.Abstract hiding ((<>))
 import qualified Data.ByteString.Char8 as C
+import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
@@ -12,6 +14,7 @@ import Data.List
 import Data.List.Split
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import Data.Monoid
 import Data.Program
 import Data.Ratio
 import Data.Set (Set)
@@ -45,23 +48,9 @@ stanId (Dummy    level i) =  "index_"++ show level ++"_"++ show i
 stanId (Volatile level i) = "sample_"++ show level ++"_"++ show i
 stanId (Internal level i) =  "value_"++ show level ++"_"++ show i
 
-stanConstVal :: ConstVal -> String
-stanConstVal (Exact a) | isScalar a =
-    if d == 1 then show n else show (fromRational c :: Double)
-  where c = toScalar a
-        n = numerator c
-        d = denominator c
-stanConstVal (Approx a) | isScalar a = show (toScalar a)
-stanConstVal val | dimension val == 1 =
-  "c("++ stanConstVal `commas` toList val ++")"
-stanConstVal val =
-  "structure("++ stanConstVal (vectorise val) ++", .Dim = "++ stanConstVal dim ++")"
-  where (lo,hi) = bounds val
-        dim = fromList $ integer <$> hi
-
 stanNodeRef :: NodeRef -> String
 stanNodeRef (Var s _) = stanId s
-stanNodeRef (Const c _) = stanConstVal c
+stanNodeRef (Const c _) = show c
 stanNodeRef (Index f js) =
     stanNodeRef f ++"["++ stanNodeRef `commas` reverse js ++"]"
 
@@ -220,9 +209,24 @@ stanProgram (PBlock block refs given) =
           where g i = let n = fromJust $ Map.lookup i samples
                       in Set.filter isInternal $ dependsPNode n
 
-stanDump :: Env -> String
-stanDump = unlines . map f . Map.toList
-  where f (n,x) = stanId n ++" <- "++ stanConstVal x
+stanVector :: (Show a) => [a] -> LC.ByteString
+stanVector xs = "c(" <> LC.intercalate "," (LC.pack . show <$> xs) <> ")"
+
+stanConstVal :: ConstVal -> LC.ByteString
+stanConstVal c | dimension c == 0 = LC.pack $ show c
+stanConstVal c | dimension c == 1 = case c of
+  Exact  a -> stanVector (A.elems a)
+  Approx a -> stanVector (A.elems a)
+stanConstVal c = "structure(" <> v <> ", .Dim = " <> stanVector hi <> ")"
+  where (lo,hi) = bounds c
+        is = rrange (lo,hi)
+        v = case c of
+          Exact  a -> stanVector $ (a!) <$> is
+          Approx a -> stanVector $ (a!) <$> is
+
+stanDump :: Env -> LC.ByteString
+stanDump = LC.unlines . map f . Map.toList
+  where f (n,x) = LC.pack (stanId n) <> " <- " <> stanConstVal x
 
 
 ------------------------------------------------------------------------------
@@ -306,12 +310,11 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
       system_ $ "make -C "++ pwd ++"/cmdstan "++ exename
 
     when (isJust init) $
-      writeFile (basename ++".init") $
+      LC.writeFile (basename ++".init") $
         stanDump (unifyTuple' (definitions p) rets (fromJust init) (constraints p))
 
     putStrLn "--- Sampling Stan model ---"
-    let dat = stanDump (constraints p)
-    writeFile (basename ++".data") dat
+    LC.writeFile (basename ++".data") $ stanDump (constraints p)
     -- TODO: avoid shell injection
     system_ $ unwords
       [exename

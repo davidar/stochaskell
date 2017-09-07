@@ -22,14 +22,9 @@ churchId (Volatile level i) = "x_"++ show level ++"_"++ show i
 churchId (Internal level i) = "v_"++ show level ++"_"++ show i
 
 churchConstVal :: ConstVal -> String
-churchConstVal (Exact a) | isScalar a =
-    if d == 1 then show n else show (fromRational c :: Double)
-  where c = toScalar a
-        n = numerator c
-        d = denominator c
-churchConstVal (Approx a) | isScalar a = show (toScalar a)
-churchConstVal val | dimension val == 1 =
-  "(list "++ churchConstVal `spaced` toList val ++")"
+churchConstVal val = case dimension val of
+  0 -> show val
+  1 -> "(list "++ churchConstVal `spaced` toList val ++")"
 
 churchNodeRef :: NodeRef -> String
 churchNodeRef (Var s _) = churchId s
