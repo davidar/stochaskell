@@ -23,6 +23,7 @@ edId (Internal level i) =  "value_"++ show level ++"_"++ show i
 
 edNodeRef :: NodeRef -> String
 edNodeRef (Var s _) = edId s
+edNodeRef (Const c RealT) = show $ real c
 edNodeRef (Const c _) = show c
 
 edBuiltinFunctions =
