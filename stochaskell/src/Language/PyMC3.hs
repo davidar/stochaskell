@@ -2,15 +2,17 @@
 
 module Language.PyMC3 where
 
+import Control.Monad
 import Data.Expression hiding (const)
 import Data.Expression.Const
+import Data.Expression.Const.IO
 import Data.Expression.Eval
 import Data.List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
-import Data.Ratio
 import System.Directory
+import System.IO.Temp
 import System.Process
 import Util
 
@@ -75,7 +77,7 @@ pmPNode' name f args t val | lookup f pmBuiltinDistributions /= Nothing =
         ps = intercalate ", " (zipWith h params args)
         g (a,b) = pmNodeRef b ++"-"++ pmNodeRef a ++"+1"
         obs | val == Nothing = ""
-            | otherwise = "observed=np.array("++ show (fromJust val) ++"), "
+            | otherwise = "observed=np.load('"++ name ++".npy'), "
 
 pmDAG :: ([PNode],Env) -> DAG -> String
 pmDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
@@ -132,11 +134,15 @@ defaultPyMC3Inference = PyMC3Sample
   }
 
 runPyMC3 :: (ExprTuple t, Read t) => PyMC3Inference -> Prog t -> IO [t]
-runPyMC3 sample prog = do
+runPyMC3 sample prog = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   pwd <- getCurrentDirectory
+  setCurrentDirectory tmpDir
+  forM_ (Map.toList given) $ \(i,c) ->
+    writeNPy (pmId i ++".npy") c
   out <- readProcess (pwd ++"/pymc3/env/bin/python") [] $
     pmProgram prog ++"\n  "++
     "trace = "++ show sample ++"; print(zip("++ g `commas` rets ++"))"
+  setCurrentDirectory pwd
   return (read out)
-  where rets = fst $ runProgExprs prog
+  where (rets, PBlock _ _ given) = runProgExprs prog
         g r = "trace['"++ pmNodeRef r ++"'].tolist()"

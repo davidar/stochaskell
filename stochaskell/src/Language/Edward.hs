@@ -1,13 +1,16 @@
 module Language.Edward where
 
+import Control.Monad
 import Data.Expression hiding (const)
 import Data.Expression.Const
+import Data.Expression.Const.IO
 import Data.List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
 import Data.Ratio
 import System.Directory
+import System.IO.Temp
 import System.Process
 import Util
 
@@ -109,12 +112,17 @@ edProgram numSamples numSteps stepSize prog =
         g r = "("++ edNodeRef r ++", Empirical(params=tf.Variable(tf.zeros("++
                 "["++ show numSamples ++"] + dim_"++ edNodeRef r ++"))))"
         printedConds = "{"++ intercalate ", "
-          [edId k ++": np.array("++ show v ++")"
-          | (k,v) <- Map.toList given] ++"}"
+          [edId k ++": np.load('"++ edId k ++".npy')"
+          | k <- Map.keys given] ++"}"
 
 hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> Prog t -> IO [t]
-hmcEdward numSamples numSteps stepSize prog = do
+hmcEdward numSamples numSteps stepSize prog = withSystemTempDirectory "edward" $ \tmpDir -> do
   pwd <- getCurrentDirectory
+  setCurrentDirectory tmpDir
+  forM_ (Map.toList given) $ \(i,c) ->
+    writeNPy (edId i ++".npy") c
   out <- readProcess (pwd ++"/edward/env/bin/python") [] $
     edProgram numSamples numSteps stepSize prog
+  setCurrentDirectory pwd
   return (read out)
+  where (_, PBlock _ _ given) = runProgExprs prog

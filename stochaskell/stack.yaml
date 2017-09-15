@@ -2,6 +2,7 @@ flags: {}
 extra-package-dbs: []
 packages:
 - '.'
-extra-deps: []
-resolver: lts-9.0
 system-ghc: false
+extra-deps:
+- lazy-csv-0.5.1
+resolver: lts-9.0

@@ -19,6 +19,7 @@ library
                      , Data.Array.Abstract
                      , Data.Expression
                      , Data.Expression.Const
+                     , Data.Expression.Const.IO
                      , Data.Expression.Eval
                      , Data.Program
                      , Data.Random.Distribution.Abstract
@@ -30,13 +31,16 @@ library
                      , Util
   build-depends:       Boolean
                      , array
-                     , base >= 4.7 && < 5
-                     , containers
+                     , base
                      , bimap
+                     , binary
                      , bytestring
+                     , containers
                      , cryptohash
+                     , data-binary-ieee754
                      , directory
                      , hmatrix
+                     , lazy-csv
                      , logfloat
                      , math-functions
                      , mtl
@@ -45,6 +49,7 @@ library
                      , random-fu
                      , split
                      , temporary
+                     , terminal-progress-bar
   default-language:    Haskell2010
 
 executable benchmark-exe
