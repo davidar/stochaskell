@@ -3,7 +3,7 @@ module Language.Stan where
 
 import Control.Applicative ()
 import Control.Monad
-import qualified Data.Array as A
+import qualified Data.Array.IArray as A
 import Data.Array.Abstract hiding ((<>))
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy.Char8 as LC
@@ -215,6 +215,7 @@ stanProgram (PBlock block refs given) =
           Map.filter (not . Set.null . Set.intersection xs . dependsPNode) samples
         dparams = fixpt dependents params
         tparams = Set.foldr Set.union dparams $ Set.map g dparams
+        -- TODO: warn when any samples\\tparams have zero density
           where g i = let n = fromJust $ Map.lookup i samples
                       in Set.filter isInternal $ dependsPNode n
 

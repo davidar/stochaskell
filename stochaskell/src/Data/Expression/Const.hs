@@ -4,8 +4,8 @@ module Data.Expression.Const where
 
 import Prelude hiding ((<*),(*>))
 
-import Data.Array hiding ((!),bounds)
 import Data.Array.Abstract
+import Data.Array.Unboxed hiding ((!),bounds)
 import Data.Boolean
 import Data.Number.Transfinite hiding (log)
 import Data.Ratio
@@ -27,8 +27,8 @@ integer = fromInteger . toInteger
 real :: (Real r, Fractional f) => r -> f
 real = fromRational . toRational
 
-data ConstVal = Exact  (Array [Integer] Int)
-              | Approx (Array [Integer] Double)
+data ConstVal = Exact  (UArray [Integer] Int)
+              | Approx (UArray [Integer] Double)
 
 instance Show ConstVal where
     show c | dimension c >= 1 = show (toList c)
@@ -36,7 +36,7 @@ instance Show ConstVal where
     show (Approx a) | isScalar a = show (toScalar a)
 
 approx :: ConstVal -> ConstVal
-approx (Exact a) = Approx (fromIntegral <$> a)
+approx (Exact a) = Approx (amap fromIntegral a)
 approx a = a
 
 isApprox :: ConstVal -> Bool
@@ -58,12 +58,12 @@ broadcast (a',b')
         (a,b) = (approx' a', approx' b')
 
 constUnOp :: (forall a. Num a => a -> a) -> ConstVal -> ConstVal
-constUnOp f (Exact  a) = Exact  (f <$> a)
-constUnOp f (Approx a) = Approx (f <$> a)
+constUnOp f (Exact  a) = Exact  (amap f a)
+constUnOp f (Approx a) = Approx (amap f a)
 
 constUnOp' :: (forall a. Floating a => a -> a) -> ConstVal -> ConstVal
-constUnOp' f (Exact  a) = Approx (f . fromIntegral <$> a)
-constUnOp' f (Approx a) = Approx (f <$> a)
+constUnOp' f (Exact  a) = Approx (amap (f . fromIntegral) a)
+constUnOp' f (Approx a) = Approx (amap f a)
 
 constBinOp :: (forall a. Num a => a -> a -> a) -> ConstVal -> ConstVal -> ConstVal
 constBinOp f a b = case broadcast (a,b) of
@@ -73,16 +73,16 @@ constBinOp f a b = case broadcast (a,b) of
 constBinOp' :: (forall a. Floating a => a -> a -> a) -> ConstVal -> ConstVal -> ConstVal
 constBinOp' f a b = case broadcast (a,b) of
   (Approx a, Approx b) -> Approx (zipWithA f a b)
-  (Exact  a, Exact  b) -> Approx (zipWithA f (fromIntegral <$> a) (fromIntegral <$> b))
+  (Exact  a, Exact  b) -> Approx (zipWithA f (amap fromIntegral a) (amap fromIntegral b))
 
-isScalar :: (Ix t, Show t) => Array [t] r -> Bool
+isScalar :: (IArray UArray r, Ix t, Show t) => UArray [t] r -> Bool
 isScalar a = bounds a == ([],[])
 
-toScalar :: (Ix t, Show t, Show r) => Array [t] r -> r
+toScalar :: (IArray UArray r, Ix t, Show t, Show r) => UArray [t] r -> r
 toScalar a | isScalar a = a![]
            | otherwise  = error $ "can't convert non-scalar "++ show a ++" to real"
 
-fromScalar :: (Ix t, Show t) => e -> Array [t] e
+fromScalar :: (IArray a e, Ix t, Show t) => e -> a [t] e
 fromScalar x = array ([],[]) [([], x)]
 
 toDouble :: ConstVal -> Double
@@ -153,6 +153,10 @@ elems' :: ConstVal -> [ConstVal]
 elems' (Exact  a) = map fromIntegral (elems a)
 elems' (Approx a) = map fromDouble   (elems a)
 
+slice :: ConstVal -> AbstractArray Integer [Integer] -> ConstVal
+slice (Exact  a) i = Exact  $ ixmap (bounds i) (i!) a
+slice (Approx a) i = Approx $ ixmap (bounds i) (i!) a
+
 instance Num ConstVal where
     (+) = constBinOp (+)
     (-) = constBinOp (-)
@@ -192,14 +196,14 @@ instance IsList ConstVal where
       where n = integer (length xs)
             (lo,hi):bs = map bounds xs
             ok = all (== (lo,hi)) bs
-            g :: (ConstVal -> a) -> Array [Integer] a
+            g :: (IArray UArray a) => (ConstVal -> a) -> UArray [Integer] a
             g f = array (1:lo,n:hi)
               [(i:js, f (x!js)) | (i,x) <- zip [1..n] xs , js <- range (lo,hi)]
             val = if any isApprox xs then Approx (g real) else Exact (g integer)
     toList val = (if isApprox val then Approx . g real
                                   else Exact . g integer) <$> [a..b]
       where (a:lo,b:hi) = bounds val
-            g :: (ConstVal -> a) -> Integer -> Array [Integer] a
+            g :: (IArray UArray a) => (ConstVal -> a) -> Integer -> UArray [Integer] a
             g f i = array (lo,hi) [(js, f (val!(i:js))) | js <- range (lo,hi)]
 
 instance Indexable ConstVal [Integer] ConstVal where

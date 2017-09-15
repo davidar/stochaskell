@@ -3,7 +3,7 @@
              UndecidableInstances #-}
 module Data.Array.Abstract ( module Data.Array.Abstract, LA.tr, LA.tr' ) where
 
-import qualified Data.Array as A
+import qualified Data.Array.Unboxed as A
 import Data.Ix
 import Foreign.Storable (Storable)
 import GHC.Exts
@@ -13,7 +13,8 @@ import qualified Numeric.LinearAlgebra.Data as LAD
 list :: (IsList l, IsList l', Item l ~ Item l') => l -> l'
 list = fromList . toList
 
-zipWithA :: (Ix i, Show i) => (a -> b -> c) -> A.Array i a -> A.Array i b -> A.Array i c
+zipWithA :: (Ix i, Show i, A.IArray x a, A.IArray y b, A.IArray z c)
+  => (a -> b -> c) -> x i a -> y i b -> z i c
 zipWithA f a b | A.bounds a == A.bounds b =
                  A.listArray (A.bounds a) $ zipWith f (A.elems a) (A.elems b)
                | otherwise = error $ "arrays not same shape: "++ show (A.bounds a)
@@ -103,6 +104,10 @@ instance (Ix i) => Indexable (A.Array i e) i e where
     (!) = (A.!)
     bounds = A.bounds
 
+instance (A.IArray A.UArray e, Ix i) => Indexable (A.UArray i e) i e where
+    (!) = (A.!)
+    bounds = A.bounds
+
 class (Indexable v i e) => Vector v i e | v -> i e, i e -> v where
     vector :: AbstractArray i e -> v
 
@@ -129,6 +134,8 @@ class Scalable a v | v -> a where
 
 instance (Num e, Ix i) => Scalable e (A.Array i e) where
     a *> v = (a *) <$> v
+instance (A.IArray A.UArray e, Num e, Ix i) => Scalable e (A.UArray i e) where
+    a *> v = A.amap (a *) v
 instance Scalable Double (ShapedVector Double) where
     a *> (ShVec n   v) = ShVec n   $ (LA.scale) a v
 instance Scalable Double (ShapedMatrix Double) where

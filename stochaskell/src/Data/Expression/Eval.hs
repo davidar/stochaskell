@@ -4,7 +4,7 @@ module Data.Expression.Eval where
 
 import Prelude hiding ((<*),(*>))
 
-import Data.Array (listArray)
+import Data.Array.IArray (listArray)
 import Data.Array.Abstract
 import Data.Boolean
 import Data.Expression hiding (const)
