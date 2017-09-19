@@ -5,10 +5,12 @@ import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Const.IO
 import Data.List
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
 import Data.Ratio
+import qualified Data.Set as Set
 import System.Directory
 import System.IO.Temp
 import System.Process
@@ -49,14 +51,15 @@ edPrelude = unlines
   ["import sys"
   ,"from collections import OrderedDict"
   ,"import edward as ed"
-  ,"from edward.models import *"
   ,"import numpy as np"
   ,"import tensorflow as tf"
   ]
 
-edNode :: [PNode] -> Label -> Node -> String
-edNode r _ (Apply "getExternal" [Var i@(Volatile 0 k) _] _) =
-  edPNode (edId i) (r!!k)
+edNode :: Map Id PNode -> Label -> Node -> String
+edNode r _ (Apply "getExternal" [Var i t] _) =
+  case Map.lookup i r of
+    Just n  -> edPNode       (edId i) n
+    Nothing -> edPlaceholder (edId i) t
 edNode _ name (Apply op [i,j] _) | s /= "" =
   name ++" = "++ edNodeRef i ++" "++ s ++" "++ edNodeRef j
   where s = fromMaybe "" $ lookup op edOperators
@@ -81,7 +84,7 @@ edNode _ _ n = error $ "edNode "++ show n
 
 edPNode :: Label -> PNode -> String
 edPNode name (Dist f args t) | lookup f edBuiltinDistributions /= Nothing =
-  name ++" = "++ c ++ "("++ ps ++")\n"++
+  name ++" = ed.models."++ c ++ "("++ ps ++")\n"++
   "dim_"++ name ++" = ["++ g `commas` typeDims t ++"]"
   where c:params = fromJust $ lookup f edBuiltinDistributions
         h p a = p ++"="++ edNodeRef a
@@ -89,7 +92,12 @@ edPNode name (Dist f args t) | lookup f edBuiltinDistributions /= Nothing =
            | otherwise = intercalate ", " (zipWith h params args)
         g (a,b) = edNodeRef b ++"-"++ edNodeRef a ++"+1"
 
-edDAG :: [PNode] -> DAG -> String
+edPlaceholder :: Label -> Type -> String
+edPlaceholder name (ArrayT _ sh t) =
+  name ++" = tf.placeholder("++ dtype t ++", shape=("++ g `commas` sh ++"))"
+  where g (a,b) = edNodeRef b ++"-"++ edNodeRef a ++"+1"
+
+edDAG :: Map Id PNode -> DAG -> String
 edDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = edId $ Internal (dagLevel dag) i
   in edNode r name n
@@ -98,7 +106,7 @@ edProgram :: (ExprTuple t) => Int -> Int -> Double -> Prog t -> String
 edProgram numSamples numSteps stepSize prog =
   edPrelude ++"\n"++
   "if True:\n"++
-    edDAG (reverse refs) (head block) ++"\n"++
+    edDAG pn (head block) ++"\n"++
   "latent = "++ printedRets ++"\n"++
   "data = "++ printedConds ++"\n"++
   "inference = ed.HMC(latent, data)\n"++
@@ -107,10 +115,11 @@ edProgram numSamples numSteps stepSize prog =
                ",n_steps="++ show numSteps ++")\n"++
   "sys.stdout = stdout\n"++
   "print(zip(*[q.params.eval().tolist() for q in latent.values()]))"
-  where (rets, (PBlock block refs given)) = runProgExprs prog
+  where (rets, pb@(PBlock block _ given)) = runProgExprs prog
+        pn = Map.filterWithKey (const . (`Set.member` modelSkeleton pb)) $ pnodes pb
         printedRets = "OrderedDict(["++ g `commas` rets ++"])"
-        g r = "("++ edNodeRef r ++", Empirical(params=tf.Variable(tf.zeros("++
-                "["++ show numSamples ++"] + dim_"++ edNodeRef r ++"))))"
+        g r = "("++ edNodeRef r ++", ed.models.Empirical(params=tf.Variable("++
+                "tf.zeros(["++ show numSamples ++"] + dim_"++ edNodeRef r ++"))))"
         printedConds = "{"++ intercalate ", "
           [edId k ++": np.load('"++ edId k ++".npy')"
           | k <- Map.keys given] ++"}"

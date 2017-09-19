@@ -11,6 +11,7 @@ import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
 import qualified Data.List as List
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import qualified Data.Number.LogFloat as LF
@@ -20,6 +21,8 @@ import Data.Random.Distribution.Abstract
 import Data.Random.Distribution.Categorical (Categorical)
 import qualified Data.Random.Distribution.Categorical as Categorical
 import Data.Random.Distribution.Poisson (Poisson(..))
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Debug.Trace
 import GHC.Exts
 import Numeric.SpecFunctions
@@ -46,6 +49,10 @@ data PNode = Dist { dName :: String
                     }
            deriving (Eq)
 
+dependsPNode :: Block -> PNode -> Set Id
+dependsPNode block (Dist _ args _) =
+  Set.unions $ map (dependsNodeRef block) args
+
 instance Show PNode where
   show (Dist d js t) = unwords (d : map show js) ++" :: P "++ show t
   show (Loop sh defs body t) = unwords ["Loop", show sh, show defs, show body, show t]
@@ -57,6 +64,10 @@ data PBlock = PBlock { definitions :: Block
             deriving (Eq)
 emptyPBlock :: PBlock
 emptyPBlock = PBlock emptyBlock [] emptyEnv
+
+pnodes :: PBlock -> Map Id PNode
+pnodes (PBlock _ refs _) = Map.fromList $
+  map (Volatile 0) [0..] `zip` reverse refs
 
 -- lift into Block
 liftExprBlock :: MonadState PBlock m => State Block b -> m b
@@ -80,6 +91,20 @@ fromProgExprs p = do
 
 runProgExprs :: (ExprTuple t) => Prog t -> ([NodeRef], PBlock)
 runProgExprs p = runState (fromProgExprs p) emptyPBlock
+
+-- all samples whose density depends on the value of non-fixed parameters
+-- ie. not constant wrt the given data
+modelSkeleton :: PBlock -> Set Id
+modelSkeleton pb@(PBlock block _ given) = tparams
+  where samples = pnodes pb
+        params = Map.keysSet samples Set.\\ Map.keysSet given
+        dependents xs = Set.union xs . Map.keysSet $
+          Map.filter (not . Set.null . Set.intersection xs . dependsPNode block) samples
+        dparams = fixpt dependents params
+        tparams = Set.foldr Set.union dparams $ Set.map g dparams
+        -- TODO: warn when any samples\\tparams have zero density
+          where g i = let n = fromJust $ Map.lookup i samples
+                      in Set.filter isInternal $ dependsPNode block n
 
 
 ------------------------------------------------------------------------------

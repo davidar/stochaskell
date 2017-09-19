@@ -16,7 +16,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Monoid
 import Data.Program
-import Data.Ratio
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Debug.Trace
@@ -193,7 +192,7 @@ stanDAG whitelist dag = indent $ extract decl ++ extract stanNode
 ------------------------------------------------------------------------------
 
 stanProgram :: PBlock -> String
-stanProgram (PBlock block refs given) =
+stanProgram pb@(PBlock block refs given) =
     "data {\n"++ printRefs (\i n ->
         if getId i `elem` map Just (Map.keys given)
         then stanDecl (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
@@ -205,19 +204,9 @@ stanProgram (PBlock block refs given) =
       printRefs (\i n -> if Set.member (fromJust $ getId i) tparams
                   then stanPNode (stanNodeRef i) n
                   else "") ++"\n}\n"
-  where printRefs f = indent . unlines . map g $ Map.toAscList samples
+  where printRefs f = indent . unlines . map g . Map.toAscList $ pnodes pb
           where g (i,n) = f (Var i (typePNode n)) n
-        dependsPNode (Dist _ args _) =
-          Set.unions $ map (dependsNodeRef block) args
-        samples = Map.fromList $ map (Volatile 0) [0..] `zip` reverse refs
-        params = Map.keysSet samples Set.\\ Map.keysSet given
-        dependents xs = Set.union xs . Map.keysSet $
-          Map.filter (not . Set.null . Set.intersection xs . dependsPNode) samples
-        dparams = fixpt dependents params
-        tparams = Set.foldr Set.union dparams $ Set.map g dparams
-        -- TODO: warn when any samples\\tparams have zero density
-          where g i = let n = fromJust $ Map.lookup i samples
-                      in Set.filter isInternal $ dependsPNode n
+        tparams = modelSkeleton pb
 
 stanVector :: (Show a) => [a] -> LC.ByteString
 stanVector xs = "c(" <> LC.intercalate "," (LC.pack . show <$> xs) <> ")"
