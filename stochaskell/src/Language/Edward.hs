@@ -20,6 +20,7 @@ dtype :: Type -> String
 dtype t | t == boolT = "tf.bool"
 dtype IntT = "tf.int32"
 dtype RealT = "tf.float32"
+dtype (ArrayT _ _ t) = dtype t
 
 edId :: Id -> String
 edId (Dummy    level i) =  "index_"++ show level ++"_"++ show i
@@ -93,9 +94,9 @@ edPNode name (Dist f args t) | lookup f edBuiltinDistributions /= Nothing =
         g (a,b) = edNodeRef b ++"-"++ edNodeRef a ++"+1"
 
 edPlaceholder :: Label -> Type -> String
-edPlaceholder name (ArrayT _ sh t) =
-  name ++" = tf.placeholder("++ dtype t ++", shape=("++ g `commas` sh ++"))"
-  where g (a,b) = edNodeRef b ++"-"++ edNodeRef a ++"+1"
+edPlaceholder name t =
+  name ++" = tf.Variable(np.load('"++ name ++".npy'), "++
+                        "trainable=False, dtype="++ dtype t ++")"
 
 edDAG :: Map Id PNode -> DAG -> String
 edDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
@@ -116,13 +117,14 @@ edProgram numSamples numSteps stepSize prog =
   "sys.stdout = stdout\n"++
   "print(zip(*[q.params.eval().tolist() for q in latent.values()]))"
   where (rets, pb@(PBlock block _ given)) = runProgExprs prog
-        pn = Map.filterWithKey (const . (`Set.member` modelSkeleton pb)) $ pnodes pb
+        skel = modelSkeleton pb
+        pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb
         printedRets = "OrderedDict(["++ g `commas` rets ++"])"
         g r = "("++ edNodeRef r ++", ed.models.Empirical(params=tf.Variable("++
                 "tf.zeros(["++ show numSamples ++"] + dim_"++ edNodeRef r ++"))))"
         printedConds = "{"++ intercalate ", "
           [edId k ++": np.load('"++ edId k ++".npy')"
-          | k <- Map.keys given] ++"}"
+          | k <- Map.keys given, k `Set.member` skel] ++"}"
 
 hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> Prog t -> IO [t]
 hmcEdward numSamples numSteps stepSize prog = withSystemTempDirectory "edward" $ \tmpDir -> do
