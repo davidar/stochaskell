@@ -75,6 +75,10 @@ constBinOp' f a b = case broadcast (a,b) of
   (Approx a, Approx b) -> Approx (zipWithA f a b)
   (Exact  a, Exact  b) -> Approx (zipWithA f (amap fromIntegral a) (amap fromIntegral b))
 
+binarize :: (forall a. (Num a, EqB a, OrdB a) => a -> BooleanOf a) -> ConstVal -> ConstVal
+binarize f (Exact  a) = Exact $ amap (\x -> if f x then 1 else 0) a
+binarize f (Approx a) = Exact $ amap (\x -> if f x then 1 else 0) a
+
 isScalar :: (IArray UArray r, Ix t, Show t) => UArray [t] r -> Bool
 isScalar a = bounds a == ([],[])
 

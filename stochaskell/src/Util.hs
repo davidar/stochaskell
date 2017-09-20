@@ -57,6 +57,9 @@ system_ cmd = do
     _ <- system cmd
     return ()
 
+mean :: (Foldable t, Fractional a) => t a -> a
+mean xs = sum xs / fromIntegral (length xs)
+
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
     (-) = zipWith (-)
