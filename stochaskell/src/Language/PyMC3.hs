@@ -8,9 +8,11 @@ import Data.Expression.Const
 import Data.Expression.Const.IO
 import Data.Expression.Eval
 import Data.List
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
+import qualified Data.Set as Set
 import System.Directory
 import System.IO.Temp
 import System.Process
@@ -43,11 +45,16 @@ pmPrelude :: String
 pmPrelude = unlines
   ["import numpy as np"
   ,"import pymc3 as pm"
+  ,"import sys"
+  ,"import theano.tensor as tt"
+--  ,"from memory_profiler import profile"
   ]
 
-pmNode :: ([PNode],Env) -> Label -> Node -> String
-pmNode (r,given) _ (Apply "getExternal" [Var i@(Volatile 0 k) _] _) =
-  pmPNode (pmId i) (r!!k) (Map.lookup i given)
+pmNode :: (Map Id PNode, Env) -> Label -> Node -> String
+pmNode (r,given) _ (Apply "getExternal" [Var i _] _) =
+  case Map.lookup i r of
+    Just n -> pmPNode (pmId i) n (Map.lookup i given)
+    Nothing -> pmId i ++" = tt.as_tensor_variable(np.load('"++ pmId i ++".npy'))"
 pmNode _ name (Apply "#>" [i,j] _) =
   name ++" = "++ pmNodeRef i ++".dot("++ pmNodeRef j ++")"
 pmNode _ name (Apply op [i,j] _) | s /= "" =
@@ -79,7 +86,7 @@ pmPNode' name f args t val | lookup f pmBuiltinDistributions /= Nothing =
         obs | val == Nothing = ""
             | otherwise = "observed=np.load('"++ name ++".npy'), "
 
-pmDAG :: ([PNode],Env) -> DAG -> String
+pmDAG :: (Map Id PNode, Env) -> DAG -> String
 pmDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = pmId $ Internal (dagLevel dag) i
   in pmNode r name n
@@ -87,9 +94,13 @@ pmDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
 pmProgram :: (ExprTuple t) => Prog t -> String
 pmProgram prog =
   pmPrelude ++"\n"++
-  "with pm.Model() as model:\n"++
-    pmDAG (reverse refs, given) (head block)
-  where (PBlock block refs given) = snd $ runProgExprs prog
+  --"@profile(stream=sys.stderr)\n"++
+  "def main():\n"++
+  " with pm.Model() as model:\n"++
+    pmDAG (pn, given) (head block)
+  where pb@(PBlock block _ given) = snd $ runProgExprs prog
+        skel = modelSkeleton pb
+        pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb
 
 data PyMC3Inference
   = PyMC3Sample
@@ -139,9 +150,11 @@ runPyMC3 sample prog = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   setCurrentDirectory tmpDir
   forM_ (Map.toList given) $ \(i,c) ->
     writeNPy (pmId i ++".npy") c
-  out <- readProcess (pwd ++"/pymc3/env/bin/python") [] $
+  writeFile "main.py" $
     pmProgram prog ++"\n  "++
-    "trace = "++ show sample ++"; print(zip("++ g `commas` rets ++"))"
+    "trace = "++ show sample ++"; print(zip("++ g `commas` rets ++"))\n"++
+    "main()"
+  out <- readProcess (pwd ++"/pymc3/env/bin/python") ["main.py"] ""
   setCurrentDirectory pwd
   return (read out)
   where (rets, PBlock _ _ given) = runProgExprs prog
