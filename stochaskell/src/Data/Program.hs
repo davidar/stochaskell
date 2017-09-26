@@ -223,6 +223,12 @@ instance Distribution Uniform R Prog R where
         j <- fromExpr b
         return $ Dist "uniform" [i,j] RealT
 
+instance Distribution Uniforms RVec Prog RVec where
+    sample (Uniforms a b) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "uniforms" [i,j] (typeRef i)
+
 instance Distribution Uniforms RMat Prog RMat where
     sample (Uniforms a b) = dist $ do
         i <- fromExpr a
@@ -237,7 +243,9 @@ instance Distribution Uniform Z Prog Z where
 
 normalChol :: Z -> RVec -> RMat -> P RVec
 normalChol n mu cov = do
-  w <- joint vector [ normal 0 1 | _ <- 1...n ]
+  --w <- joint vector [ normal 0 1 | _ <- 1...n ]
+  w <- normals (vector [ 0 | _ <- 1...n ])
+               (vector [ 1 | _ <- 1...n ])
   return (mu + chol cov #> w)
 
 normalCond :: Z -> (Expr t -> Expr t -> R) -> Expr [t] -> RVec -> Expr t -> P R

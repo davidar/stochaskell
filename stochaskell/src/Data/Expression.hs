@@ -267,6 +267,8 @@ dependsNodeRef block (Var i@(Internal level ptr) _) =
   in Set.insert i (dependsNode block node)
 dependsNodeRef _ (Var i _) = Set.singleton i
 dependsNodeRef _ (Const _ _) = Set.empty
+dependsNodeRef block (Index a i) =
+  Set.unions $ map (dependsNodeRef block) (a:i)
 
 dependsNode :: Block -> Node -> Set Id
 dependsNode block (Apply _ args _) =
