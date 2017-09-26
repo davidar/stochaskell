@@ -11,7 +11,7 @@ import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
 import Data.List
-import Data.List.Split
+import Data.List.Extra
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Monoid
@@ -20,7 +20,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Debug.Trace
 import qualified Crypto.Hash.SHA1 as SHA1
-import GHC.Exts
 import System.Directory
 import System.IO.Temp
 import Util
@@ -43,9 +42,18 @@ forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
 ------------------------------------------------------------------------------
 
 stanId :: Id -> String
-stanId (Dummy    level i) =  "index_"++ show level ++"_"++ show i
-stanId (Volatile level i) = "sample_"++ show level ++"_"++ show i
-stanId (Internal level i) =  "value_"++ show level ++"_"++ show i
+stanId (Dummy    level i) = "i_"++ show level ++"_"++ show i
+stanId (Volatile level i) = "x_"++ show level ++"_"++ show i
+stanId (Internal level i) = "v_"++ show level ++"_"++ show i
+
+stanId' :: String -> Either String Id
+stanId' i@(t:'_':s) = case t of
+  'i' -> Right (Dummy l p)
+  'x' -> Right (Volatile l p)
+  'v' -> Right (Internal l p)
+  _ -> Left i
+  where [l,p] = read <$> splitOn "_" s
+stanId' i = Left i
 
 stanNodeRef :: NodeRef -> String
 stanNodeRef (Var s _) = stanId s
@@ -89,10 +97,12 @@ stanBuiltinFunctions =
   ,("det",         ["determinant",        "to_matrix"])
   ,("inv",         ["inverse",            "to_matrix"])
   ,("negate",      ["-"])
+  ,("sqrt",        ["sqrt"])
   ]
 
 stanVectorisedDistributions =
   [("bernoulliLogits", "bernoulli_logit")
+  ,("inv_gamma",       "inv_gamma")
   ,("normals",         "normal")
   ,("uniforms",        "uniform")
   ]
@@ -165,9 +175,11 @@ stanPNode name (Dist f args t) | isJust f' && length dims > 1 =
         idxs = [name ++"_index_"++ show i | i <- [1..length dims]]
         idxs' = "["++ intercalate "," idxs ++"]"
         g arg = stanNodeRef arg ++ idxs'
-stanPNode name (Dist f args _) =
-    name ++" ~ "++ fromMaybe f (lookup f stanBuiltinDistributions) ++
+stanPNode name d@(Dist f args _)
+  | isJust $ lookup f stanBuiltinDistributions =
+    name ++" ~ "++ fromJust (lookup f stanBuiltinDistributions) ++
       "("++ stanNodeRef `commas` args ++");"
+  | otherwise = error $ "stanPNode "++ show d
 stanPNode name (Loop sh ldag body _) =
     forLoop (map stanId $ inputs ldag) sh $
         let lval = name ++"["++ stanId `commas` inputs ldag ++"]"
@@ -226,6 +238,13 @@ stanConstVal c = "structure(" <> v <> ", .Dim = " <> stanVector hi <> ")"
 stanDump :: Env -> LC.ByteString
 stanDump = LC.unlines . map f . Map.toList
   where f (n,x) = LC.pack (stanId n) <> " <- " <> stanConstVal x
+
+stanRead :: [[String]] -> [Env]
+stanRead (header:rs) =
+  [Map.fromList [(k, arrayStrings v) | (Right k, v) <- parseRow r] | r <- rs]
+  where header' = [(stanId' x, map read xs :: [Integer])
+                  | (x:xs) <- splitOn "." <$> header]
+        parseRow = groupSort . zipWith (\(a,b) c -> (a,(b,c))) header'
 
 
 ------------------------------------------------------------------------------
@@ -310,10 +329,10 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
 
     when (isJust init) $
       LC.writeFile (basename ++".init") $
-        stanDump (unifyTuple' (definitions p) rets (fromJust init) (constraints p))
+        stanDump $ unifyTuple' block rets (fromJust init) given
 
     putStrLn "--- Sampling Stan model ---"
-    LC.writeFile (basename ++".data") $ stanDump (constraints p)
+    LC.writeFile (basename ++".data") $ stanDump given
     -- TODO: avoid shell injection
     system_ $ unwords
       [exename
@@ -324,25 +343,15 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
       ]
     content <- lines <$> readFile (basename ++".csv")
     putStrLn . unlines $ filter (('#'==) . head) content
+    let table = map (splitOn ",") $ filter noComment content
     putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
 
     putStrLn "--- Removing temporary files ---"
-    -- TODO: will fail if any rets are deterministic transforms of parameters
-    return $ extractCSV content
-  where (rets,p) = runProgExprs prog
-        extractCSV content = map f (tail table)
-          where noComment row = row /= "" && head row /= '#'
-                table = map (splitOn ",") $ filter noComment content
-                readDouble = read :: String -> Double
-                slice xs = map (xs !!)
-                f row = fromConstVals $ do
-                  r <- rets
-                  return $ case stanNodeRef r `elemIndex` head table of
-                    Just col -> real . readDouble $ row !! col
-                    Nothing ->
-                      let prefix = stanNodeRef r ++ "."
-                          cols = isPrefixOf prefix `findIndices` head table
-                      in fromList (real . readDouble <$> row `slice` cols)
+    return [fromConstVals [fromJust $
+              evalNodeRef (Map.union given env) block r | r <- rets]
+           | env <- stanRead table]
+  where (rets,p@(PBlock block _ given)) = runProgExprs prog
+        noComment row = row /= "" && head row /= '#'
 
 -- TODO: deprecate these
 hmcStan :: (ExprTuple t) => Int -> Prog t -> IO [t]

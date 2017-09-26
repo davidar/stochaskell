@@ -39,6 +39,7 @@ library
                      , cryptohash
                      , data-binary-ieee754
                      , directory
+                     , extra
                      , hmatrix
                      , lazy-csv
                      , logfloat

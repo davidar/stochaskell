@@ -153,6 +153,11 @@ listArray' sh xs = if any isApprox xs
   then Approx $ listArray (unzip sh) (real    <$> xs)
   else Exact  $ listArray (unzip sh) (integer <$> xs)
 
+-- TODO: Exact when possible
+arrayStrings :: [([Integer], String)] -> ConstVal
+arrayStrings l = Approx $ array (minimum ks, maximum ks) [(k, read v) | (k,v) <- l]
+  where ks = map fst l
+
 elems' :: ConstVal -> [ConstVal]
 elems' (Exact  a) = map fromIntegral (elems a)
 elems' (Approx a) = map fromDouble   (elems a)
