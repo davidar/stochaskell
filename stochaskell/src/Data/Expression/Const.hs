@@ -7,6 +7,7 @@ import Prelude hiding ((<*),(*>))
 import Data.Array.Abstract
 import Data.Array.Unboxed hiding ((!),bounds)
 import Data.Boolean
+import Data.Char
 import Data.Number.Transfinite hiding (log)
 import Data.Ratio
 import Debug.Trace
@@ -34,6 +35,11 @@ instance Show ConstVal where
     show c | dimension c >= 1 = show (toList c)
     show (Exact  a) | isScalar a = show (toScalar a)
     show (Approx a) | isScalar a = show (toScalar a)
+
+instance Read ConstVal where
+  readsPrec d (c:s) | isSpace c = readsPrec d s
+  readsPrec d s@('[':_) = [(fromList   x, s') | (x, s') <- readsPrec d s]
+  readsPrec d s         = [(fromDouble x, s') | (x, s') <- readsPrec d s] -- TODO: Int when possible
 
 approx :: ConstVal -> ConstVal
 approx (Exact a) = Approx (amap fromIntegral a)
@@ -165,6 +171,10 @@ elems' (Approx a) = map fromDouble   (elems a)
 slice :: ConstVal -> AbstractArray Integer [Integer] -> ConstVal
 slice (Exact  a) i = Exact  $ ixmap (bounds i) (i!) a
 slice (Approx a) i = Approx $ ixmap (bounds i) (i!) a
+
+reshape :: [Interval Integer] -> ConstVal -> ConstVal
+reshape sh (Exact  a) = Exact  $ listArray (unzip sh) (elems a)
+reshape sh (Approx a) = Approx $ listArray (unzip sh) (elems a)
 
 instance Num ConstVal where
     (+) = constBinOp (+)

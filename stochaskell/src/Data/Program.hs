@@ -106,6 +106,12 @@ modelSkeleton pb@(PBlock block _ given) = tparams
           where g i = let n = fromJust $ Map.lookup i samples
                       in Set.filter isInternal $ dependsPNode block n
 
+evalProg :: (ExprTuple t) => Env -> Prog t -> Maybe t
+evalProg env prog = do
+  xs <- sequence (evalNodeRef (Map.union given env) block <$> rets)
+  return $ fromConstVals xs
+  where (rets, PBlock block _ given) = runProgExprs prog
+
 
 ------------------------------------------------------------------------------
 -- PRIMITIVE DISTRIBUTIONS                                                  --

@@ -4,12 +4,12 @@ import Control.Monad
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Const.IO
+import Data.Expression.Eval
 import Data.List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Program
-import Data.Ratio
 import qualified Data.Set as Set
 import System.Directory
 import System.IO.Temp
@@ -31,19 +31,33 @@ edNodeRef :: NodeRef -> String
 edNodeRef (Var s _) = edId s
 edNodeRef (Const c RealT) = show $ real c
 edNodeRef (Const c _) = show c
+edNodeRef (Index (Var f (ArrayT _ sh _)) js) =
+  edId f ++"["++ intercalate "," (zipWith g (reverse js) (map fst sh)) ++"]"
+  where g i l = edNodeRef i ++"-"++ edNodeRef l
 
 edBuiltinFunctions =
-  [("#>", "ed.dot")
+  [("#>",   "ed.dot")
+  ,("**",   "tf.pow")
+  ,("<>",   "tf.matmul")
+  ,("inv",  "tf.matrix_inverse")
+  ,("chol", "tf.cholesky")
+  ,("sqrt", "tf.sqrt")
+  ,("tr'",  "tf.matrix_transpose")
   ]
 
 edOperators =
   [("+",   "+")
+  ,("-",   "-")
+  ,("*",   "*")
+  ,("*>",  "*")
   ]
 
 edBuiltinDistributions =
-  [("bernoulliLogits", ["Bernoulli", "logits"])
-  ,("normal",          ["Normal",    "loc", "scale"])
-  ,("normals",         ["Normal",    "loc", "scale"])
+  [("bernoulliLogits", ["Bernoulli",    "logits"])
+  ,("inv_gamma",       ["InverseGamma", "concentration", "rate"])
+  ,("multi_normal",    ["MultivariateNormalFullCovariance", "loc", "covariance_matrix"])
+  ,("normal",          ["Normal",       "loc", "scale"])
+  ,("normals",         ["Normal",       "loc", "scale"])
   ,("uniforms",        ["Uniform"])
   ]
 
@@ -64,9 +78,10 @@ edNode r _ (Apply "getExternal" [Var i t] _) =
 edNode _ name (Apply op [i,j] _) | s /= "" =
   name ++" = "++ edNodeRef i ++" "++ s ++" "++ edNodeRef j
   where s = fromMaybe "" $ lookup op edOperators
-edNode _ name (Apply f js _) =
-  name ++" = "++ s ++"("++ edNodeRef `commas` js ++")"
-  where s = fromMaybe f (lookup f edBuiltinFunctions)
+edNode _ name a@(Apply f js _)
+  | s /= "" = name ++" = "++ s ++"("++ edNodeRef `commas` js ++")"
+  | otherwise = error $ "edNode "++ show a
+  where s = fromMaybe "" (lookup f edBuiltinFunctions)
 edNode r name (Array sh dag ret (ArrayT _ _ t))
   | edDAG r dag /= "" = -- TODO: or ret depends on index
     "def "++ fn ++":\n"++
@@ -84,9 +99,11 @@ edNode r name (Array sh dag ret (ArrayT _ _ t))
 edNode _ _ n = error $ "edNode "++ show n
 
 edPNode :: Label -> PNode -> String
-edPNode name (Dist f args t) | lookup f edBuiltinDistributions /= Nothing =
+edPNode name d@(Dist f args t)
+  | lookup f edBuiltinDistributions /= Nothing =
   name ++" = ed.models."++ c ++ "("++ ps ++")\n"++
   "dim_"++ name ++" = ["++ g `commas` typeDims t ++"]"
+  | otherwise = error $ "edPNode "++ show d
   where c:params = fromJust $ lookup f edBuiltinDistributions
         h p a = p ++"="++ edNodeRef a
         ps | null params = edNodeRef `commas` args
@@ -103,37 +120,49 @@ edDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = edId $ Internal (dagLevel dag) i
   in edNode r name n
 
-edProgram :: (ExprTuple t) => Int -> Int -> Double -> Prog t -> String
-edProgram numSamples numSteps stepSize prog =
+edProgram :: (ExprTuple t) => Int -> Int -> Double -> Prog t -> Maybe t -> String
+edProgram numSamples numSteps stepSize prog init =
   edPrelude ++"\n"++
   "if True:\n"++
     edDAG pn (head block) ++"\n"++
-  "latent = "++ printedRets ++"\n"++
+  "latent = "++ latent ++"\n"++
   "data = "++ printedConds ++"\n"++
   "inference = ed.HMC(latent, data)\n"++
   "stdout = sys.stdout; sys.stdout = sys.stderr\n"++
   "inference.run(step_size="++ show stepSize ++
                ",n_steps="++ show numSteps ++")\n"++
   "sys.stdout = stdout\n"++
-  "print(zip(*[q.params.eval().tolist() for q in latent.values()]))"
+  "print(map(list, zip(*[q.params.eval().tolist() for q in latent.values()])))"
   where (rets, pb@(PBlock block _ given)) = runProgExprs prog
         skel = modelSkeleton pb
         pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb
-        printedRets = "OrderedDict(["++ g `commas` rets ++"])"
-        g r = "("++ edNodeRef r ++", ed.models.Empirical(params=tf.Variable("++
-                "tf.zeros(["++ show numSamples ++"] + dim_"++ edNodeRef r ++"))))"
+        latent = "OrderedDict(["++ g `commas` (Map.keys pn \\ Map.keys given) ++"])"
+        g i | isJust init = pre ++"np.load('"++ edId i ++".npy')*tf.ones"++ post
+            | otherwise = pre ++"tf.zeros"++ post
+          where pre = "("++ edId i ++", ed.models.Empirical(params=tf.Variable("
+                post = "(["++ show numSamples ++"] + dim_"++ edId i ++"))))"
         printedConds = "{"++ intercalate ", "
           [edId k ++": np.load('"++ edId k ++".npy')"
           | k <- Map.keys given, k `Set.member` skel] ++"}"
 
-hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> Prog t -> IO [t]
-hmcEdward numSamples numSteps stepSize prog = withSystemTempDirectory "edward" $ \tmpDir -> do
-  pwd <- getCurrentDirectory
-  setCurrentDirectory tmpDir
-  forM_ (Map.toList given) $ \(i,c) ->
-    writeNPy (edId i ++".npy") c
-  out <- readProcess (pwd ++"/edward/env/bin/python") [] $
-    edProgram numSamples numSteps stepSize prog
-  setCurrentDirectory pwd
-  return (read out)
-  where (_, PBlock _ _ given) = runProgExprs prog
+hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> Prog t -> Maybe t -> IO [t]
+hmcEdward numSamples numSteps stepSize prog init =
+  withSystemTempDirectory "edward" $ \tmpDir -> do
+    pwd <- getCurrentDirectory
+    setCurrentDirectory tmpDir
+    when (isJust init) $
+      dump $ unifyTuple' block rets (fromJust init) given
+    dump given
+    let python = pwd ++"/edward/env/bin/python"
+    --callProcess python []
+    out <- readProcess python [] $
+      edProgram numSamples numSteps stepSize prog init
+    setCurrentDirectory pwd
+    let vals = zipWith reshape lShapes <$> read out
+    return [fromJust $ evalProg env prog
+           | xs <- vals, let env = Map.fromList $ zip (Map.keys latents) xs]
+  where (rets, pb@(PBlock block _ given)) = runProgExprs prog
+        dump env = forM_ (Map.toList env) $ \(i,c) -> do
+                     writeNPy (edId i ++".npy") c
+        latents = pnodes pb Map.\\ given
+        lShapes = evalShape given block . typeDims . typePNode <$> Map.elems latents

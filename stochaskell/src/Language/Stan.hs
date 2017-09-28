@@ -347,9 +347,7 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
     putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
 
     putStrLn "--- Removing temporary files ---"
-    return [fromConstVals [fromJust $
-              evalNodeRef (Map.union given env) block r | r <- rets]
-           | env <- stanRead table]
+    return [fromJust $ evalProg env prog | env <- stanRead table]
   where (rets,p@(PBlock block _ given)) = runProgExprs prog
         noComment row = row /= "" && head row /= '#'
 
