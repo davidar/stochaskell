@@ -28,9 +28,13 @@ pmNodeRef (Var s _) = pmId s
 pmNodeRef (Const c _) = show c
 
 pmBuiltinFunctions =
-  [("inv",  "pm.math.matrix_inverse")
-  ,("sqrt", "pm.math.sqrt")
-  ,("chol", "theano.tensor.slinalg.cholesky")
+  [("inv",      "pm.math.matrix_inverse")
+  ,("sqrt",     "pm.math.sqrt")
+  ,("exp",      "pm.math.exp")
+  ,("diag",     "theano.tensor.basic.diag")
+  ,("chol",     "theano.tensor.slinalg.cholesky")
+  ,("asColumn", "ascolumn")
+  ,("asRow",    "asrow")
   ]
 
 pmOperators =
@@ -38,6 +42,7 @@ pmOperators =
   ,("-",   "-")
   ,("*",   "*")
   ,("*>",  "*")
+  ,("/",   "/")
   ,("**",  "**")
   ]
 
@@ -55,8 +60,12 @@ pmPrelude = unlines
   ,"import pymc3 as pm"
   ,"import sys"
   ,"import theano.tensor as tt"
+  ,"import theano.tensor.basic"
   ,"import theano.tensor.slinalg"
 --  ,"from memory_profiler import profile"
+  ,""
+  ,"def ascolumn(a): return a.dimshuffle(0,'x')"
+  ,"def asrow(a):    return a.dimshuffle('x',0)"
   ]
 
 pmNode :: (Map Id PNode, Env) -> Label -> Node -> String

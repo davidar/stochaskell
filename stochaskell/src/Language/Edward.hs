@@ -36,13 +36,18 @@ edNodeRef (Index (Var f (ArrayT _ sh _)) js) =
   where g i l = edNodeRef i ++"-"++ edNodeRef l
 
 edBuiltinFunctions =
-  [("#>",   "ed.dot")
-  ,("**",   "tf.pow")
-  ,("<>",   "tf.matmul")
-  ,("inv",  "tf.matrix_inverse")
-  ,("chol", "tf.cholesky")
-  ,("sqrt", "tf.sqrt")
-  ,("tr'",  "tf.matrix_transpose")
+  [("#>",       "ed.dot")
+  ,("**",       "tf.pow")
+  ,("<>",       "tf.matmul")
+  ,("inv",      "tf.matrix_inverse")
+  ,("chol",     "tf.cholesky")
+  ,("sqrt",     "tf.sqrt")
+  ,("tr'",      "tf.matrix_transpose")
+  ,("exp",      "tf.exp")
+  ,("diag",     "tf.diag")
+  ,("==",       "all_equal")
+  ,("asColumn", "ascolumn")
+  ,("asRow",    "asrow")
   ]
 
 edOperators =
@@ -50,6 +55,7 @@ edOperators =
   ,("-",   "-")
   ,("*",   "*")
   ,("*>",  "*")
+  ,("/",   "/")
   ]
 
 edBuiltinDistributions =
@@ -68,6 +74,10 @@ edPrelude = unlines
   ,"import edward as ed"
   ,"import numpy as np"
   ,"import tensorflow as tf"
+  ,""
+  ,"def all_equal(x,y): return tf.reduce_all(tf.equal(x,y))"
+  ,"def ascolumn(a): return tf.reshape(a, (-1, 1))"
+  ,"def asrow(a):    return tf.reshape(a, ( 1,-1))"
   ]
 
 edNode :: Map Id PNode -> Label -> Node -> String
@@ -75,6 +85,9 @@ edNode r _ (Apply "getExternal" [Var i t] _) =
   case Map.lookup i r of
     Just n  -> edPNode       (edId i) n
     Nothing -> edPlaceholder (edId i) t
+edNode _ name (Apply "ifThenElse" [a,b,c] _) =
+  name ++" = tf.cond("++ edNodeRef a ++", lambda: "++ edNodeRef b
+                                     ++", lambda: "++ edNodeRef c ++")"
 edNode _ name (Apply op [i,j] _) | s /= "" =
   name ++" = "++ edNodeRef i ++" "++ s ++" "++ edNodeRef j
   where s = fromMaybe "" $ lookup op edOperators

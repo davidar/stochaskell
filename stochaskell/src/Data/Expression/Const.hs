@@ -1,5 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FlexibleContexts, RankNTypes,
-             TypeFamilies #-}
+             TypeFamilies, MonadComprehensions #-}
 module Data.Expression.Const where
 
 import Prelude hiding ((<*),(*>))
@@ -49,17 +49,21 @@ isApprox :: ConstVal -> Bool
 isApprox (Approx _) = True
 isApprox (Exact  _) = False
 
+-- TODO: generalise
 broadcast :: (ConstVal,ConstVal) -> (ConstVal,ConstVal)
 broadcast (a',b')
-  | bounds a == bounds b = (a,b)
-  | bounds a == ([],[]) =
+  | shape a == shape b = (a,b)
+  | shape a == [] =
     let n = length . range $ bounds b
     in (approx' $ listArray' (shape b) (replicate n a), b)
-  | bounds b == ([],[]) =
+  | shape b == [] =
     let n = length . range $ bounds a
     in (a, approx' $ listArray' (shape a) (replicate n b))
+  | [(1,m),(1,1)] <- shape a, [(1,1),(1,n)] <- shape b =
+    (a `slice` [[i,1] | i <- 1...m, j <- 1...n]
+    ,b `slice` [[1,j] | i <- 1...m, j <- 1...n])
   | otherwise = error $ "unable to broadcast incompatible dimensions: "++
-                        show (bounds a) ++", "++ show (bounds b)
+                        show (shape a) ++", "++ show (shape b)
   where approx' = if isApprox a' || isApprox b' then approx else id
         (a,b) = (approx' a', approx' b')
 
@@ -261,9 +265,12 @@ instance InnerProduct ConstVal ConstVal where
 instance Matrix ConstVal ConstVal ConstVal where
     a <> b = fromMatrix $ toMatrix a <> toMatrix b
 
-instance LinearOperator ConstVal ConstVal ConstVal where
+instance LinearOperator ConstVal ConstVal where
     m  #> v = fromVector $ toMatrix m  #> toVector v
     m <\> v = fromVector $ toMatrix m <\> toVector v
+    diag     = fromMatrix . diag     . toVector
+    asColumn = fromMatrix . asColumn . toVector
+    asRow    = fromMatrix . asRow    . toVector
 
 instance SquareMatrix ConstVal ConstVal where
     chol   = fromMatrix . chol   . toMatrix

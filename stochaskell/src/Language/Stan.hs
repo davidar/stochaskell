@@ -98,25 +98,31 @@ stanBuiltinFunctions =
   ,("inv",         ["inverse",            "to_matrix"])
   ,("negate",      ["-"])
   ,("sqrt",        ["sqrt"])
+  ,("exp",         ["exp"])
+  ,("diag",        ["diag_matrix"])
+  ,("asColumn",    ["to_matrix", "to_vector"])
+  ,("asRow",       ["to_matrix", "to_row_vector"])
   ]
 
 stanVectorisedDistributions =
   [("bernoulliLogits", "bernoulli_logit")
-  ,("inv_gamma",       "inv_gamma")
   ,("normals",         "normal")
   ,("uniforms",        "uniform")
   ]
 
 stanBuiltinDistributions =
   [("bernoulliLogit",  "bernoulli_logit")
+  ,("inv_gamma",       "inv_gamma")
+  ,("normal",          "normal")
+  ,("uniform",         "uniform")
   ] ++ stanVectorisedDistributions
 
 stanOperators =
   [("+",   "+")
   ,("-",   "-")
-  ,("*",   "*")
+  ,("*",   ".*")
   ,("*>",  "*")
-  ,("/",   "/")
+  ,("/",   "./")
   ,("==",  "==")
   ,("**",  "^")
   ]
@@ -136,9 +142,15 @@ stanNode name (Apply "ifThenElse" [a,b,c] _) =
     name ++" = "++ stanNodeRef a ++" ? "++ stanNodeRef b ++" : "++ stanNodeRef c ++";"
 stanNode name (Apply "tr'" [a] _) =
     name ++" = "++ stanNodeRef a ++"';"
-stanNode name (Apply op [i,j] _) | s /= "" =
+stanNode name (Apply op [i,j] _)
+  | isJust $ lookup op stanOperators,
+    (ArrayT _ [(Const 1 IntT, Const m IntT), (Const 1 IntT, Const 1 IntT)] _) <- typeRef i,
+    (ArrayT _ [(Const 1 IntT, Const 1 IntT), (Const 1 IntT, Const n IntT)] _) <- typeRef j =
+    name ++" = rep_matrix(to_vector("++ stanNodeRef i ++"), "++ show n ++") "++
+     s ++" rep_matrix(to_row_vector("++ stanNodeRef j ++"), "++ show m ++");"
+  | isJust $ lookup op stanOperators =
     name ++" = "++ stanNodeRef i ++" "++ s ++" "++ stanNodeRef j ++";"
-  where s = fromMaybe "" $ lookup op stanOperators
+  where s = fromJust $ lookup op stanOperators
 stanNode name (Apply op [i,j] _) | isJust $ lookup op stanMatrixOperators =
     name ++" = "++ a ++"("++ stanNodeRef i ++") "++ b ++" "++ c ++"("++ stanNodeRef j ++");"
   where (a,b,c) = fromJust $ lookup op stanMatrixOperators

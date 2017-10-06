@@ -206,6 +206,15 @@ coerce a b | a == b = a
 coerce a b | (a == boolT && b == IntT) || (a == IntT && b == boolT) = IntT
 coerce IntT RealT = RealT
 coerce RealT IntT = RealT
+coerce a@(ArrayT _ _ t) t' | t == t' = a
+coerce t a@(ArrayT _ _ t') | t == t' = a
+coerce (ArrayT n sh t) (ArrayT n' sh' t') | n == n' && t == t' =
+  ArrayT n (zipWith g sh sh') t
+  where g (lo,hi) (lo',hi') | lo /= lo' = error "dimension lower bound mismatch"
+                            | hi  == hi' = (lo,hi)
+                            | lo' == hi' = (lo,hi)
+                            | lo  == hi  = (lo,hi')
+                            | otherwise = error "dimensions incompatible"
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
 cast :: Expr a -> Expr b
@@ -460,21 +469,21 @@ instance (ScalarType t, Floating t) => Floating (Expr t) where
     pi = apply "pi" RealT []
     (**) = applyClosed2 "**"
 
-    exp   = apply1 "exp"   RealT
-    log   = apply1 "log"   RealT
-    sqrt  = apply1 "sqrt"  RealT
-    sin   = apply1 "sin"   RealT
-    cos   = apply1 "cos"   RealT
-    tan   = apply1 "tan"   RealT
-    asin  = apply1 "asin"  RealT
-    acos  = apply1 "acos"  RealT
-    atan  = apply1 "atan"  RealT
-    sinh  = apply1 "sinh"  RealT
-    cosh  = apply1 "cosh"  RealT
-    tanh  = apply1 "tanh"  RealT
-    asinh = apply1 "asinh" RealT
-    acosh = apply1 "acosh" RealT
-    atanh = apply1 "atanh" RealT
+    exp   = applyClosed1 "exp"
+    log   = applyClosed1 "log"
+    sqrt  = applyClosed1 "sqrt"
+    sin   = applyClosed1 "sin"
+    cos   = applyClosed1 "cos"
+    tan   = applyClosed1 "tan"
+    asin  = applyClosed1 "asin"
+    acos  = applyClosed1 "acos"
+    atan  = applyClosed1 "atan"
+    sinh  = applyClosed1 "sinh"
+    cosh  = applyClosed1 "cosh"
+    tanh  = applyClosed1 "tanh"
+    asinh = applyClosed1 "asinh"
+    acosh = applyClosed1 "acosh"
+    atanh = applyClosed1 "atanh"
 
 instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = expr $ do
@@ -537,7 +546,7 @@ instance AA.InnerProduct (Expr [e]) (Expr e) where
         let (ArrayT _ _ t) = typeRef i
         simplify $ Apply "<.>" [i,j] t
 
-instance AA.LinearOperator (Expr [[e]]) (Expr [e]) (Expr [e]) where
+instance AA.LinearOperator (Expr [[e]]) (Expr [e]) where
     m #> v = expr $ do
         i <- fromExpr m
         j <- fromExpr v
@@ -547,6 +556,14 @@ instance AA.LinearOperator (Expr [[e]]) (Expr [e]) (Expr [e]) where
         i <- fromExpr v
         let (ArrayT _ [n] t) = typeRef i
         simplify $ Apply "diag" [i] (ArrayT (Just "matrix") [n,n] t)
+    asColumn v = expr $ do
+        i <- fromExpr v
+        let (ArrayT _ [n] t) = typeRef i
+        simplify $ Apply "asColumn" [i] (ArrayT (Just "matrix") [n,(Const 1 IntT, Const 1 IntT)] t)
+    asRow v = expr $ do
+        i <- fromExpr v
+        let (ArrayT _ [n] t) = typeRef i
+        simplify $ Apply "asRow"    [i] (ArrayT (Just "matrix") [(Const 1 IntT, Const 1 IntT),n] t)
 
 instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
     chol m = expr $ do
@@ -561,6 +578,17 @@ instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
         i <- fromExpr m
         let (ArrayT _ _ t) = typeRef i
         simplify $ Apply "det" [i] t
+
+instance AA.Broadcastable (Expr e) (Expr e) (Expr e) where
+    bsxfun op a b = op a b
+instance AA.Broadcastable (Expr e) (Expr [e]) (Expr [e]) where
+    bsxfun op a b = op (cast a) (cast b)
+instance AA.Broadcastable (Expr [e]) (Expr e) (Expr [e]) where
+    bsxfun op a b = op (cast a) (cast b)
+instance AA.Broadcastable (Expr e) (Expr [[e]]) (Expr [[e]]) where
+    bsxfun op a b = op (cast a) (cast b)
+instance AA.Broadcastable (Expr [[e]]) (Expr e) (Expr [[e]]) where
+    bsxfun op a b = op (cast a) (cast b)
 
 instance Boolean (Expr Bool) where
     true  = apply "true" boolT []

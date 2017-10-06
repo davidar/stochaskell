@@ -172,14 +172,22 @@ instance LA.Transposable (ShapedMatrix Double) (ShapedMatrix Double) where
 
 infixr 8 #>
 infixl 7 <\>
-class LinearOperator m u v | m -> u v where -- TODO: rm u
-    (#>)  :: m -> u -> v
-    (<\>) :: m -> v -> u
+class LinearOperator m v | m -> v, v -> m where
+    (#>)  :: m -> v -> v
+    (<\>) :: m -> v -> v
     diag  :: v -> m
+    asColumn :: v -> m
+    asRow :: v -> m
 
-instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) (ShapedVector Double) where
+outer :: (LinearOperator m v, Num m) => v -> v -> m
+outer u v = asColumn u * asRow v
+
+instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) where
     (ShMat r _ m)  #> (ShVec _ v) = ShVec r . head . LAD.toColumns $ (LA.<>)  m (LAD.asColumn v)
     (ShMat _ c m) <\> (ShVec _ v) = ShVec c . head . LAD.toColumns $ (LA.<\>) m (LAD.asColumn v)
+    diag     (ShVec n v) = ShMat n n $ LAD.diag v
+    asColumn (ShVec (l,h) v) = ShMat (l,h) (l,l) $ LAD.asColumn v
+    asRow    (ShVec (l,h) v) = ShMat (l,l) (l,h) $ LAD.asRow v
 
 class SquareMatrix m e | m -> e where
     chol   :: m -> m -- lower-triangular
@@ -193,6 +201,9 @@ instance SquareMatrix (ShapedMatrix Double) Double where
     det    (ShMat _ _ m) = LA.det m
     logDet (ShMat _ _ m) = log_det
       where (inv_m,(log_det,sign_det)) = LA.invlndet m
+
+class Broadcastable a b c | a b -> c where
+    bsxfun :: (c -> c -> c) -> a -> b -> c
 
 class Joint m i r f | m -> i where
     joint :: (AbstractArray i r -> f) -> AbstractArray i (m r) -> m f
