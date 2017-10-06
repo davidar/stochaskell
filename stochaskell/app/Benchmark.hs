@@ -18,8 +18,7 @@ logreg n d = do
   --w <- joint vector [ normal 0 3 | j <- 1...d ]
   w <- normals (vector [ 0 | j <- 1...d ]) (vector [ 3 | j <- 1...d ])
   b <- normal 0 3
-  -- TODO: automatic broadcasting
-  let z = (x #> w) + vector [ b | i <- 1...n ]
+  let z = bsxfun (+) (x #> w) b
   y <- bernoulliLogits z
   return (x,w,b,y)
 
@@ -54,6 +53,34 @@ nlm' n k x = do
   y <- normals z (vector [ sqrt v | i <- 1...n ])
 
   return (alpha,beta,y)
+
+distEucSq :: RVec -> RVec -> RMat
+distEucSq a b = bsxfun (+) (asColumn $ square a) (asRow $ square b) - (2 *> outer a b)
+
+kernelSE' :: R -> R -> Z -> RVec -> RVec -> RMat
+kernelSE' lsv lls2 n a b =
+  --matrix [ exp (lsv - ((a!i) - (b!j))^2 / (2 * exp lls2))
+  --         + if (a!i) == (b!j) then 0.01 else 0
+  --       | i <- 1...n, j <- 1...n ]
+  exp (bsxfun (-) lsv (bsxfun (/) (distEucSq a b) (2 * exp lls2)))
+  + diag (vector [ 0.01 | i <- 1...n ])
+
+gpClassifier :: (Z -> RVec -> RVec -> RMat) -> Z -> RVec -> P (RVec,BVec)
+gpClassifier kernel n s = do
+  let mu  = vector [ 0 | _ <- 1...n ]
+      cov = kernel n s s
+  g <- normalChol n mu cov
+  phi <- bernoulliLogits g
+  return (g,phi)
+
+gpclas :: Z -> P (R,R,RVec,RVec,BVec)
+gpclas n = do
+  lsv <- normal 0 1
+  lls2 <- normal (log 100) 2
+  x <- uniforms (vector [  0 | i <- 1...n ])
+                (vector [ 50 | i <- 1...n ])
+  (g,phi) <- gpClassifier (kernelSE' lsv lls2) n x
+  return (lsv,lls2,x,g,phi)
 
 covtype :: IO ()
 covtype = do
@@ -92,6 +119,21 @@ poly' = do
   msgStan   <- benchStanHMC   1000 10 stepSize post init
   putStrLn "==="
   putStrLn $ "TRUTH:\t"++ show (alphaTrue, betaTrue)
+  putStrLn msgStan
+  putStrLn msgPyMC3
+  putStrLn msgEdward
+
+gpc :: IO ()
+gpc = do
+  let n = 100
+  (lsvTrue,lls2True,xData,_,zData) <- simulate (gpclas n)
+  let post = [ (v,l) | (v,l,x,_,z) <- gpclas n, x == xData, z == zData ]
+      stepSize = 0.1
+  msgEdward <- benchEdwardHMC 1000 10 stepSize post Nothing
+  msgPyMC3  <- benchPyMC3HMC  1000 10 stepSize post Nothing
+  msgStan   <- benchStanHMC   1000 10 stepSize post Nothing
+  putStrLn "==="
+  putStrLn $ "TRUTH:\t"++ show (lsvTrue, lls2True)
   putStrLn msgStan
   putStrLn msgPyMC3
   putStrLn msgEdward
@@ -141,4 +183,4 @@ benchEdwardHMC numSamp numSteps stepSize p init = do
       bEdward = mean (map snd samples)
   return $ "EDWARD:\t"++ show (aEdward, bEdward) ++" took "++ show (tocEdward - ticEdward)
 
-main = poly'
+main = gpc

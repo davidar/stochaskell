@@ -60,6 +60,9 @@ system_ cmd = do
 mean :: (Foldable t, Fractional a) => t a -> a
 mean xs = sum xs / fromIntegral (length xs)
 
+square :: (Num a) => a -> a
+square x = x*x
+
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
     (-) = zipWith (-)
@@ -67,10 +70,30 @@ instance (Num t) => Num [t] where
     negate = map negate
     abs    = map abs
     signum = map signum
-    fromInteger x = repeat $ fromInteger x
+    fromInteger = repeat . fromInteger
 
 instance (Fractional t) => Fractional [t] where
   (/) = zipWith (/)
+  fromRational = repeat . fromRational
+
+instance (Floating t) => Floating [t] where
+  pi = repeat pi
+  (**) = zipWith (**)
+  exp = map exp
+  log = map log
+  sqrt = map sqrt
+  sin = map sin
+  cos = map cos
+  tan = map tan
+  asin = map asin
+  acos = map acos
+  atan = map atan
+  sinh = map sinh
+  cosh = map cosh
+  tanh = map tanh
+  asinh = map asinh
+  acosh = map acosh
+  atanh = map atanh
 
 type instance BooleanOf (a,b,c,d,e,f,g) = BooleanOf a
 
