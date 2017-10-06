@@ -179,14 +179,10 @@ stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) 
 stanNode _ node = error $ "unable to codegen node "++ show node
 
 stanPNode :: Label -> PNode -> String
-stanPNode name (Dist f args t) | isJust f' && length dims > 1 =
-  forLoop idxs dims $
-    "  "++ name ++ idxs' ++" ~ "++ fromJust f' ++"("++ g `commas` args ++");"
+stanPNode name (Dist f args t) | isJust f' && length (typeDims t) > 1 =
+  "to_vector("++ name ++") ~ "++ fromJust f' ++"("++ g `commas` args ++");"
   where f' = lookup f stanVectorisedDistributions
-        dims = typeDims t
-        idxs = [name ++"_index_"++ show i | i <- [1..length dims]]
-        idxs' = "["++ intercalate "," idxs ++"]"
-        g arg = stanNodeRef arg ++ idxs'
+        g arg = "to_vector("++ stanNodeRef arg ++")"
 stanPNode name d@(Dist f args _)
   | isJust $ lookup f stanBuiltinDistributions =
     name ++" ~ "++ fromJust (lookup f stanBuiltinDistributions) ++
