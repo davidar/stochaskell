@@ -3,16 +3,15 @@
 module Data.Random.Distribution.Abstract where
 
 import qualified Data.Random as Rand
-import Data.Random.Distribution.Categorical (Categorical)
 import qualified Data.Random.Distribution.Categorical as Categorical
-import Data.Random.Distribution.Poisson (Poisson(..))
+import qualified Data.Random.Distribution.Poisson as Poisson
 import System.Random
 
 class (Monad m) => Distribution d s m t | d m t -> s where
-    sample :: d s t -> m t
+    sample :: d s -> m t
 
-data Bernoulli p t = Bernoulli p
-                   | BernoulliLogit p
+data Bernoulli p = Bernoulli p
+                 | BernoulliLogit p
 instance Distribution Bernoulli Double IO Bool where
     sample (Bernoulli 0) = return False
     sample (Bernoulli 1) = return True
@@ -26,39 +25,40 @@ bernoulli p = sample $ Bernoulli p
 bernoulliLogit :: Distribution Bernoulli s m t => s -> m t
 bernoulliLogit l = sample $ BernoulliLogit l
 
-data Bernoullis p t = Bernoullis p
-                    | BernoulliLogits p
+data Bernoullis p = Bernoullis p
+                  | BernoulliLogits p
 bernoullis :: Distribution Bernoullis s m t => s -> m t
 bernoullis p = sample $ Bernoullis p
 bernoulliLogits :: Distribution Bernoullis s m t => s -> m t
 bernoulliLogits l = sample $ BernoulliLogits l
 
-data Beta a t = Beta a a
-beta :: Distribution Beta s m t => s -> s -> m t
-beta a b = sample $ Beta a b
+newtype Beta a = Beta a
+beta :: Distribution Beta (s,s) m t => s -> s -> m t
+beta a b = sample $ Beta (a,b)
 
-instance Distribution Categorical Double IO t where
-    sample = Rand.sample
-categorical :: (Num p, Distribution Categorical p m t) => [(p,t)] -> m t
-categorical l = sample $ Categorical.fromList l
+newtype Categorical a = Categorical a
+instance Distribution Categorical [(Double,t)] IO t where
+    sample (Categorical l) = Rand.sample $ Categorical.fromList l
+categorical :: (Num p, Distribution Categorical [(p,t)] m t) => [(p,t)] -> m t
+categorical l = sample $ Categorical l
 
-data Gamma a t = Gamma a a
-instance Distribution Gamma Double IO Double where
-    sample (Gamma a b) = Rand.sample (Rand.Gamma a (1/b))
-gamma :: Distribution Gamma s m t => s -> s -> m t
-gamma a b = sample $ Gamma a b
-exponential :: (Num s, Distribution Gamma s m t) => s -> m t
+newtype Gamma a = Gamma a
+instance Distribution Gamma (Double,Double) IO Double where
+    sample (Gamma (a,b)) = Rand.sample (Rand.Gamma a (1/b))
+gamma :: Distribution Gamma (s,s) m t => s -> s -> m t
+gamma a b = sample $ Gamma (a,b)
+exponential :: (Num s, Distribution Gamma (s,s) m t) => s -> m t
 exponential = gamma 1
 
-data InvGamma a t = InvGamma a a
-instance Distribution InvGamma Double IO Double where
-    sample (InvGamma a b) = do
+newtype InvGamma a = InvGamma a
+instance Distribution InvGamma (Double,Double) IO Double where
+    sample (InvGamma (a,b)) = do
       x <- gamma a b
       return (1 / x)
-invGamma :: Distribution InvGamma s m t => s -> s -> m t
-invGamma a b = sample $ InvGamma a b
+invGamma :: Distribution InvGamma (s,s) m t => s -> s -> m t
+invGamma a b = sample $ InvGamma (a,b)
 
-data Geometric a t = Geometric a
+newtype Geometric a = Geometric a
 instance Distribution Geometric Double IO Integer where
     sample (Geometric p) = do
       coin <- bernoulli p
@@ -71,35 +71,36 @@ geometric a p = do
   g <- geometric 0 p
   return (fromInteger a + g)
 
-data Normal a r = Normal a
+newtype Normal a = Normal a
 instance Distribution Normal (Double,Double) IO Double where
     sample (Normal (m,s)) = Rand.sample (Rand.Normal m s)
 normal :: Distribution Normal (u,v) m t => u -> v -> m t
 normal m s = sample $ Normal (m,s)
 
-data Normals a r = Normals a
+newtype Normals a = Normals a
 normals :: Distribution Normals (u,v) m t => u -> v -> m t
 normals m s = sample $ Normals (m,s)
 
-data OrderedSample a r = OrderedSample a
+newtype OrderedSample a = OrderedSample a
 orderedSample :: Distribution OrderedSample (n,d) m t => n -> d -> m t
 orderedSample n d = sample $ OrderedSample (n,d)
 
-data PMF a r = PMF a
+newtype PMF a = PMF a
 pmf :: Distribution PMF s m t => s -> m t
 pmf a = sample $ PMF a
 
+newtype Poisson a = Poisson a
 instance Distribution Poisson Double IO Integer where
-    sample = Rand.sample
+    sample (Poisson a) = Rand.sample (Poisson.Poisson a)
 poisson :: Distribution Poisson s m t => s -> m t
 poisson a = sample $ Poisson a
 
-data Uniform a r = Uniform a a
-instance (Random t) => Distribution Uniform t IO t where
-    sample (Uniform a b) = getStdRandom $ randomR (a,b)
-uniform :: Distribution Uniform s m t => s -> s -> m t
-uniform a b = sample $ Uniform a b
+newtype Uniform a = Uniform a
+instance (Random t) => Distribution Uniform (t,t) IO t where
+    sample (Uniform (a,b)) = getStdRandom $ randomR (a,b)
+uniform :: Distribution Uniform (s,s) m t => s -> s -> m t
+uniform a b = sample $ Uniform (a,b)
 
-data Uniforms a r = Uniforms a a
-uniforms :: Distribution Uniforms s m t => s -> s -> m t
-uniforms a b = sample $ Uniforms a b
+newtype Uniforms a = Uniforms a
+uniforms :: Distribution Uniforms (s,s) m t => s -> s -> m t
+uniforms a b = sample $ Uniforms (a,b)

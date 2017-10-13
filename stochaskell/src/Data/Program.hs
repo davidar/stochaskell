@@ -18,9 +18,6 @@ import qualified Data.Number.LogFloat as LF
 import qualified Data.Random as Rand
 import Data.Random.Distribution (logPdf)
 import Data.Random.Distribution.Abstract
-import Data.Random.Distribution.Categorical (Categorical)
-import qualified Data.Random.Distribution.Categorical as Categorical
-import Data.Random.Distribution.Poisson (Poisson(..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Debug.Trace
@@ -148,28 +145,28 @@ instance Distribution Bernoullis RVec Prog BVec where
         let (ArrayT _ [n] _) = typeRef i
         return $ Dist "bernoulliLogits" [i] (ArrayT Nothing [n] boolT)
 
-instance Distribution Beta R Prog R where
-    sample (Beta a b) = dist $ do
+instance Distribution Beta (R,R) Prog R where
+    sample (Beta (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "beta" [i,j] RealT
 
-instance (ScalarType t) => Distribution Categorical R Prog (Expr t) where
-    sample cat = dist $ do
-        let (ps,xs) = unzip $ Categorical.toList cat
+instance (ScalarType t) => Distribution Categorical [(R, Expr t)] Prog (Expr t) where
+    sample (Categorical pxs) = dist $ do
+        let (ps,xs) = unzip pxs
         qs <- mapM fromExpr ps
         ys <- mapM fromExpr xs
         let TypeIs t = typeOf :: TypeOf t
         return $ Dist "categorical" (qs ++ ys) t
 
-instance Distribution Gamma R Prog R where
-    sample (Gamma a b) = dist $ do
+instance Distribution Gamma (R,R) Prog R where
+    sample (Gamma (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "gamma" [i,j] RealT
 
-instance Distribution InvGamma R Prog R where
-    sample (InvGamma a b) = dist $ do
+instance Distribution InvGamma (R,R) Prog R where
+    sample (InvGamma (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "inv_gamma" [i,j] RealT
@@ -223,26 +220,26 @@ instance Distribution Poisson R Prog Z where
         i <- fromExpr a
         return $ Dist "poisson" [i] IntT
 
-instance Distribution Uniform R Prog R where
-    sample (Uniform a b) = dist $ do
+instance Distribution Uniform (R,R) Prog R where
+    sample (Uniform (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "uniform" [i,j] RealT
 
-instance Distribution Uniforms RVec Prog RVec where
-    sample (Uniforms a b) = dist $ do
+instance Distribution Uniforms (RVec,RVec) Prog RVec where
+    sample (Uniforms (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "uniforms" [i,j] (typeRef i)
 
-instance Distribution Uniforms RMat Prog RMat where
-    sample (Uniforms a b) = dist $ do
+instance Distribution Uniforms (RMat,RMat) Prog RMat where
+    sample (Uniforms (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "uniforms" [i,j] (typeRef i)
 
-instance Distribution Uniform Z Prog Z where
-    sample (Uniform a b) = dist $ do
+instance Distribution Uniform (Z,Z) Prog Z where
+    sample (Uniform (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "discreteUniform" [i,j] IntT
