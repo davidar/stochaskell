@@ -10,7 +10,6 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
-import Data.List
 import Data.List.Extra
 import qualified Data.Map.Strict as Map
 import Data.Maybe
@@ -66,26 +65,28 @@ stanNodeRef (Index f js) =
 -- TYPES                                                                    --
 ------------------------------------------------------------------------------
 
-stanType :: Type -> String
-stanType IntT = "int"
-stanType RealT = "real"
-stanType (SubrangeT t _ _) = stanType t
-{- TODO only enable at top-level:
-stanType (SubrangeT t Nothing  Nothing ) = stan t
-stanType (SubrangeT t (Just l) Nothing ) = stan t ++"<lower="++ stan l ++">"
-stanType (SubrangeT t Nothing  (Just h)) = stan t ++"<upper="++ stan h ++">"
-stanType (SubrangeT t (Just l) (Just h)) = stan t ++"<lower="++ stan l ++
-                                                    ",upper="++ stan h ++">"
--}
-stanType (ArrayT kind n t) =
-    fromMaybe (stanType t) kind ++
+stanType :: Bool -> Type -> String
+stanType _ IntT = "int"
+stanType _ RealT = "real"
+stanType False (SubrangeT t _ _) = stanType False t
+stanType True (SubrangeT t Nothing  Nothing ) =
+  stanType False t
+stanType True (SubrangeT t (Just l) Nothing ) =
+  stanType False t ++"<lower="++ stanNodeRef l ++">"
+stanType True (SubrangeT t Nothing  (Just h)) =
+  stanType False t ++"<upper="++ stanNodeRef h ++">"
+stanType True (SubrangeT t (Just l) (Just h)) =
+  stanType False t ++"<lower="++ stanNodeRef l ++
+                     ",upper="++ stanNodeRef h ++">"
+stanType showRange (ArrayT kind n t) =
+    fromMaybe (stanType showRange t) kind ++
       "["++ stanNodeRef `commas` map snd n ++"]"
 
-stanDecl :: Label -> Type -> String
-stanDecl name (ArrayT Nothing n t) =
-    stanType t ++" "++ name ++
+stanDecl :: Bool -> Label -> Type -> String
+stanDecl showRange name (ArrayT Nothing n t) =
+    stanType showRange t ++" "++ name ++
       "["++ stanNodeRef `commas` map snd n ++"];"
-stanDecl name t = stanType t ++" "++ name ++";"
+stanDecl showRange name t = stanType showRange t ++" "++ name ++";"
 
 
 ------------------------------------------------------------------------------
@@ -169,8 +170,8 @@ stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) 
         s = typeIndex at
         loop =
           forLoop [stanId idx] [(lo,hi)] $ "  "++
-           stanDecl (stanId i) s ++"\n  "++
-           stanDecl (stanId j) t ++"\n  "++
+           stanDecl False (stanId i) s ++"\n  "++
+           stanDecl False (stanId j) t ++"\n  "++
            stanId i ++" = "++ stanId ls ++"["++
              stanNodeRef lo ++"+"++ stanNodeRef hi ++"-"++ stanId idx ++"];\n  "++
            stanId j ++" = "++ name ++";\n  {\n"++
@@ -204,7 +205,7 @@ stanDAG whitelist dag = indent $ extract decl ++ extract stanNode
           if isJust whitelist && Internal level i `Set.notMember` fromJust whitelist
           then "" else f (stanId $ Internal level i) n
         decl _ (Apply "getExternal" _ _) = ""
-        decl name node = stanDecl name $ typeNode node
+        decl name node = stanDecl False name $ typeNode node
 
 
 ------------------------------------------------------------------------------
@@ -215,10 +216,10 @@ stanProgram :: PBlock -> String
 stanProgram pb@(PBlock block refs given) =
     "data {\n"++ printRefs (\i n ->
         if getId i `elem` map Just (Map.keys given)
-        then stanDecl (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
+        then stanDecl True (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
     "parameters {\n"++ printRefs (\i n ->
         if getId i `elem` map Just (Map.keys given)
-        then "" else stanDecl (stanNodeRef i) (typePNode n)) ++"\n}\n"++
+        then "" else stanDecl True (stanNodeRef i) (typePNode n)) ++"\n}\n"++
     "model {\n"++
       stanDAG (Just tparams) (head block) ++"\n\n"++
       printRefs (\i n -> if Set.member (fromJust $ getId i) tparams
@@ -253,6 +254,7 @@ stanRead (header:rs) =
   where header' = [(stanId' x, map read xs :: [Integer])
                   | (x:xs) <- splitOn "." <$> header]
         parseRow = groupSort . zipWith (\(a,b) c -> (a,(b,c))) header'
+stanRead _ = error "CSV file contains no data"
 
 
 ------------------------------------------------------------------------------

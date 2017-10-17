@@ -2,7 +2,7 @@
              TypeFamilies, MonadComprehensions #-}
 module Data.Expression.Const where
 
-import Prelude hiding ((<*),(*>))
+import Prelude hiding ((<*),(*>),isInfinite)
 
 import Data.Array.Abstract
 import Data.Array.Unboxed hiding ((!),bounds)
@@ -312,3 +312,6 @@ instance OrdB ConstVal where
 
 instance Transfinite ConstVal where
     infinity = Approx $ fromScalar infinity
+    negativeInfinity = Approx $ fromScalar negativeInfinity
+    isInfinite (Approx a) | isScalar a = isInfinite $ toScalar a
+    isInfinite _ = False

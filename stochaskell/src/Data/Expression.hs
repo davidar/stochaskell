@@ -5,7 +5,6 @@ module Data.Expression where
 
 import Prelude hiding (const,foldl,foldr,scanl,scanr)
 
-import qualified Data.Array as A
 import qualified Data.Array.Abstract as AA
 import Data.Array.Abstract ((!))
 import qualified Data.Bimap as Bimap
@@ -14,7 +13,6 @@ import Data.Expression.Const
 import Data.List hiding (foldl,foldr,scanl,scanr)
 import Data.Maybe
 import Data.Number.Transfinite hiding (log)
-import Data.Ratio
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Control.Applicative ()
@@ -618,8 +616,8 @@ instance OrdB (Expr t) where
     (>=*) = apply2 ">=" boolT
     (>*)  = apply2 ">"  boolT
 
-instance Transfinite Z where
-    infinity = expr . return $ Const infinity IntT
+instance (Ord t, ScalarType t) => Transfinite (Expr t) where
+    infinity = constExpr infinity
 
 class ExprTuple t where
     fromExprTuple :: t -> [DExpr]
@@ -628,12 +626,16 @@ class ExprTuple t where
 zipExprTuple :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
 zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
 
-const :: forall t. (ScalarType t) => ConstVal -> Expr t
-const c = expr . return . Const c $ ArrayT Nothing sh t
+constExpr :: forall t. (ScalarType t) => ConstVal -> Expr t
+constExpr c = expr . return $ Const c t'
   where (lo,hi) = AA.bounds c
         sh = map f lo `zip` map f hi
           where f = flip Const IntT . fromInteger
         TypeIs t = typeOf :: TypeOf t
+        t' = if sh == [] then t else ArrayT Nothing sh t
+
+const :: (ScalarType t) => ConstVal -> Expr t
+const = constExpr
 
 instance (ScalarType a) => ExprTuple (Expr a) where
     fromExprTuple (a) = [erase a]

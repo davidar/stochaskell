@@ -3,6 +3,8 @@
              MonadComprehensions, GeneralizedNewtypeDeriving #-}
 module Data.Program where
 
+import Prelude hiding (isInfinite)
+
 import Control.Monad.Guard
 import Control.Monad.State
 import Data.Array.Abstract
@@ -15,6 +17,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import qualified Data.Number.LogFloat as LF
+import Data.Number.Transfinite hiding (log)
 import qualified Data.Random as Rand
 import Data.Random.Distribution (logPdf)
 import Data.Random.Distribution.Abstract
@@ -126,6 +129,22 @@ dist s = Prog $ do
         v = Var name t
     _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
     return (expr $ return v)
+
+truncated :: (Expr t) -> (Expr t) -> P (Expr t) -> P (Expr t)
+truncated a b p = Prog $ do
+  i <- liftExprBlock $ fromExpr a
+  j <- liftExprBlock $ fromExpr b
+  x <- fromProg p
+  (Var name t) <- liftExprBlock $ fromExpr x
+  PBlock block (d:rhs) given <- get
+  when (name /= Volatile (dagLevel $ head block) (length rhs)) $
+    error "truncated: program does not appear to be primitive"
+  let g k | (Const c _) <- k, isInfinite c = Nothing
+          | otherwise = Just k
+      t' = SubrangeT t (g i) (g j)
+      d' = d { typePNode = t' }
+  put $ PBlock block (d':rhs) given
+  return (expr $ return (Var name t'))
 
 instance Distribution Bernoulli R Prog B where
     sample (Bernoulli p) = dist $ do
@@ -437,6 +456,15 @@ samplePNodes env block ((ident,node):rest) = do
     samplePNodes env' block rest
 
 samplePNode :: Env -> Block -> PNode -> IO ConstVal
+samplePNode env block d@(Dist f js (SubrangeT t lo hi)) = do
+  x <- samplePNode env block (Dist f js t)
+  if x < lo' || hi' < x
+    then samplePNode env block d -- rejection
+    else return x
+  where lo' | (Just r) <- lo = fromJust $ evalNodeRef env block r
+            | otherwise = negativeInfinity
+        hi' | (Just r) <- hi = fromJust $ evalNodeRef env block r
+            | otherwise = infinity
 samplePNode env block (Dist "bernoulli" [p] _) = fromBool <$> bernoulli p'
   where p' = toDouble . fromJust $ evalNodeRef env block p
 samplePNode env block (Dist "bernoulliLogit" [l] _) = fromBool <$> bernoulli p'

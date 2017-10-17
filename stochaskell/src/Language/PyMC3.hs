@@ -98,7 +98,7 @@ pmPNode name (Dist f args t) = pmPNode' name f (map pmNodeRef args) t
 
 pmPNode' :: Label -> String -> [String] -> Type -> Maybe ConstVal -> String
 pmPNode' name f args t val | lookup f pmBuiltinDistributions /= Nothing =
-  name ++" = pm."++ c ++ "('"++ name ++"', "++ ps ++", "++ obs ++
+  name ++" = "++ ctor ++ "('"++ name ++"', "++ ps ++", "++ obs ++
     "shape=("++ g `commas` typeDims t ++"))"
   where c:params = fromJust $ lookup f pmBuiltinDistributions
         h p a = p ++"="++ a
@@ -106,6 +106,15 @@ pmPNode' name f args t val | lookup f pmBuiltinDistributions /= Nothing =
         g (a,b) = pmNodeRef b ++"-"++ pmNodeRef a ++"+1"
         obs | val == Nothing = ""
             | otherwise = "observed=np.load('"++ name ++".npy'), "
+        ctor | (SubrangeT _ lo hi) <- t, val == Nothing =
+               let kwargs = case (lo,hi) of
+                     (Just a, Just b)  -> "lower="++ pmNodeRef a ++
+                                        ", upper="++ pmNodeRef b
+                     (Just a, Nothing) -> "lower="++ pmNodeRef a
+                     (Nothing, Just b) -> "upper="++ pmNodeRef b
+                     (Nothing, Nothing) -> error "invalid subrange"
+               in "pm.Bound(pm."++ c ++", "++ kwargs ++")"
+             | otherwise = "pm."++ c
 pmPNode' _ f _ _ _ = error $ "pmPNode' "++ f
 
 pmDAG :: (Map Id PNode, Env) -> DAG -> String
