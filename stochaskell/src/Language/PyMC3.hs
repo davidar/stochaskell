@@ -26,6 +26,9 @@ pmId (Internal level i) =  "value_"++ show level ++"_"++ show i
 pmNodeRef :: NodeRef -> String
 pmNodeRef (Var s _) = pmId s
 pmNodeRef (Const c _) = show c
+pmNodeRef (Index (Var f (ArrayT _ sh _)) js) =
+  pmId f ++"["++ intercalate "," (zipWith g (reverse js) (map fst sh)) ++"]"
+  where g i l = pmNodeRef i ++"-"++ pmNodeRef l
 
 pmBuiltinFunctions =
   [("inv",      "pm.math.matrix_inverse")
@@ -35,6 +38,7 @@ pmBuiltinFunctions =
   ,("chol",     "theano.tensor.slinalg.cholesky")
   ,("asColumn", "ascolumn")
   ,("asRow",    "asrow")
+  ,("quad_form_diag", "quad_form_diag")
   ]
 
 pmOperators =
@@ -48,10 +52,15 @@ pmOperators =
 
 pmBuiltinDistributions =
   [("bernoulli",       ["Bernoulli",    "p"])
+  ,("cauchy",          ["Cauchy",       "alpha", "beta"])
+  ,("cauchys",         ["Cauchy",       "alpha", "beta"])
+  ,("gamma",           ["Gamma",        "alpha", "beta"])
   ,("inv_gamma",       ["InverseGamma", "alpha", "beta"])
   ,("normal",          ["Normal",       "mu", "sd"])
   ,("normals",         ["Normal",       "mu", "sd"])
+  ,("uniform",         ["Uniform",      "lower", "upper"])
   ,("uniforms",        ["Uniform",      "lower", "upper"])
+  ,("wishart",         ["Wishart",      "nu", "V"])
   ]
 
 pmPrelude :: String
@@ -66,6 +75,16 @@ pmPrelude = unlines
   ,""
   ,"def ascolumn(a): return a.dimshuffle(0,'x')"
   ,"def asrow(a):    return a.dimshuffle('x',0)"
+  ,"def quad_form_diag(m,v):"
+  ,"  d = theano.tensor.basic.diag(v)"
+  ,"  return d.dot(m).dot(d)"
+  ,"def lkj_corr(name, eta, n):"
+  ,"  C_triu = pm.LKJCorr(name + '_triu', eta=eta, n=n)"
+  ,"  shape = n * (n - 1) // 2"
+  ,"  tri_index = np.zeros([n, n], dtype='int32')"
+  ,"  tri_index[np.triu_indices(n, k=1)] = np.arange(shape)"
+  ,"  tri_index[np.triu_indices(n, k=1)[::-1]] = np.arange(shape)"
+  ,"  return pm.Deterministic(name, tt.fill_diagonal(C_triu[tri_index], 1))"
   ]
 
 pmNode :: (Map Id PNode, Env) -> Label -> Node -> String
@@ -90,11 +109,30 @@ pmNode r name (Array sh dag ret (ArrayT _ _ t))
 pmNode _ _ n = error $ "pmNode "++ show n
 
 pmPNode :: Label -> PNode -> Maybe ConstVal -> String
-pmPNode name (Dist "bernoulliLogit" [l] t) =
-  pmPNode' name "bernoulli" ["pm.invlogit("++ pmNodeRef l ++")"] t
-pmPNode name (Dist "bernoulliLogits" args t) =
-  pmPNode name (Dist "bernoulliLogit" args t)
-pmPNode name (Dist f args t) = pmPNode' name f (map pmNodeRef args) t
+pmPNode name (Dist "bernoulliLogit" [l] t) val =
+  pmPNode' name "bernoulli" ["pm.invlogit("++ pmNodeRef l ++")"] t val
+pmPNode name (Dist "bernoulliLogits" args t) val =
+  pmPNode name (Dist "bernoulliLogit" args t) val
+pmPNode name (Dist "lkj_corr" [v] (ArrayT _ [(Const 1 _, Const n _),_] _)) Nothing =
+  name ++" = lkj_corr('"++ name ++"', eta="++ pmNodeRef v ++", n="++ show n ++")"
+pmPNode name (Dist f args t) val =
+  pmPNode' name f (map pmNodeRef args) t val
+
+pmPNode name (Loop sh defs dist _) Nothing =
+  "def "++ fn ++":\n"++
+    pmDAG (Map.empty, emptyEnv) defs ++"\n  "++
+    "return "++ ret ++"\n"++
+  name ++" = pm.Deterministic('"++ name ++"', "++
+    "tt.stack("++ go (inputs defs) sh ++"))"
+  where fn = name ++"_fn("++ pmId `commas` inputs defs ++")"
+        go [] [] = fn
+        go (i:is) ((a,b):sh) =
+          "["++ go is sh ++" for "++ pmId i ++" in xrange("++
+            pmNodeRef a ++", "++ pmNodeRef b ++"+1)]"
+        name' = name ++ concat ["_' + str("++ pmId i ++") + '"
+                               | i <- inputs defs]
+        ret = fromJust . stripPrefix (name' ++" = ") $
+          pmPNode name' dist Nothing
 
 pmPNode' :: Label -> String -> [String] -> Type -> Maybe ConstVal -> String
 pmPNode' name f args t val | lookup f pmBuiltinDistributions /= Nothing =
