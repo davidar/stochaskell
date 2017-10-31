@@ -8,12 +8,14 @@ import Data.Array.Abstract
 import Data.Array.Unboxed hiding ((!),bounds)
 import Data.Boolean
 import Data.Char
+import Data.Monoid
 import Data.Number.Transfinite hiding (log)
 import Data.Ratio
 import Debug.Trace
 import GHC.Exts
 import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra.Data as LAD
+import Util
 
 toBool :: (Boolean b, Eq b) => b -> Bool
 toBool b = if notB b == false then True else False
@@ -49,7 +51,6 @@ isApprox :: ConstVal -> Bool
 isApprox (Approx _) = True
 isApprox (Exact  _) = False
 
--- TODO: generalise
 broadcast :: (ConstVal,ConstVal) -> (ConstVal,ConstVal)
 broadcast (a',b')
   | shape a == shape b = (a,b)
@@ -59,13 +60,12 @@ broadcast (a',b')
   | shape b == [] =
     let n = length . range $ bounds a
     in (a, approx' $ listArray' (shape a) (replicate n b))
-  | [(1,m),(1,1)] <- shape a, [(1,1),(1,n)] <- shape b =
-    (a `slice` [[i,1] | i <- 1...m, j <- 1...n]
-    ,b `slice` [[1,j] | i <- 1...m, j <- 1...n])
-  | otherwise = error $ "unable to broadcast incompatible dimensions: "++
-                        show (shape a) ++", "++ show (shape b)
+  | otherwise =
+    (a `slice` [ zipWith clip (shape a) i | i <- fromShape sh ]
+    ,b `slice` [ zipWith clip (shape b) i | i <- fromShape sh ])
   where approx' = if isApprox a' || isApprox b' then approx else id
         (a,b) = (approx' a', approx' b')
+        sh = coerceShape (shape a) (shape b)
 
 constUnOp :: (forall a. Num a => a -> a) -> ConstVal -> ConstVal
 constUnOp f (Exact  a) = Exact  (amap f a)
@@ -145,6 +145,30 @@ foldrConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal 
 foldrConst' f r = foldr f' (Just r) . toList
   where f' _ Nothing = Nothing
         f' x (Just y) = f x y
+
+foldlConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
+foldlConst f r = foldl f r . toList
+
+foldlConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal -> Maybe ConstVal
+foldlConst' f r = foldl f' (Just r) . toList
+  where f' Nothing _ = Nothing
+        f' (Just y) x = f y x
+
+scanrConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
+scanrConst f r = fromList . scanr f r . toList
+
+scanrConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal -> Maybe ConstVal
+scanrConst' f r = fmap fromList . sequence . scanr f' (Just r) . toList
+  where f' _ Nothing = Nothing
+        f' x (Just y) = f x y
+
+scanlConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
+scanlConst f r = fromList . scanl f r . toList
+
+scanlConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal -> Maybe ConstVal
+scanlConst' f r = fmap fromList . sequence . scanl f' (Just r) . toList
+  where f' Nothing _ = Nothing
+        f' (Just y) x = f y x
 
 eye :: Interval Integer -> ConstVal
 eye (lo,hi) = Exact $ array ([lo,lo],[hi,hi])
@@ -230,8 +254,9 @@ instance IsList ConstVal where
             g f i = array (lo,hi) [(js, f (val!(i:js))) | js <- range (lo,hi)]
 
 instance Indexable ConstVal [Integer] ConstVal where
-    (Exact  a) ! i = Exact  $ fromScalar (a!i)
-    (Approx a) ! i = Approx $ fromScalar (a!i)
+    (Exact  a) ! i | length i == length (shape a) = Exact  $ fromScalar (a!i)
+    (Approx a) ! i | length i == length (shape a) = Approx $ fromScalar (a!i)
+    c ! i = slice c [ i ++ j | j <- fromShape (drop (length i) (shape c)) ]
     bounds (Exact  a) = bounds a
     bounds (Approx a) = bounds a
     deleteIndex (Exact a) [i] | dimension (Exact a) == 1 =
@@ -262,8 +287,8 @@ instance Scalable ConstVal ConstVal where
 instance InnerProduct ConstVal ConstVal where
     u <.> v = fromDouble $ toVector u <.> toVector v
 
-instance Matrix ConstVal ConstVal ConstVal where
-    a <> b = fromMatrix $ toMatrix a <> toMatrix b
+instance Monoid ConstVal where
+    mappend a b = fromMatrix $ toMatrix a <> toMatrix b
 
 instance LinearOperator ConstVal ConstVal where
     m  #> v = fromVector $ toMatrix m  #> toVector v

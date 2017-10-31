@@ -136,6 +136,7 @@ data Type
     = IntT
     | RealT
     | SubrangeT Type (Maybe NodeRef) (Maybe NodeRef)
+    -- TODO: better encoding of constraints than (Maybe String)
     | ArrayT (Maybe String) [AA.Interval NodeRef] Type
     deriving (Eq, Ord)
 boolT :: Type
@@ -178,8 +179,9 @@ typeDExpr = typeRef . fst . runDExpr
 typeRef :: NodeRef -> Type
 typeRef (Var _ t) = t
 typeRef (Const _ t) = t
-typeRef (Index a _) = case typeRef a of
-  (ArrayT _ _ t) -> t
+typeRef (Index a js) = case typeRef a of
+  (ArrayT k sh t) | length js == length sh -> t
+                  | otherwise -> ArrayT k (drop (length js) sh) t
   t -> error $ "cannot index non-array type "++ show t
 
 typeArray :: ([Integer],[Integer]) -> Type -> Type
@@ -207,12 +209,7 @@ coerce RealT IntT = RealT
 coerce a@(ArrayT _ _ t) t' | t == t' = a
 coerce t a@(ArrayT _ _ t') | t == t' = a
 coerce (ArrayT n sh t) (ArrayT n' sh' t') | n == n' && t == t' =
-  ArrayT n (zipWith g sh sh') t
-  where g (lo,hi) (lo',hi') | lo /= lo' = error "dimension lower bound mismatch"
-                            | hi  == hi' = (lo,hi)
-                            | lo' == hi' = (lo,hi)
-                            | lo  == hi  = (lo,hi')
-                            | otherwise = error "dimensions incompatible"
+  ArrayT n (AA.coerceShape sh sh') t
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
 cast :: Expr a -> Expr b
@@ -509,7 +506,8 @@ instance (ScalarType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
     vector = array (Just "vector") 1
 instance (ScalarType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
     matrix = array (Just "matrix") 2
-    a <> b = expr $ do
+instance (ScalarType e) => Monoid (Expr [[e]]) where
+    mappend a b = expr $ do
         i <- fromExpr a
         j <- fromExpr b
         let (ArrayT _ [r,_] t) = typeRef i
@@ -576,6 +574,13 @@ instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
         i <- fromExpr m
         let (ArrayT _ _ t) = typeRef i
         simplify $ Apply "det" [i] t
+
+qfDiag :: RMat -> RVec -> RMat
+qfDiag m v = expr $ do
+  i <- fromExpr m
+  j <- fromExpr v
+  let (ArrayT _ sh t) = typeRef i
+  simplify $ Apply "quad_form_diag" [i,j] (ArrayT Nothing sh t)
 
 instance AA.Broadcastable (Expr e) (Expr e) (Expr e) where
     bsxfun op a b = op a b

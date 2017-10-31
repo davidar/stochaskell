@@ -63,6 +63,11 @@ mean xs = sum xs / fromIntegral (length xs)
 square :: (Num a) => a -> a
 square x = x*x
 
+clip :: (Ord a) => (a,a) -> a -> a
+clip (lo,hi) x | x < lo = lo
+               | x > hi = hi
+               | otherwise = x
+
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
     (-) = zipWith (-)

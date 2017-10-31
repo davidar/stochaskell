@@ -75,6 +75,14 @@ instance Monad (AbstractArray i) where
 fromShape :: [Interval a] -> AbstractArray a [a]
 fromShape = flip AArr id
 
+coerceShape :: (Eq a) => [Interval a] -> [Interval a] -> [Interval a]
+coerceShape sh sh' = zipWith g sh sh'
+  where g (lo,hi) (lo',hi') | lo /= lo' = error "dimension lower bound mismatch"
+                            | hi  == hi' = (lo,hi)
+                            | lo' == hi' = (lo,hi)
+                            | lo  == hi  = (lo,hi')
+                            | otherwise = error "dimensions incompatible"
+
 infix 5 ...
 (...) :: a -> a -> AbstractArray a a
 a...b = AArr [(a,b)] f
@@ -148,10 +156,8 @@ class InnerProduct v e | v -> e where
 instance (LA.Numeric t) => InnerProduct (ShapedVector t) t where
     (ShVec _ u) <.> (ShVec _ v) = (LA.<.>) u v
 
-infixr 8 <>
 class Matrix m i e | m -> i e where
     matrix :: AbstractArray i e -> m
-    (<>) :: m -> m -> m
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
 instance (Show t, LA.Element t) => Show (ShapedMatrix t) where
@@ -164,7 +170,8 @@ instance Matrix (ShapedMatrix Double) Integer Double where
       where ncol = fromInteger . cardinality $ shape a !! 1
             xs = A.elems $ toArray a
             r:c:_ = shape a
-    (ShMat r c m) <> (ShMat r' c' m') | c == r' = ShMat r c' $ (LA.<>) m m'
+instance Monoid (ShapedMatrix Double) where
+    mappend (ShMat r c m) (ShMat r' c' m') | c == r' = ShMat r c' $ (LA.<>) m m'
 
 instance LA.Transposable (ShapedMatrix Double) (ShapedMatrix Double) where
     tr  (ShMat r c m) = ShMat c r $ LA.tr  m

@@ -1,10 +1,15 @@
 {-# LANGUAGE FlexibleContexts, MultiParamTypeClasses, FunctionalDependencies,
-             FlexibleInstances #-}
+             FlexibleInstances, MonadComprehensions #-}
 module Data.Random.Distribution.Abstract where
 
+import Data.Array.Abstract
+import Data.Monoid
 import qualified Data.Random as Rand
+import qualified Data.Random.Distribution.Beta as Beta
 import qualified Data.Random.Distribution.Categorical as Categorical
+import qualified Data.Random.Distribution.ChiSquare as ChiSquare
 import qualified Data.Random.Distribution.Poisson as Poisson
+import qualified Numeric.LinearAlgebra.Data as LAD
 import System.Random
 
 class (Monad m) => Distribution d s m t | d m t -> s where
@@ -20,42 +25,55 @@ instance Distribution Bernoulli Double IO Bool where
       return (u < p)
     sample (BernoulliLogit l) =
       bernoulli $ 1 / (1 + exp (-l))
-bernoulli :: Distribution Bernoulli s m t => s -> m t
 bernoulli p = sample $ Bernoulli p
-bernoulliLogit :: Distribution Bernoulli s m t => s -> m t
 bernoulliLogit l = sample $ BernoulliLogit l
 
 data Bernoullis p = Bernoullis p
                   | BernoulliLogits p
-bernoullis :: Distribution Bernoullis s m t => s -> m t
 bernoullis p = sample $ Bernoullis p
-bernoulliLogits :: Distribution Bernoullis s m t => s -> m t
 bernoulliLogits l = sample $ BernoulliLogits l
 
 newtype Beta a = Beta a
-beta :: Distribution Beta (s,s) m t => s -> s -> m t
+instance Distribution Beta (Double,Double) IO Double where
+    sample (Beta (a,b)) = Rand.sample (Beta.Beta a b)
 beta a b = sample $ Beta (a,b)
 
 newtype Categorical a = Categorical a
 instance Distribution Categorical [(Double,t)] IO t where
     sample (Categorical l) = Rand.sample $ Categorical.fromList l
-categorical :: (Num p, Distribution Categorical [(p,t)] m t) => [(p,t)] -> m t
 categorical l = sample $ Categorical l
+
+newtype Cauchy a = Cauchy a
+instance Distribution Cauchy (Double,Double) IO Double where
+  sample (Cauchy (a,b)) = do
+    x <- normal 0 1
+    y <- normal 0 1
+    let z = x/y
+    return $ a + b*z
+cauchy a b = sample $ Cauchy (a,b)
+
+newtype Cauchys a = Cauchys a
+instance Distribution Cauchys (ShapedVector Double, ShapedVector Double) IO (ShapedVector Double) where
+  sample (Cauchys (m,s)) = joint vector [ cauchy (m!i) (s!i) | i <- a...b ]
+    where (a,b) = bounds m
+cauchys m s = sample $ Cauchys (m,s)
+
+newtype ChiSquare a = ChiSquare a
+instance Distribution ChiSquare Integer IO Double where
+  sample (ChiSquare a) = Rand.sample (ChiSquare.ChiSquare a)
+chiSquare a = sample $ ChiSquare a
 
 newtype Gamma a = Gamma a
 instance Distribution Gamma (Double,Double) IO Double where
     sample (Gamma (a,b)) = Rand.sample (Rand.Gamma a (1/b))
-gamma :: Distribution Gamma (s,s) m t => s -> s -> m t
 gamma a b = sample $ Gamma (a,b)
-exponential :: (Num s, Distribution Gamma (s,s) m t) => s -> m t
-exponential = gamma 1
+exponential x = gamma 1 x
 
 newtype InvGamma a = InvGamma a
 instance Distribution InvGamma (Double,Double) IO Double where
     sample (InvGamma (a,b)) = do
       x <- gamma a b
       return (1 / x)
-invGamma :: Distribution InvGamma (s,s) m t => s -> s -> m t
 invGamma a b = sample $ InvGamma (a,b)
 
 newtype Geometric a = Geometric a
@@ -65,42 +83,67 @@ instance Distribution Geometric Double IO Integer where
       if coin then return 0 else do
         x <- geometric 0 p
         return (x + 1)
-geometric :: (Distribution Geometric s m t, Num t) => Integer -> s -> m t
 geometric 0 p = sample $ Geometric p
 geometric a p = do
   g <- geometric 0 p
   return (fromInteger a + g)
 
+newtype LKJ a = LKJ a
+instance Distribution LKJ (Double, Interval Integer) IO (ShapedMatrix Double) where
+  sample (LKJ (v,(1,2))) = do
+    b <- beta v v
+    let r = 2*b - 1
+    return . ShMat (1,2) (1,2) $ LAD.matrix 2 [1,r,r,1]
+corrLKJ v sh = sample $ LKJ (v,sh)
+
 newtype Normal a = Normal a
 instance Distribution Normal (Double,Double) IO Double where
     sample (Normal (m,s)) = Rand.sample (Rand.Normal m s)
-normal :: Distribution Normal (u,v) m t => u -> v -> m t
 normal m s = sample $ Normal (m,s)
 
 newtype Normals a = Normals a
-normals :: Distribution Normals (u,v) m t => u -> v -> m t
+instance Distribution Normals (ShapedVector Double, ShapedVector Double) IO (ShapedVector Double) where
+  sample (Normals (m,s)) = joint vector [ normal (m!i) (s!i) | i <- a...b ]
+    where (a,b) = bounds m
+instance Distribution Normals (ShapedMatrix Double, ShapedMatrix Double) IO (ShapedMatrix Double) where
+  sample (Normals (m,s)) = joint matrix [ normal (m!i!j) (s!i!j) | i <- a...b, j <- c...d ]
+    where (ShMat (a,b) (c,d) _) = m
 normals m s = sample $ Normals (m,s)
 
 newtype OrderedSample a = OrderedSample a
-orderedSample :: Distribution OrderedSample (n,d) m t => n -> d -> m t
 orderedSample n d = sample $ OrderedSample (n,d)
 
 newtype PMF a = PMF a
-pmf :: Distribution PMF s m t => s -> m t
 pmf a = sample $ PMF a
 
 newtype Poisson a = Poisson a
 instance Distribution Poisson Double IO Integer where
     sample (Poisson a) = Rand.sample (Poisson.Poisson a)
-poisson :: Distribution Poisson s m t => s -> m t
 poisson a = sample $ Poisson a
 
 newtype Uniform a = Uniform a
 instance (Random t) => Distribution Uniform (t,t) IO t where
     sample (Uniform (a,b)) = getStdRandom $ randomR (a,b)
-uniform :: Distribution Uniform (s,s) m t => s -> s -> m t
 uniform a b = sample $ Uniform (a,b)
 
 newtype Uniforms a = Uniforms a
-uniforms :: Distribution Uniforms (s,s) m t => s -> s -> m t
 uniforms a b = sample $ Uniforms (a,b)
+
+newtype Wishart a = Wishart a
+instance Distribution Wishart (Integer, ShapedMatrix Double) IO (ShapedMatrix Double) where
+  sample (Wishart (n,v)) = do
+    c <- joint vector [ chiSquare (n-i+1) | i <- 1...p ] :: IO (ShapedVector Double)
+    z <- joint matrix [ normal 0 1 | i <- 1...p, j <- 1...p ] :: IO (ShapedMatrix Double)
+    let a = matrix [ if i == j then (c!i)
+                else if i >  j then (z!i!j)
+                else 0 | i <- 1...p, j <- 1...p ] :: ShapedMatrix Double
+        l = chol v :: ShapedMatrix Double
+    return $ l <> a <> tr' a <> tr' l
+    where (1,p) = bounds v
+wishart n v = sample $ Wishart (n,v)
+newtype InvWishart a = InvWishart a
+instance Distribution InvWishart (Integer, ShapedMatrix Double) IO (ShapedMatrix Double) where
+  sample (InvWishart (n,w)) = do
+    x <- wishart n (inv w)
+    return (inv x)
+invWishart n w = sample $ InvWishart (n,w)

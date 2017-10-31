@@ -6,6 +6,7 @@ module Language.Stochaskell
   , module Data.Expression
   , module Data.Expression.Const
   , module Data.Expression.Const.IO
+  , module Data.Monoid
   , module Data.Number.Transfinite
   , module Data.Program
   , module Data.Random.Distribution.Abstract
@@ -26,6 +27,7 @@ import Data.Boolean.Overload hiding (boolean) -- TODO: no infix declaration
 import Data.Expression hiding (apply,const)
 import Data.Expression.Const
 import Data.Expression.Const.IO
+import Data.Monoid
 import Data.Number.Transfinite hiding (log,isNaN,isInfinite)
 import Data.Program
 import Data.Random.Distribution.Abstract

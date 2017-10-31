@@ -6,9 +6,10 @@ module Data.Program where
 import Prelude hiding (isInfinite)
 
 import Control.Monad.Guard
-import Control.Monad.State
+import Control.Monad.State hiding (guard)
 import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
+import Data.Boolean
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
@@ -16,6 +17,7 @@ import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import Data.Monoid
 import qualified Data.Number.LogFloat as LF
 import Data.Number.Transfinite hiding (log)
 import qualified Data.Random as Rand
@@ -52,6 +54,12 @@ data PNode = Dist { dName :: String
 dependsPNode :: Block -> PNode -> Set Id
 dependsPNode block (Dist _ args _) =
   Set.unions $ map (dependsNodeRef block) args
+dependsPNode block (Loop sh defs dist _) =
+  Set.unions $ map (d . fst) sh ++ map (d . snd) sh ++ [ddeps]
+  where d = dependsNodeRef block
+        block' = defs : drop (length block - dagLevel defs) block
+        ddeps = Set.filter ((dagLevel defs >) . idLevel) $
+          dependsPNode block' dist
 
 instance Show PNode where
   show (Dist d js t) = unwords (d : map show js) ++" :: P "++ show t
@@ -127,7 +135,9 @@ dist s = Prog $ do
         name = Volatile depth k
         t = typePNode d
         v = Var name t
-    _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
+    when (depth == 0) $ do
+      _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
+      return ()
     return (expr $ return v)
 
 truncated :: (Expr t) -> (Expr t) -> P (Expr t) -> P (Expr t)
@@ -178,6 +188,18 @@ instance (ScalarType t) => Distribution Categorical [(R, Expr t)] Prog (Expr t) 
         let TypeIs t = typeOf :: TypeOf t
         return $ Dist "categorical" (qs ++ ys) t
 
+instance Distribution Cauchy (R,R) Prog R where
+    sample (Cauchy (a,b)) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "cauchy" [i,j] RealT
+
+instance Distribution Cauchys (RVec,RVec) Prog RVec where
+    sample (Cauchys (m,s)) = dist $ do
+        i <- fromExpr m
+        j <- fromExpr s
+        return $ Dist "cauchys" [i,j] (typeRef i)
+
 instance Distribution Gamma (R,R) Prog R where
     sample (Gamma (a,b)) = dist $ do
         i <- fromExpr a
@@ -195,6 +217,13 @@ instance Distribution Geometric R Prog Z where
         i <- fromExpr p
         return $ Dist "geometric" [i] IntT
 
+instance Distribution LKJ (R, Interval Z) Prog RMat where
+    sample (LKJ (v,(a,b))) = dist $ do
+        i <- fromExpr v
+        l <- fromExpr a
+        h <- fromExpr b
+        return $ Dist "lkj_corr" [i] (ArrayT (Just "corr_matrix") [(l,h),(l,h)] RealT)
+
 instance Distribution Normal (R,R) Prog R where
     sample (Normal (m,s)) = dist $ do
         i <- fromExpr m
@@ -202,6 +231,12 @@ instance Distribution Normal (R,R) Prog R where
         return $ Dist "normal" [i,j] RealT
 
 instance Distribution Normals (RVec,RVec) Prog RVec where
+    sample (Normals (m,s)) = dist $ do
+        i <- fromExpr m
+        j <- fromExpr s
+        return $ Dist "normals" [i,j] (typeRef i)
+
+instance Distribution Normals (RMat,RMat) Prog RMat where
     sample (Normals (m,s)) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
@@ -263,12 +298,32 @@ instance Distribution Uniform (Z,Z) Prog Z where
         j <- fromExpr b
         return $ Dist "discreteUniform" [i,j] IntT
 
+instance Distribution Wishart (R,RMat) Prog RMat where
+    sample (Wishart (a,b)) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        return $ Dist "wishart" [i,j] (typeRef j)
+
+instance Distribution InvWishart (R,RMat) Prog RMat where
+    sample (InvWishart (a,b)) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
+        let (ArrayT _ sh t) = typeRef j
+        return $ Dist "inv_wishart" [i,j] (ArrayT (Just "cov_matrix") sh t)
+
 normalChol :: Z -> RVec -> RMat -> P RVec
 normalChol n mu cov = do
   --w <- joint vector [ normal 0 1 | _ <- 1...n ]
   w <- normals (vector [ 0 | _ <- 1...n ])
                (vector [ 1 | _ <- 1...n ])
   return (mu + chol cov #> w)
+
+normalsChol :: Z -> Z -> RVec -> RMat -> P RMat
+normalsChol n k mu cov = do
+  --w <- joint vector [ normal 0 1 | i <- 1...n, j <- 1...k ]
+  w <- normals (matrix [ 0 | i <- 1...n, j <- 1...k ])
+               (matrix [ 1 | i <- 1...n, j <- 1...k ])
+  return $ bsxfun (+) (asRow mu) (w <> tr' (chol cov))
 
 normalCond :: Z -> (Expr t -> Expr t -> R) -> Expr [t] -> RVec -> Expr t -> P R
 normalCond n cov s y x = normal m (sqrt v)
@@ -324,6 +379,14 @@ instance MonadGuard Prog where
                 lookup i $ nodes dag
               dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
           put $ PBlock (dag':dags) dists (Map.insert j a given)
+
+dirac :: (Expr t) -> Prog (Expr t)
+dirac c = do
+  x <- dist $ do
+    i <- fromExpr c
+    return $ Dist "dirac" [i] (typeRef i)
+  guard $ x ==* c
+  return x
 
 
 ------------------------------------------------------------------------------
@@ -458,8 +521,9 @@ samplePNodes env block ((ident,node):rest) = do
 samplePNode :: Env -> Block -> PNode -> IO ConstVal
 samplePNode env block d@(Dist f js (SubrangeT t lo hi)) = do
   x <- samplePNode env block (Dist f js t)
-  if x < lo' || hi' < x
-    then samplePNode env block d -- rejection
+  if flip any (elems' x) (< lo') || any (hi' <) (elems' x)
+    then trace ("rejecting OOB sample "++ show x) $
+           samplePNode env block d
     else return x
   where lo' | (Just r) <- lo = fromJust $ evalNodeRef env block r
             | otherwise = negativeInfinity
@@ -478,22 +542,35 @@ samplePNode env block (Dist "categorical" cats _) = fromRational <$> categorical
   where n = length cats `div` 2
         ps = toDouble . fromJust . evalNodeRef env block <$> take n cats
         xs = toRational . fromJust . evalNodeRef env block <$> drop n cats
+samplePNode env block (Dist "cauchy" [m,s] _) = fromDouble <$> cauchy m' s'
+  where m' = toDouble . fromJust $ evalNodeRef env block m
+        s' = toDouble . fromJust $ evalNodeRef env block s
+samplePNode env block (Dist "cauchys" [m,s] (ArrayT _ [_] _)) = fromVector <$> cauchys m' s'
+  where m' = toVector . fromJust $ evalNodeRef env block m
+        s' = toVector . fromJust $ evalNodeRef env block s
 samplePNode env block (Dist "gamma" [a,b] _) = fromDouble <$> gamma a' b'
   where a' = toDouble . fromJust $ evalNodeRef env block a
         b' = toDouble . fromJust $ evalNodeRef env block b
 samplePNode env block (Dist "inv_gamma" [a,b] _) = fromDouble <$> invGamma a' b'
   where a' = toDouble . fromJust $ evalNodeRef env block a
         b' = toDouble . fromJust $ evalNodeRef env block b
+samplePNode env block (Dist "inv_wishart" [n,w] _) = fromMatrix <$> invWishart n' w'
+  where n' = toInteger . fromJust $ evalNodeRef env block n
+        w' = toMatrix . fromJust $ evalNodeRef env block w
 samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric 0 p'
   where p' = toDouble . fromJust $ evalNodeRef env block p
+samplePNode env block (Dist "lkj_corr" [v] (ArrayT _ sh _)) = fromMatrix <$> corrLKJ v' (head sh')
+  where v' = toDouble . fromJust $ evalNodeRef env block v
+        sh' = evalShape env block sh
 samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
   where m' = toDouble . fromJust $ evalNodeRef env block m
         s' = toDouble . fromJust $ evalNodeRef env block s
-samplePNode env block (Dist "normals" [m,s] _) = do
-  z <- sequence $ zipWith normal m' s'
-  return $ fromList (map fromDouble z)
-  where m' = map toDouble . toList . fromJust $ evalNodeRef env block m
-        s' = map toDouble . toList . fromJust $ evalNodeRef env block s
+samplePNode env block (Dist "normals" [m,s] (ArrayT _ [_] _)) = fromVector <$> normals m' s'
+  where m' = toVector . fromJust $ evalNodeRef env block m
+        s' = toVector . fromJust $ evalNodeRef env block s
+samplePNode env block (Dist "normals" [m,s] (ArrayT _ [_,_] _)) = fromMatrix <$> normals m' s'
+  where m' = toMatrix . fromJust $ evalNodeRef env block m
+        s' = toMatrix . fromJust $ evalNodeRef env block s
 samplePNode env block (Dist "multi_normal" [m,s] _) = do
   w <- sequence [ normal 0 1 | _ <- [1..n] ]
   let w' = fromList $ map fromDouble w
@@ -514,7 +591,9 @@ samplePNode env block (Dist "uniforms" [a,b] (ArrayT _ sh _)) = do
 samplePNode env block (Dist "discreteUniform" [a,b] _) = fromInteger <$> uniform a' b'
   where a' = toInteger . fromJust $ evalNodeRef env block a
         b' = toInteger . fromJust $ evalNodeRef env block b
-samplePNode _ _ (Dist d _ _) = error $ "unrecognised distribution "++ d
+samplePNode env block (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
+  where n' = toInteger . fromJust $ evalNodeRef env block n
+        v' = toMatrix . fromJust $ evalNodeRef env block v
 
 samplePNode env block (Loop shp ldag hd _) = listArray' (evalShape env block shp) <$> sequence arr
   where inps = inputs ldag
@@ -525,6 +604,8 @@ samplePNode env block (Loop shp ldag hd _) = listArray' (evalShape env block shp
 samplePNode env block (HODist "orderedSample" d [n] _) =
   (fromList . List.sort) <$> sequence [samplePNode env block d | _ <- [1..n']]
   where n' = toInteger . fromJust $ evalNodeRef env block n
+
+samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
 
 
 ------------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 module Data.Expression.Eval where
 
-import Prelude hiding ((<*),(*>))
+import Prelude hiding ((<*),(*>),isInfinite)
 
 import Data.Array.IArray (listArray)
 import Data.Array.Abstract
@@ -13,6 +13,7 @@ import Data.Ix
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
+import Data.Monoid
 import Debug.Trace
 import GHC.Exts
 import Util
@@ -57,6 +58,7 @@ builtins =
   ,(">",  \[a,b] -> a >*  b)
   ,("deleteIndex", \[a,i]   -> deleteIndex a [integer i])
   ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
+  ,("quad_form_diag", \[m,v] -> diag v <> m <> diag v)
   ]
 
 -- number of elements in a value of the given type
@@ -97,7 +99,7 @@ evalNodeRef _ _ (Var _ _) = Nothing
 evalNodeRef _ _ (Const c _) = Just c
 evalNodeRef env block (Index arr idx) = do
   a <- evalNodeRef env block arr
-  js <- sequence (evalNodeRef env block <$> idx) -- TODO: should this be reversed?
+  js <- sequence (evalNodeRef env block <$> reverse idx)
   return (a!(toInteger <$> js))
 
 evalRange :: Env -> Block -> [(NodeRef,NodeRef)] -> [[ConstVal]]
@@ -130,13 +132,25 @@ evalNode env block (Array sh body hd _) = do
     in toRational <$> evalNodeRef env' block' hd
     | xs <- fromShape sh' ]
   return $ fromRationalArray ar
-evalNode env block (Fold Right_ body hd seed ls _) = do
+evalNode env block (Fold lr body hd seed ls _) = do
   r  <- evalNodeRef env block seed
   xs <- evalNodeRef env block ls
-  foldrConst' f r xs
+  let f = evalFn2 env block body hd
+  case lr of
+    Right_ -> foldrConst' f        r xs
+    Left_  -> foldlConst' (flip f) r xs
+evalNode env block (Scan lr body hd seed ls _) = do
+  r  <- evalNodeRef env block seed
+  xs <- evalNodeRef env block ls
+  let f = evalFn2 env block body hd
+  case lr of
+    Right_ -> scanrConst' f        r xs
+    Left_  -> scanlConst' (flip f) r xs
+
+evalFn2 :: Env -> Block -> DAG -> NodeRef -> ConstVal -> ConstVal -> Maybe ConstVal
+evalFn2 env block body hd a b = evalNodeRef env' (body:block) hd
   where [i,j] = inputs body
-        f a b = evalNodeRef env' (body:block) hd
-          where env' = Map.insert i a $ Map.insert j b env
+        env' = Map.insert i a $ Map.insert j b env
 
 evalBlock :: Block -> Env -> Env
 evalBlock block = compose (evalDAG block <$> reverse block)
@@ -200,6 +214,18 @@ unifyNode env block (Apply "/" [a,b] _) val | isJust b' =
 unifyNode env block (Apply "#>" [a,b] _) val | isJust a' =
     unifyNodeRef env block b ((fromJust a') <\> val)
   where a' = evalNodeRef env block a
+unifyNode env block (Apply "<>" [a,b] _) val | isJust b' =
+    unifyNodeRef env block a (val <> inv (fromJust b'))
+  where b' = evalNodeRef env block b
+unifyNode env block (Apply "inv" [a] _) val =
+    unifyNodeRef env block a (inv val)
+unifyNode env block (Apply "quad_form_diag" [m,v] _) val
+  | (ArrayT (Just "corr_matrix") _ _) <- typeRef m
+  = unifyNodeRef env block m m' `Map.union` unifyNodeRef env block v v'
+  where m' = fromList [fromList [(val![i,j]) / ((v'![i]) * (v'![j]))
+                                | j <- [lo..hi]] | i <- [lo..hi]]
+        v' = fromList [sqrt (val![i,i]) | i <- [lo..hi]]
+        (lo,hi):_ = shape val
 unifyNode env block (Apply "deleteIndex" [a,i] _) val | isJust a' && dimension val == 1 =
     unifyNodeRef env block i (integer idx)
   where a' = evalNodeRef env block a
@@ -304,3 +330,4 @@ instance Read B    where readsPrec = wrapReadsPrec fromBool
 instance Read RVec where readsPrec = wrapReadsPrec fromList
 instance Read ZVec where readsPrec = wrapReadsPrec fromList
 instance Read BVec where readsPrec = wrapReadsPrec fromList
+instance Read RMat where readsPrec = wrapReadsPrec fromList
