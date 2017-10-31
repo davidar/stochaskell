@@ -56,7 +56,7 @@ stanId' i = Left i
 
 stanNodeRef :: NodeRef -> String
 stanNodeRef (Var s _) = stanId s
-stanNodeRef (Const c _) = show c
+stanNodeRef (Const c _) | dimension c == 0 = show c
 stanNodeRef (Index f js) =
     stanNodeRef f ++"["++ stanNodeRef `commas` reverse js ++"]"
 
@@ -78,12 +78,20 @@ stanType True (SubrangeT t Nothing  (Just h)) =
 stanType True (SubrangeT t (Just l) (Just h)) =
   stanType False t ++"<lower="++ stanNodeRef l ++
                      ",upper="++ stanNodeRef h ++">"
+stanType _ (ArrayT _ [(Const 1 _,n)] RealT) =
+  "vector["++ stanNodeRef n ++"]"
+stanType _ (ArrayT (Just k) [(Const 1 _,m), (Const 1 _,n)] RealT) |
+  k `elem` ["cov_matrix", "corr_matrix"], m == n =
+  k ++"["++ stanNodeRef m ++"]"
+stanType _ (ArrayT _ [(Const 1 _,m), (Const 1 _,n)] RealT) =
+  "matrix["++ stanNodeRef m ++","++ stanNodeRef n ++"]"
 stanType showRange (ArrayT kind n t) =
     fromMaybe (stanType showRange t) kind ++
       "["++ stanNodeRef `commas` map snd n ++"]"
 
 stanDecl :: Bool -> Label -> Type -> String
-stanDecl showRange name (ArrayT Nothing n t) =
+stanDecl showRange name (ArrayT _ n t)
+  | length n > 2 || t /= RealT =
     stanType showRange t ++" "++ name ++
       "["++ stanNodeRef `commas` map snd n ++"];"
 stanDecl showRange name t = stanType showRange t ++" "++ name ++";"
@@ -103,6 +111,7 @@ stanBuiltinFunctions =
   ,("diag",        ["diag_matrix"])
   ,("asColumn",    ["to_matrix", "to_vector"])
   ,("asRow",       ["to_matrix", "to_row_vector"])
+  ,("quad_form_diag", ["quad_form_diag"])
   ]
 
 stanVectorisedDistributions =
@@ -113,9 +122,14 @@ stanVectorisedDistributions =
 
 stanBuiltinDistributions =
   [("bernoulliLogit",  "bernoulli_logit")
+  ,("cauchy",          "cauchy")
+  ,("gamma",           "gamma")
   ,("inv_gamma",       "inv_gamma")
+  ,("inv_wishart",     "inv_wishart")
+  ,("lkj_corr",        "lkj_corr")
   ,("normal",          "normal")
   ,("uniform",         "uniform")
+  ,("wishart",         "wishart")
   ] ++ stanVectorisedDistributions
 
 stanOperators =
@@ -149,6 +163,16 @@ stanNode name (Apply op [i,j] _)
     (ArrayT _ [(Const 1 IntT, Const 1 IntT), (Const 1 IntT, Const n IntT)] _) <- typeRef j =
     name ++" = rep_matrix(to_vector("++ stanNodeRef i ++"), "++ show n ++") "++
      s ++" rep_matrix(to_row_vector("++ stanNodeRef j ++"), "++ show m ++");"
+  | isJust $ lookup op stanOperators,
+    (ArrayT _ [(Const 1 IntT, Const m IntT), (Const 1 IntT, Const 1 IntT)] _) <- typeRef i,
+    (ArrayT _ [(Const 1 IntT, Const k IntT), (Const 1 IntT, Const n IntT)] _) <- typeRef j,
+    m == k =
+    name ++" = rep_matrix(to_vector("++ stanNodeRef i ++"), "++ show n ++") "++ s ++" "++ stanNodeRef j ++";"
+  | isJust $ lookup op stanOperators,
+    (ArrayT _ [(Const 1 IntT, Const 1 IntT), (Const 1 IntT, Const n IntT)] _) <- typeRef i,
+    (ArrayT _ [(Const 1 IntT, Const m IntT), (Const 1 IntT, Const k IntT)] _) <- typeRef j,
+    n == k =
+    name ++" = rep_matrix(to_row_vector("++ stanNodeRef i ++"), "++ show m ++") "++ s ++" "++ stanNodeRef j ++";"
   | isJust $ lookup op stanOperators =
     name ++" = "++ stanNodeRef i ++" "++ s ++" "++ stanNodeRef j ++";"
   where s = fromJust $ lookup op stanOperators
@@ -184,11 +208,15 @@ stanPNode name (Dist f args t) | isJust f' && length (typeDims t) > 1 =
   "to_vector("++ name ++") ~ "++ fromJust f' ++"("++ g `commas` args ++");"
   where f' = lookup f stanVectorisedDistributions
         g arg = "to_vector("++ stanNodeRef arg ++")"
-stanPNode name d@(Dist f args _)
+stanPNode name d@(Dist f args t)
   | isJust $ lookup f stanBuiltinDistributions =
     name ++" ~ "++ fromJust (lookup f stanBuiltinDistributions) ++
-      "("++ stanNodeRef `commas` args ++");"
+      "("++ stanNodeRef `commas` args ++")"++ suffix ++";"
   | otherwise = error $ "stanPNode "++ show d
+  where suffix | (SubrangeT _ a b) <- t =
+                   " T["++ maybe "" stanNodeRef a ++
+                     ","++ maybe "" stanNodeRef b ++"]"
+               | otherwise = ""
 stanPNode name (Loop sh ldag body _) =
     forLoop (map stanId $ inputs ldag) sh $
         let lval = name ++"["++ stanId `commas` inputs ldag ++"]"
