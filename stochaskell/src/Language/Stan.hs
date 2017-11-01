@@ -186,21 +186,33 @@ stanNode name (Array sh dag ret _) =
     forLoop (map stanId $ inputs dag) sh $
         stanDAG Nothing dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] = "++ stanNodeRef ret ++";"
-stanNode name (Fold Right_ dag ret seed (Var ls at@(ArrayT _ ((lo,hi):_) _)) t) =
-    name ++" = "++ stanNodeRef seed ++";\n"++ loop
+stanNode name (FoldScan scan lr dag ret seed
+               (Var ls s@(ArrayT _ ((Const 1 IntT,n):_) _)) t) =
+    name ++ sloc ++" = "++ stanNodeRef seed ++";\n"++
+    (forLoop [stanId idx] [(Const 1 IntT,n)] $ "  "++
+      stanDecl False (stanId i) (typeIndex s) ++"\n  "++
+      stanDecl False (stanId j) (if scan then typeIndex t else t) ++"\n  "++
+      stanId i ++" = "++ stanId ls ++"["++ loc ++"];\n  "++
+      stanId j ++" = "++ name ++ ploc ++";\n  "++
+      "{\n"++ stanDAG Nothing dag ++"\n  "++
+              name ++ rloc ++" = "++ stanNodeRef ret ++";\n  "++
+      "}")
   where d = dagLevel dag
         idx = Dummy d 0
         [i,j] = inputs dag
-        s = typeIndex at
-        loop =
-          forLoop [stanId idx] [(lo,hi)] $ "  "++
-           stanDecl False (stanId i) s ++"\n  "++
-           stanDecl False (stanId j) t ++"\n  "++
-           stanId i ++" = "++ stanId ls ++"["++
-             stanNodeRef lo ++"+"++ stanNodeRef hi ++"-"++ stanId idx ++"];\n  "++
-           stanId j ++" = "++ name ++";\n  {\n"++
-           stanDAG Nothing dag ++"\n  "++
-           name ++" = "++ stanNodeRef ret ++";\n  }"
+        loc = case lr of
+          Left_  -> stanId idx
+          Right_ -> stanNodeRef n ++"+1-"++ stanId idx
+        sloc = case scan of
+          False -> ""
+          True -> case lr of
+            Left_ -> "[1]"
+            Right_ -> "["++ stanNodeRef n ++"+1]"
+        (ploc,rloc) = case scan of
+          False -> ("","")
+          True -> case lr of
+            Left_  -> ("["++ loc ++"]", "["++ loc ++"+1]")
+            Right_ -> ("["++ loc ++"+1]", "["++ loc ++"]")
 stanNode _ node = error $ "unable to codegen node "++ show node
 
 stanPNode :: Label -> PNode -> String

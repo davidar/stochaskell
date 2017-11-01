@@ -67,14 +67,9 @@ data Node = Apply { fName :: String
                   , aHead  :: NodeRef
                   , typeNode :: Type
                   }
-          | Fold  { rDirection :: LeftRight
-                  , rDefs :: DAG
-                  , rHead :: NodeRef
-                  , rSeed :: NodeRef
-                  , rList :: NodeRef
-                  , typeNode :: Type
-                  }
-          | Scan  { rDirection :: LeftRight
+          | FoldScan
+                  { rScan :: Bool
+                  , rDirection :: LeftRight
                   , rDefs :: DAG
                   , rHead :: NodeRef
                   , rSeed :: NodeRef
@@ -256,8 +251,7 @@ externRefs (DAG _ _ d) = go d
         f (Array sh (DAG _ _ defs') r _) =
             mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
                                 ++ mapMaybe (extern . snd) sh ++ go defs'
-        f Fold{} = [] -- TODO
-        f Scan{} = [] -- TODO
+        f FoldScan{} = [] -- TODO
         extern (Var (Internal _ _) _) = Nothing
         extern (Var i _) = Just i
         extern _ = Nothing
@@ -422,7 +416,7 @@ foldscan isScan dir f r xs = do
     l <- fromExpr xs
     block <- get
     let d = length block
-        (ArrayT _ sh _) = typeRef l
+        (ArrayT _ [(Const 1 IntT,n)] _) = typeRef l
         s = typeIndex $ typeRef l
         TypeIs t = typeOf :: TypeOf b
         i = expr . return $ Var (Dummy d 1) s
@@ -433,9 +427,13 @@ foldscan isScan dir f r xs = do
        (not . null $ inputs (head block) `intersect` externRefs dag)
       then do
         put block'
-        hashcons $ if isScan
-          then Scan dir dag ret seed l (ArrayT Nothing sh t)
-          else Fold dir dag ret seed l t
+        if isScan
+          then do
+            n1 <- simplify $ Apply "+" [n, Const 1 IntT] IntT
+            let t' = (ArrayT Nothing [(Const 1 IntT, n1)] t)
+            hashcons $ FoldScan True  dir dag ret seed l t'
+          else
+            hashcons $ FoldScan False dir dag ret seed l t
       else liftBlock $ foldscan isScan dir f r xs
 
 

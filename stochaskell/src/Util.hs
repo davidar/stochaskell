@@ -68,6 +68,10 @@ clip (lo,hi) x | x < lo = lo
                | x > hi = hi
                | otherwise = x
 
+pairWith :: (a -> a -> b) -> [a] -> [b]
+pairWith f (x:y:zs) = f x y : pairWith f (y:zs)
+pairWith _ _ = []
+
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
     (-) = zipWith (-)

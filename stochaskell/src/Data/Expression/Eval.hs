@@ -132,20 +132,15 @@ evalNode env block (Array sh body hd _) = do
     in toRational <$> evalNodeRef env' block' hd
     | xs <- fromShape sh' ]
   return $ fromRationalArray ar
-evalNode env block (Fold lr body hd seed ls _) = do
+evalNode env block (FoldScan scan lr body hd seed ls _) = do
   r  <- evalNodeRef env block seed
   xs <- evalNodeRef env block ls
   let f = evalFn2 env block body hd
-  case lr of
-    Right_ -> foldrConst' f        r xs
-    Left_  -> foldlConst' (flip f) r xs
-evalNode env block (Scan lr body hd seed ls _) = do
-  r  <- evalNodeRef env block seed
-  xs <- evalNodeRef env block ls
-  let f = evalFn2 env block body hd
-  case lr of
-    Right_ -> scanrConst' f        r xs
-    Left_  -> scanlConst' (flip f) r xs
+  case (scan,lr) of
+    (False, Right_) -> foldrConst' f        r xs
+    (False, Left_)  -> foldlConst' (flip f) r xs
+    (True,  Right_) -> scanrConst' f        r xs
+    (True,  Left_)  -> scanlConst' (flip f) r xs
 
 evalFn2 :: Env -> Block -> DAG -> NodeRef -> ConstVal -> ConstVal -> Maybe ConstVal
 evalFn2 env block body hd a b = evalNodeRef env' (body:block) hd
@@ -241,7 +236,15 @@ unifyNode env block (Apply "insertIndex" [a,i,e] _) val | isJust a' && dimension
         elt = val![idx]
 unifyNode env block node val | isJust lhs && fromJust lhs == val = emptyEnv
   where lhs = evalNode env block node
-unifyNode _ _ Fold{} _ = trace "WARN not unifying Fold" emptyEnv
+unifyNode env block (FoldScan True Left_ dag ret seed ls _) val =
+  unifyNodeRef env block seed seed' `Map.union` unifyNodeRef env block ls ls'
+  where seed' = val![1]
+        ls' = fromList $ pairWith f' (elems' val)
+        block' = dag : drop (length block - dagLevel dag) block
+        [i,j] = inputs dag
+        f' x y = let env' = Map.insert j x env
+                 in fromJust . Map.lookup i $ unifyNodeRef env' block' ret y
+unifyNode _ _ FoldScan{} _ = trace "WARN not unifying fold/scan" emptyEnv
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
 
