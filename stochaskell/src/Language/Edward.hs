@@ -164,7 +164,7 @@ hmcEdward numSamples numSteps stepSize prog init =
     pwd <- getCurrentDirectory
     setCurrentDirectory tmpDir
     when (isJust init) $
-      dump $ unifyTuple' block rets (fromJust init) given
+      dump $ unifyTuple block rets (fromJust init) given
     dump given
     let python = pwd ++"/edward/env/bin/python"
     --callProcess python []

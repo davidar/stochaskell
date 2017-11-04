@@ -4,6 +4,7 @@ module Data.Expression.Eval where
 
 import Prelude hiding ((<*),(*>),isInfinite)
 
+import Control.Monad.State
 import Data.Array.IArray (listArray)
 import Data.Array.Abstract
 import Data.Boolean
@@ -14,6 +15,7 @@ import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
 import Data.Monoid
+import qualified Data.Set as Set
 import Debug.Trace
 import GHC.Exts
 import Util
@@ -21,45 +23,6 @@ import Util
 type Env = Map Id ConstVal
 emptyEnv :: Env
 emptyEnv = Map.empty
-
-builtins :: [(String, [ConstVal] -> ConstVal)]
-builtins =
-  [("+", \[a,b] -> a + b)
-  ,("-", \[a,b] -> a - b)
-  ,("*", \[a,b] -> a * b)
-  ,("/", \[a,b] -> a / b)
-  ,("**", \[a,b] -> a ** b)
-  ,("negate", negate . head)
-  ,("exp", exp . head)
-  ,("log", log . head)
-  ,("sqrt", sqrt . head)
-  ,("true", const true)
-  ,("false", const false)
-  ,("pi", const pi)
-  ,("getExternal", head)
-  ,("<>", \[a,b] -> a <> b)
-  ,("<.>", \[u,v] -> u <.> v)
-  ,("*>", \[a,v] -> a *> v)
-  ,("#>", \[m,v] -> m #> v)
-  ,("<\\>", \[m,v] -> m <\> v)
-  ,("diag", diag . head)
-  ,("asColumn", asColumn . head)
-  ,("asRow", asRow . head)
-  ,("chol", chol . head)
-  ,("inv", inv . head)
-  ,("tr", tr . head)
-  ,("tr'", tr' . head)
-  ,("ifThenElse", \[a,b,c] -> ifB a b c)
-  ,("==", \[a,b] -> a ==* b)
-  ,("/=", \[a,b] -> a /=* b)
-  ,("<=", \[a,b] -> a <=* b)
-  ,(">=", \[a,b] -> a >=* b)
-  ,("<",  \[a,b] -> a <*  b)
-  ,(">",  \[a,b] -> a >*  b)
-  ,("deleteIndex", \[a,i]   -> deleteIndex a [integer i])
-  ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
-  ,("quad_form_diag", \[m,v] -> diag v <> m <> diag v)
-  ]
 
 -- number of elements in a value of the given type
 numelType :: Env -> Block -> Type -> Integer
@@ -69,6 +32,13 @@ numelType _ _ SubrangeT{} = 1
 numelType env block (ArrayT _ sh _) = product $ map f sh'
   where sh' = evalShape env block sh
         f (lo,hi) = hi - lo + 1
+
+reDExpr :: EEnv -> Block -> NodeRef -> DExpr
+reDExpr env block = DExpr . extractNodeRef env block
+
+evaluable :: EEnv -> Block -> NodeRef -> Bool
+evaluable env block ref = deps `Set.isSubsetOf` Map.keysSet env
+  where deps = Set.filter (not . isInternal) $ dependsNodeRef block ref
 
 eval :: Env -> Expr t -> Maybe ConstVal
 eval env e = evalNodeRef env block ret
@@ -115,11 +85,10 @@ evalShape env block sh = zip a b
         b = integer . fromJust . evalNodeRef env block <$> j
 
 evalNode :: Env -> Block -> Node -> Maybe ConstVal
-evalNode env block (Apply fn args _) = do
-  let f = fromMaybe (error $ "builtin lookup failure: " ++ fn) (lookup fn builtins)
-  cs <- sequence (evalNodeRef env block <$> args)
-  return (f cs)
--- TODO: make array Approx if any elements are
+evalNode env block (Apply fn args _) =
+  f <$> sequence (evalNodeRef env block <$> args)
+  where f = fromMaybe (error $ "builtin lookup failure: " ++ fn) $
+              Map.lookup fn constFuns
 evalNode env block (Array sh body hd _) = do
   sh' <- sequence [ do x <- evalNodeRef env block a
                        y <- evalNodeRef env block b
@@ -166,17 +135,17 @@ unifyD :: DExpr -> ConstVal -> Env -> Env
 unifyD e c env = env `Map.union` unifyNodeRef env block ret c
   where (ret, block) = runDExpr e
 
-unifyTuple' :: (ExprTuple t) => Block -> [NodeRef] -> t -> Env -> Env
-unifyTuple' block rets vals = compose
+unifyTuple :: (ExprTuple t) => Block -> [NodeRef] -> t -> Env -> Env
+unifyTuple block rets vals = compose
   [ \env -> env `Map.union` unifyNodeRef env block r v
   | (r,e) <- zip rets $ fromExprTuple vals, let Just v = evalD_ e ]
 
 unifyNodeRef :: Env -> Block -> NodeRef -> ConstVal -> Env
 unifyNodeRef env block (Var (Internal level ptr) _) val =
-    let dag = reverse block !! level
+    unifyNode env block node val
+  where dag = reverse block !! level
         node = flip fromMaybe (ptr `lookup` nodes dag) $
           error $ "pointer "++ show level ++":"++ show ptr ++" not found"
-    in unifyNode env block node val
 unifyNodeRef _ _ (Var ref _) val = Map.singleton ref val
 unifyNodeRef _ _ (Const c _) val = if c == val then emptyEnv else error $ show c ++" /= "++ show val
 unifyNodeRef _ _ Index{} _ = trace "WARN not unifying Index" emptyEnv
@@ -247,6 +216,37 @@ unifyNode env block (FoldScan True Left_ dag ret seed ls _) val =
 unifyNode _ _ FoldScan{} _ = trace "WARN not unifying fold/scan" emptyEnv
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
+
+solve :: Expr t -> Expr t -> EEnv -> EEnv
+solve e val env = env `Map.union` solveNodeRef env block ret (erase val)
+  where (ret, block) = runExpr e
+
+solveNodeRef :: EEnv -> Block -> NodeRef -> DExpr -> EEnv
+solveNodeRef env block (Var (Internal level ptr) _) val =
+  solveNode env block node val
+  where dag = reverse block !! level
+        node = flip fromMaybe (ptr `lookup` nodes dag) $
+          error $ "pointer "++ show level ++":"++ show ptr ++" not found"
+solveNodeRef _ _ (Var ref _) val = Map.singleton ref val
+solveNodeRef _ _ ref val =
+  trace ("WARN assuming "++ show ref ++" unifies with "++ show val) emptyEEnv
+
+solveNode :: EEnv -> Block -> Node -> DExpr -> EEnv
+solveNode env block (Apply "+" [a,b] _) val | evaluable env block a =
+  solveNodeRef env block b (val - reDExpr env block a)
+solveNode env block (Apply "*" [a,b] _) val | evaluable env block a =
+  solveNodeRef env block b (val / reDExpr env block a)
+solveNode env block (FoldScan True Left_ dag ret seed ls _) val =
+  solveNodeRef env block seed seed' `Map.union` solveNodeRef env block ls ls'
+  where (ArrayT _ [(lo,hi)] _) = typeRef ls
+        lo' = reDExpr env block lo
+        hi' = reDExpr env block hi
+        seed' = val!lo'
+        ls' = vector [ f' (val!k) (val!(k+1)) | k <- lo'...hi' ]
+        block' = dag : drop (length block - dagLevel dag) block
+        [i,j] = inputs dag
+        f' x y = let env' = Map.insert j x env
+                 in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
 
 diff :: Env -> Expr t -> Id -> Type -> ConstVal
 diff env = diffD env . erase

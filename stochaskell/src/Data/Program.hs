@@ -323,7 +323,7 @@ normalsChol n k mu cov = do
   --w <- joint vector [ normal 0 1 | i <- 1...n, j <- 1...k ]
   w <- normals (matrix [ 0 | i <- 1...n, j <- 1...k ])
                (matrix [ 1 | i <- 1...n, j <- 1...k ])
-  return $ bsxfun (+) (asRow mu) (w <> tr' (chol cov))
+  return $ asRow mu + (w <> tr' (chol cov))
 
 normalCond :: Z -> (Expr t -> Expr t -> R) -> Expr [t] -> RVec -> Expr t -> P R
 normalCond n cov s y x = normal m (sqrt v)
@@ -396,7 +396,7 @@ dirac c = do
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env' pb / adjust
   where (rets, pb@(PBlock block acts _)) = runProgExprs prog
-        env = unifyTuple' block rets vals emptyEnv
+        env = unifyTuple block rets vals emptyEnv
         env' = evalBlock block env
         jacobian = [ [ diffNodeRef env' block r (Volatile 0 i) (typePNode d)
                      | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
@@ -410,7 +410,7 @@ density prog vals = densityPBlock env' pb / adjust
 density' :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density' prog vals = densityPBlock env' pb
   where (rets, pb@(PBlock block _ _)) = runProgExprs prog
-        env = unifyTuple' block rets vals emptyEnv
+        env = unifyTuple block rets vals emptyEnv
         env' = evalBlock block env
 
 densityPBlock :: Env -> PBlock -> LF.LogFloat

@@ -225,7 +225,7 @@ runPyMC3 :: (ExprTuple t, Read t) => PyMC3Inference -> Prog t -> Maybe t -> IO [
 runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   setCurrentDirectory tmpDir
-  let initEnv | isJust init = unifyTuple' block rets (fromJust init) given
+  let initEnv | isJust init = unifyTuple block rets (fromJust init) given
               | otherwise = given
   forM_ (Map.toList initEnv) $ \(i,c) -> do
     writeNPy (pmId i ++".npy") c

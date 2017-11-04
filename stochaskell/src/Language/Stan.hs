@@ -379,7 +379,7 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
 
     when (isJust init) $
       LC.writeFile (basename ++".init") $
-        stanDump $ unifyTuple' block rets (fromJust init) given
+        stanDump $ unifyTuple block rets (fromJust init) given
 
     putStrLn "--- Sampling Stan model ---"
     LC.writeFile (basename ++".data") $ stanDump given

@@ -8,6 +8,8 @@ import Data.Array.Abstract
 import Data.Array.Unboxed hiding ((!),bounds)
 import Data.Boolean
 import Data.Char
+import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
 import Data.Monoid
 import Data.Number.Transfinite hiding (log)
 import Data.Ratio
@@ -16,6 +18,45 @@ import GHC.Exts
 import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra.Data as LAD
 import Util
+
+constFuns :: Map String ([ConstVal] -> ConstVal)
+constFuns = Map.fromList
+  [("+", \[a,b] -> a + b)
+  ,("-", \[a,b] -> a - b)
+  ,("*", \[a,b] -> a * b)
+  ,("/", \[a,b] -> a / b)
+  ,("**", \[a,b] -> a ** b)
+  ,("negate", negate . head)
+  ,("exp", exp . head)
+  ,("log", log . head)
+  ,("sqrt", sqrt . head)
+  ,("true", const true)
+  ,("false", const false)
+  ,("pi", const pi)
+  ,("getExternal", head)
+  ,("<>", \[a,b] -> a <> b)
+  ,("<.>", \[u,v] -> u <.> v)
+  ,("*>", \[a,v] -> a *> v)
+  ,("#>", \[m,v] -> m #> v)
+  ,("<\\>", \[m,v] -> m <\> v)
+  ,("diag", diag . head)
+  ,("asColumn", asColumn . head)
+  ,("asRow", asRow . head)
+  ,("chol", chol . head)
+  ,("inv", inv . head)
+  ,("tr", tr . head)
+  ,("tr'", tr' . head)
+  ,("ifThenElse", \[a,b,c] -> ifB a b c)
+  ,("==", \[a,b] -> a ==* b)
+  ,("/=", \[a,b] -> a /=* b)
+  ,("<=", \[a,b] -> a <=* b)
+  ,(">=", \[a,b] -> a >=* b)
+  ,("<",  \[a,b] -> a <*  b)
+  ,(">",  \[a,b] -> a >*  b)
+  ,("deleteIndex", \[a,i]   -> deleteIndex a [integer i])
+  ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
+  ,("quad_form_diag", \[m,v] -> diag v <> m <> diag v)
+  ]
 
 toBool :: (Boolean b, Eq b) => b -> Bool
 toBool b = if notB b == false then True else False

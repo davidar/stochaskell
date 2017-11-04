@@ -9,16 +9,20 @@ import qualified Data.Array.Abstract as AA
 import Data.Array.Abstract ((!))
 import qualified Data.Bimap as Bimap
 import Data.Boolean
+import Data.Char
 import Data.Expression.Const
 import Data.List hiding (foldl,foldr,scanl,scanr)
+import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
 import Data.Maybe
 import Data.Number.Transfinite hiding (log)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Debug.Trace
 import Control.Applicative ()
 import Control.Monad.State
 import qualified Numeric.LinearAlgebra as LA
-import Util ()
+import Util
 
 
 ------------------------------------------------------------------------------
@@ -51,8 +55,14 @@ getId :: NodeRef -> Maybe Id
 getId (Var i _) = Just i
 getId _ = Nothing
 
+getConstVal :: NodeRef -> Maybe ConstVal
+getConstVal (Const c _) = Just c
+getConstVal _ = Nothing
+
 instance Show NodeRef where
   show (Var   i t) = "("++ show i ++" :: "++ show t ++")"
+  show (Const c IntT) = show (integer c)
+  show (Const c RealT) = show (real c)
   show (Const c t) = "("++ show c ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
 
@@ -76,7 +86,21 @@ data Node = Apply { fName :: String
                   , rList :: NodeRef
                   , typeNode :: Type
                   }
-          deriving (Eq, Ord, Show)
+          deriving (Eq, Ord)
+showLet :: DAG -> NodeRef -> String
+showLet dag ret
+  | dag == emptyDAG = show ret
+  | otherwise = "let "++ (drop 4 . indent . indent $ show dag) ++"\n"++
+                "in "++ show ret
+instance Show Node where
+  show (Apply f args t)
+    | all (not . isAlphaNum) f, [i,j] <- args
+    = show i ++" "++ f ++" "++ show j ++" :: "++ show t
+    | otherwise = f ++" "++ intercalate " " (map show args) ++" :: "++ show t
+  show (Array sh dag hd t) = "\n"++
+    "  [ "++ (drop 4 . indent . indent $ showLet dag hd) ++"\n"++
+    "  | "++ intercalate ", " (zipWith g (inputs dag) sh) ++" ] :: "++ show t
+    where g i (a,b) = show i ++" <- "++ show a ++"..."++ show b
 
 data DAG = DAG { dagLevel :: Level
                , inputs :: [Id]
@@ -86,6 +110,9 @@ emptyDAG :: DAG
 emptyDAG = DAG 0 [] Bimap.empty
 nodes :: DAG -> [(Pointer, Node)]
 nodes dag = Bimap.toAscListR $ bimap dag
+instance Show DAG where
+  show dag = unlines $ map f (nodes dag)
+    where f (i,n) = show (Internal (dagLevel dag) i) ++" = "++ show n
 
 type Block = [DAG]
 emptyBlock :: [DAG]
@@ -98,6 +125,13 @@ instance Eq DExpr where
   e == f = runDExpr e == runDExpr f
 instance Ord DExpr where
   e `compare` f = runDExpr e `compare` runDExpr f
+instance Show DExpr where
+  show e = showLet dag ret
+    where (ret, [dag]) = runDExpr e
+
+type EEnv = Map Id DExpr
+emptyEEnv :: EEnv
+emptyEEnv = Map.empty
 
 type Expression t = Expr t
 newtype Expr t = Expr { erase :: DExpr }
@@ -278,6 +312,46 @@ dependsNode block (Array sh body hd _) =
         hdeps = Set.filter ((dagLevel body >) . idLevel) $
           dependsNodeRef block' hd
 
+extractNodeRef :: EEnv -> Block -> NodeRef -> State Block NodeRef
+extractNodeRef env block (Var (Internal level ptr) _) = do
+  node' <- extractNode env block node
+  simplify node'
+  where dag = reverse block !! level
+        node = flip fromMaybe (ptr `lookup` nodes dag) $
+          error $ "pointer "++ show level ++":"++ show ptr ++" not found"
+extractNodeRef env block (Var i t)
+  | Dummy{} <- i, isJust val = fromDExpr $ fromJust val
+  | otherwise = do
+    t' <- extractType env block t
+    return $ Var i t'
+  where val = Map.lookup i env
+extractNodeRef env block (Const c t) = do
+  t' <- extractType env block t
+  return $ Const c t'
+extractNodeRef _ _ r = error $ show r
+
+extractNode :: EEnv -> Block -> Node -> State Block Node
+extractNode env block (Apply f args t) = do
+  js <- sequence $ extractNodeRef env block <$> args
+  t' <- extractType env block t
+  return $ Apply f js t'
+extractNode _ _ n = error $ show n
+
+extractType :: EEnv -> Block -> Type -> State Block Type
+extractType _ _ IntT = return IntT
+extractType _ _ RealT = return RealT
+extractType env block (SubrangeT t a b) = do
+  t' <- extractType env block t
+  a' <- sequence $ extractNodeRef env block <$> a
+  b' <- sequence $ extractNodeRef env block <$> b
+  return $ SubrangeT t' a' b'
+extractType env block (ArrayT k sh t) = do
+  lo' <- sequence $ extractNodeRef env block <$> lo
+  hi' <- sequence $ extractNodeRef env block <$> hi
+  t' <- extractType env block t
+  return $ ArrayT k (zip lo' hi') t'
+  where (lo,hi) = unzip sh
+
 
 ------------------------------------------------------------------------------
 -- FUNCTION APPLICATION                                                     --
@@ -285,13 +359,11 @@ dependsNode block (Array sh body hd _) =
 
 -- simplify and float constants
 simplify :: Node -> State Block NodeRef
--- TODO: eval const exprs
-simplify (Apply "+" [Const a _, Const b _] t) = return $ Const (a + b) t
-simplify (Apply "*" [Const a _, Const b _] t) = return $ Const (a * b) t
-simplify (Apply "negate" [Const a _] t) = return $ Const (negate a) t
-simplify (Apply "log" [Const a _] t) = return $ Const (log a) t
-simplify (Apply "exp" [Const a _] t) = return $ Const (exp a) t
 simplify (Apply "ifThenElse" [_,a,b] _) | a == b = return a
+simplify (Apply f args t)
+  | Just f' <- Map.lookup f constFuns
+  , Just args' <- sequence (getConstVal <$> args)
+  = return $ Const (f' args') t
 simplify e = do
     dag:_ <- get
     if varies dag $ fArgs e
@@ -318,9 +390,11 @@ applyClosed1 f x = expr $ do
     simplify $ Apply f [i] (typeRef i)
 
 applyClosed2 :: String -> Expr a -> Expr a -> Expr a
-applyClosed2 f x y = expr $ do
-    i <- fromExpr x
-    j <- fromExpr y
+applyClosed2 f x y = Expr $ applyClosed2' f (erase x) (erase y)
+applyClosed2' :: String -> DExpr -> DExpr -> DExpr
+applyClosed2' f x y = DExpr $ do
+    i <- fromDExpr x
+    j <- fromDExpr y
     let s = typeRef i
         t = typeRef j
     simplify $ Apply f [i,j] (coerce s t)
@@ -330,35 +404,32 @@ applyClosed2 f x y = expr $ do
 -- ARRAY COMPREHENSIONS                                                     --
 ------------------------------------------------------------------------------
 
-type AAI r = AA.AbstractArray (Expr Integer) (Expr r)
-
 -- External references captured by this closure
-capture :: Num i => AA.AbstractArray i (Expr t) -> [Id]
+capture :: AA.AbstractArray DExpr DExpr -> [Id]
 capture ar = externRefs adag
-  where (_,adag:_) = runExpr $ ar ! replicate (length $ AA.shape ar) 0
+  where (_,adag:_) = runDExpr $ ar ! replicate (length $ AA.shape ar) x
+        x = DExpr . return $ Const (error "capture dummy") IntT
 
-makeArray :: forall i t. (ScalarType t)
-          => Maybe String -> AA.AbstractArray (Expr i) (Expr t)
+makeArray :: Maybe String -> AA.AbstractArray DExpr DExpr
           -> [AA.Interval NodeRef] -> State Block NodeRef
 makeArray l ar sh = do
     block <- get
     let ids = [ Dummy (length block) i | i <- [1..length sh] ]
-        e = ar ! [ expr . return $ Var i IntT | i <- ids ]
-        (ret, dag:block') = runState (fromExpr e) $
+        e = ar ! [ DExpr . return $ Var i IntT | i <- ids ]
+        (ret, dag:block') = runState (fromDExpr e) $
             DAG (length block) ids Bimap.empty : block
-        TypeIs t = typeOf :: TypeOf t
+        t = typeDExpr e
     put block'
     hashcons $ Array sh dag ret (ArrayT l sh t)
 
 -- constant floating
-floatArray :: (Num i, ScalarType i, ScalarType t)
-           => Maybe String -> AA.AbstractArray (Expr i) (Expr t)
+floatArray :: Maybe String -> AA.AbstractArray DExpr DExpr
            -> State Block NodeRef
 floatArray l ar = do
     dag:_ <- get
     sh <- sequence . flip map (AA.shape ar) $ \interval -> do
-        i <- fromExpr $ fst interval
-        j <- fromExpr $ snd interval
+        i <- fromDExpr $ fst interval
+        j <- fromDExpr $ snd interval
         return (i,j)
     if varies dag (map fst sh) ||
        varies dag (map snd sh) ||
@@ -376,12 +447,19 @@ floatArray' a@(Array sh adag _ _) = do
       then hashcons a
       else liftBlock $ floatArray' a
 
-array :: (Num i, ScalarType i, ScalarType e)
-      => Maybe String -> Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t
-array l n a = if length sh == n
-                then expr $ floatArray l a
+array' :: Maybe String -> Int -> AA.AbstractArray DExpr DExpr -> DExpr
+array' l n a = if length sh == n
+                then DExpr $ floatArray l a
                 else error "dimension mismatch"
   where sh = AA.shape a
+array :: (Num i, ScalarType i, ScalarType e)
+      => Maybe String -> Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t
+array l n = Expr . array' l n . eraseAA
+
+eraseAA :: AA.AbstractArray (Expr i) (Expr e) -> AA.AbstractArray DExpr DExpr
+eraseAA (AA.AArr sh f) = AA.AArr sh' f'
+  where sh' = flip map sh $ \(a,b) -> (erase a, erase b)
+        f' = erase . f . map Expr
 
 index :: Expr a -> [Expr i] -> Expr r
 index a es = expr $ do
@@ -441,6 +519,15 @@ foldscan isScan dir f r xs = do
 -- INSTANCES                                                                --
 ------------------------------------------------------------------------------
 
+instance Num DExpr where
+    (+) = applyClosed2' "+"
+    (-) = applyClosed2' "-"
+    (*) = applyClosed2' "*"
+    fromInteger x = trace ("WARN assuming IntT type for DExpr "++ show x) $
+      DExpr . return $ Const (fromInteger x) IntT
+instance Fractional DExpr where
+    (/) = applyClosed2' "/"
+
 instance (ScalarType t, Num t) => Num (Expr t) where
     (+) = applyClosed2 "+"
     (-) = applyClosed2 "-"
@@ -478,13 +565,18 @@ instance (ScalarType t, Floating t) => Floating (Expr t) where
     acosh = applyClosed1 "acosh"
     atanh = applyClosed1 "atanh"
 
-instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
-    a ! e = expr $ do
-        f <- fromExpr a
-        j <- fromExpr e
+instance AA.Indexable DExpr DExpr DExpr where
+    a ! e = DExpr $ do
+        f <- fromDExpr a
+        j <- fromDExpr e
         return $ case f of
             (Index g js) -> Index g (j:js)
             _            -> Index f [j]
+instance AA.Vector DExpr DExpr DExpr where
+    vector = array' (Just "vector") 1
+
+instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
+    a ! e = Expr $ erase a ! erase e
     deleteIndex a e = expr $ do
       f <- fromExpr a
       j <- fromExpr e
@@ -691,7 +783,3 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
     fromConstVals [a,b,c,d,e,f,g,h] =
       (const a, const b, const c, const d, const e, const f, const g, const h)
     fromConstVals _ = undefined
-
-instance Show DAG where
-  show dag = unlines $ map f (nodes dag)
-    where f (i,n) = show (Internal (dagLevel dag) i) ++" = "++ show n
