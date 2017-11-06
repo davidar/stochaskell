@@ -261,7 +261,7 @@ stanProgram pb@(PBlock block refs given) =
         if getId i `elem` map Just (Map.keys given)
         then "" else stanDecl True (stanNodeRef i) (typePNode n)) ++"\n}\n"++
     "model {\n"++
-      stanDAG (Just tparams) (head block) ++"\n\n"++
+      stanDAG (Just tparams) (topDAG block) ++"\n\n"++
       printRefs (\i n -> if Set.member (fromJust $ getId i) tparams
                   then stanPNode (stanNodeRef i) n
                   else "") ++"\n}\n"

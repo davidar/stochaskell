@@ -100,13 +100,13 @@ churchProgram prog
   | Map.null given =
   churchPrelude ++"\n"++
   "(define (model) (letrec (\n"++
-    churchDAG (head block) ++"\n"++
+    churchDAG (topDAG block) ++"\n"++
     printedRefs ++")\n  "++ printedRets ++"))\n"++
   finalLine
   | otherwise =
   churchPrelude ++"\n"++
   "(mh-query 1000 10 (define p (letrec (\n"++
-    churchDAG (head block) ++"\n"++
+    churchDAG (topDAG block) ++"\n"++
     printedRefs ++")\n  "++
     "(pair "++ printedRets ++" (and\n"++
     indent (unlines printedConds) ++"))))\n  "++

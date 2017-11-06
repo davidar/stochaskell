@@ -166,7 +166,7 @@ pmProgram prog =
   --"@profile(stream=sys.stderr)\n"++
   "def main():\n"++
   " with pm.Model() as model:\n"++
-    pmDAG (pn, given) (head block)
+    pmDAG (pn, given) (topDAG block)
   where pb@(PBlock block _ given) = snd $ runProgExprs prog
         skel = modelSkeleton pb
         pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb

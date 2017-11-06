@@ -57,9 +57,8 @@ dependsPNode block (Dist _ args _) =
 dependsPNode block (Loop sh defs dist _) =
   Set.unions $ map (d . fst) sh ++ map (d . snd) sh ++ [ddeps]
   where d = dependsNodeRef block
-        block' = defs : drop (length block - dagLevel defs) block
         ddeps = Set.filter ((dagLevel defs >) . idLevel) $
-          dependsPNode block' dist
+          dependsPNode (deriveBlock defs block) dist
 
 instance Show PNode where
   show (Dist d js t) = unwords (d : map show js) ++" :: P "++ show t
@@ -130,7 +129,7 @@ dist s = Prog $ do
     d <- liftExprBlock s
     PBlock block rhs given <- get
     put $ PBlock block (d:rhs) given
-    let depth = dagLevel $ head block
+    let depth = dagLevel $ topDAG block
         k = length rhs
         name = Volatile depth k
         t = typePNode d
@@ -147,7 +146,7 @@ truncated a b p = Prog $ do
   x <- fromProg p
   (Var name t) <- liftExprBlock $ fromExpr x
   PBlock block (d:rhs) given <- get
-  when (name /= Volatile (dagLevel $ head block) (length rhs)) $
+  when (name /= Volatile (dagLevel $ topDAG block) (length rhs)) $
     error "truncated: program does not appear to be primitive"
   let g k | (Const c _) <- k, isInfinite c = Nothing
           | otherwise = Just k
@@ -256,7 +255,7 @@ instance (ScalarType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (E
               runState (head <$> fromProgExprs prog) $ PBlock block [] emptyEnv
             d = HODist "orderedSample" act [i] (ArrayT Nothing [(Const 1 IntT,i)] (typePNode act))
         put $ PBlock block' (d:rhs) given
-        let depth = dagLevel $ head block
+        let depth = dagLevel $ topDAG block
             k = length rhs
             name = Volatile depth k
             t = typePNode d
@@ -345,21 +344,23 @@ instance forall r f. ScalarType r =>
       j <- fromExpr b
       return (i,j)
     PBlock block dists given <- get
-    let ids = [ Dummy (length block) i | i <- [1..length sh] ]
+    let d = nextLevel block
+        ids = [ Dummy d i | i <- [1..length sh] ]
         p = ar ! [expr . return $ Var i IntT | i <- ids]
-        (ret, PBlock (dag:block') [act] _) = runState (head <$> fromProgExprs p) $
-            PBlock (DAG (length block) ids Bimap.empty : block) [] emptyEnv
+        (ret, PBlock (Block (dag:block')) [act] _) =
+          runState (head <$> fromProgExprs p) $
+            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv
         TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
         loopType = ArrayT Nothing sh t
         loop = Loop sh dag act loopType
-    put $ PBlock block' (loop:dists) given
-    let name = Volatile (length block - 1) (length dists)
+    put $ PBlock (Block block') (loop:dists) given
+    let name = Volatile (d-1) (length dists)
         v = Var name loopType
     _ <- liftExprBlock . simplify $ Apply "getExternal" [v] loopType
     return $ case ret of
-      Var (Volatile depth 0) _ | depth == length block ->
+      Var (Volatile depth 0) _ | depth == d ->
         expr $ return v :: Expr f
-      Index vec [Var (Volatile depth 0) _] | depth == length block ->
+      Index vec [Var (Volatile depth 0) _] | depth == d ->
         expr . floatArray' $ Array sh dag (Index vec [ref]) loopType
           where ref = Index v (reverse [Var i IntT | i <- ids])
       _ -> error $ "non-trivial transform in joint: "++ show ret
@@ -373,12 +374,13 @@ type instance ConditionOf (Prog ()) = Expr Bool
 instance MonadGuard Prog where
     guard cond = Prog $ do -- TODO: weaker assumptions
         (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
-        (PBlock (dag:dags) dists given) <- get
+        (PBlock block dists given) <- get
+        let dag = topDAG block
         if i /= length (nodes dag) - 1 then undefined else do
           let (Just (Apply "==" [Var j _, Const a _] _)) =
                 lookup i $ nodes dag
               dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
-          put $ PBlock (dag':dags) dists (Map.insert j a given)
+          put $ PBlock (deriveBlock dag' block) dists (Map.insert j a given)
 
 dirac :: (Expr t) -> Prog (Expr t)
 dirac c = do
@@ -416,7 +418,7 @@ density' prog vals = densityPBlock env' pb
 densityPBlock :: Env -> PBlock -> LF.LogFloat
 densityPBlock env (PBlock block refs _) = product $ do
     (i,d) <- zip [0..] $ reverse refs
-    let ident = Volatile (dagLevel $ head block) i
+    let ident = Volatile (dagLevel $ topDAG block) i
     return $ case Map.lookup ident env of
       Just val -> let p = densityPNode env block d val
         in {-trace ("density ("++ show d ++") "++ show val ++" = "++ show p)-} p
@@ -488,7 +490,7 @@ densityPNode env block (Loop shp ldag body _) a = product
       in {-trace ("density ("++ show body ++") "++ show (fromRational x :: Double) ++" = "++ show p)-} p
     | (i,x) <- evalRange env block shp `zip` entries a ]
   where inps = inputs ldag
-        block' = ldag : drop (length block - dagLevel ldag) block
+        block' = deriveBlock ldag block
 
 densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
     [ densityPNode env block d (fromRational x) | x <- entries a ]
@@ -508,7 +510,7 @@ sampleP p = do
     let env' = Map.filterWithKey (\k _ -> not $ isInternal k) env
     return . fromConstVals $ map (fromJust . evalNodeRef env' block) rets
   where (rets, PBlock block refs _) = runProgExprs p
-        idents = [ (Volatile (dagLevel $ head block) i, d)
+        idents = [ (Volatile (dagLevel $ topDAG block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
 
 samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
@@ -597,7 +599,7 @@ samplePNode env block (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
 
 samplePNode env block (Loop shp ldag hd _) = listArray' (evalShape env block shp) <$> sequence arr
   where inps = inputs ldag
-        block' = ldag : drop (length block - dagLevel ldag) block
+        block' = deriveBlock ldag block
         arr = [ samplePNode (Map.fromList (zip inps idx) `Map.union` env) block' hd
               | idx <- evalRange env block shp ]
 

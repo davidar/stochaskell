@@ -60,11 +60,8 @@ evalTuple env = sequence . map (evalD env) . fromExprTuple
 evalNodeRef :: Env -> Block -> NodeRef -> Maybe ConstVal
 evalNodeRef env _ (Var ident _) | isJust val = val
   where val = Map.lookup ident env
-evalNodeRef env block (Var i@(Internal level ptr) _) =
-  let dag = reverse block !! level
-      node = fromMaybe (error $ "internal lookup failure: " ++ show i) $
-        ptr `lookup` nodes dag
-  in evalNode env block node
+evalNodeRef env block (Var i@Internal{} _) =
+  evalNode env block $ lookupBlock i block
 evalNodeRef _ _ (Var _ _) = Nothing
 evalNodeRef _ _ (Const c _) = Just c
 evalNodeRef env block (Index arr idx) = do
@@ -94,7 +91,7 @@ evalNode env block (Array sh body hd _) = do
                        y <- evalNodeRef env block b
                        return (toInteger x, toInteger y)
                   | (a,b) <- sh ]
-  let block' = body : drop (length block - dagLevel body) block
+  let block' = deriveBlock body block
   ar <- sequence $ toArray [
     let env' = evalDAG block' body $
           Map.fromList (inputs body `zip` map fromInteger xs) `Map.union` env
@@ -112,12 +109,13 @@ evalNode env block (FoldScan scan lr body hd seed ls _) = do
     (True,  Left_)  -> scanlConst' (flip f) r xs
 
 evalFn2 :: Env -> Block -> DAG -> NodeRef -> ConstVal -> ConstVal -> Maybe ConstVal
-evalFn2 env block body hd a b = evalNodeRef env' (body:block) hd
+evalFn2 env block body hd a b = evalNodeRef env' (deriveBlock body block) hd
   where [i,j] = inputs body
         env' = Map.insert i a $ Map.insert j b env
 
+-- TODO: deriveBlock for each dag?
 evalBlock :: Block -> Env -> Env
-evalBlock block = compose (evalDAG block <$> reverse block)
+evalBlock block@(Block dags) = compose (evalDAG block <$> reverse dags)
 
 evalDAG :: Block -> DAG -> Env -> Env
 evalDAG block dag = compose
@@ -141,11 +139,8 @@ unifyTuple block rets vals = compose
   | (r,e) <- zip rets $ fromExprTuple vals, let Just v = evalD_ e ]
 
 unifyNodeRef :: Env -> Block -> NodeRef -> ConstVal -> Env
-unifyNodeRef env block (Var (Internal level ptr) _) val =
-    unifyNode env block node val
-  where dag = reverse block !! level
-        node = flip fromMaybe (ptr `lookup` nodes dag) $
-          error $ "pointer "++ show level ++":"++ show ptr ++" not found"
+unifyNodeRef env block (Var i@Internal{} _) val =
+    unifyNode env block (lookupBlock i block) val
 unifyNodeRef _ _ (Var ref _) val = Map.singleton ref val
 unifyNodeRef _ _ (Const c _) val = if c == val then emptyEnv else error $ show c ++" /= "++ show val
 unifyNodeRef _ _ Index{} _ = trace "WARN not unifying Index" emptyEnv
@@ -154,8 +149,7 @@ unifyNode :: Env -> Block -> Node -> ConstVal -> Env
 unifyNode env block (Array sh body hd _) val = Map.unions $ do -- TODO unify sh
     idx <- range (bounds val)
     let env' = Map.fromList (inputs body `zip` map fromInteger idx) `Map.union` env
-    return $ unifyNodeRef env' block' hd (val ! idx)
-  where block' = body : drop (length block - dagLevel body) block
+    return $ unifyNodeRef env' (deriveBlock body block) hd (val ! idx)
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isJust c' =
     unifyNodeRef env block (if toBool (fromJust c') then a else b) val
   where c' = evalNodeRef env block c
@@ -209,7 +203,7 @@ unifyNode env block (FoldScan True Left_ dag ret seed ls _) val =
   unifyNodeRef env block seed seed' `Map.union` unifyNodeRef env block ls ls'
   where seed' = val![1]
         ls' = fromList $ pairWith f' (elems' val)
-        block' = dag : drop (length block - dagLevel dag) block
+        block' = deriveBlock dag block
         [i,j] = inputs dag
         f' x y = let env' = Map.insert j x env
                  in fromJust . Map.lookup i $ unifyNodeRef env' block' ret y
@@ -222,11 +216,8 @@ solve e val env = env `Map.union` solveNodeRef env block ret (erase val)
   where (ret, block) = runExpr e
 
 solveNodeRef :: EEnv -> Block -> NodeRef -> DExpr -> EEnv
-solveNodeRef env block (Var (Internal level ptr) _) val =
-  solveNode env block node val
-  where dag = reverse block !! level
-        node = flip fromMaybe (ptr `lookup` nodes dag) $
-          error $ "pointer "++ show level ++":"++ show ptr ++" not found"
+solveNodeRef env block (Var i@Internal{} _) val =
+  solveNode env block (lookupBlock i block) val
 solveNodeRef _ _ (Var ref _) val = Map.singleton ref val
 solveNodeRef _ _ ref val =
   trace ("WARN assuming "++ show ref ++" unifies with "++ show val) emptyEEnv
@@ -243,7 +234,7 @@ solveNode env block (FoldScan True Left_ dag ret seed ls _) val =
         hi' = reDExpr env block hi
         seed' = val!lo'
         ls' = vector [ f' (val!k) (val!(k+1)) | k <- lo'...hi' ]
-        block' = dag : drop (length block - dagLevel dag) block
+        block' = deriveBlock dag block
         [i,j] = inputs dag
         f' x y = let env' = Map.insert j x env
                  in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
@@ -262,11 +253,8 @@ diffD_ :: DExpr -> Id -> Type -> ConstVal
 diffD_ = diffD emptyEnv
 
 diffNodeRef :: Env -> Block -> NodeRef -> Id -> Type -> ConstVal
-diffNodeRef env block (Var (Internal level ptr) _) var t =
-    let dag = reverse block !! level
-        node = flip fromMaybe (ptr `lookup` nodes dag) $
-          error $ "pointer "++ show level ++":"++ show ptr ++" not found"
-    in diffNode env block node var t
+diffNodeRef env block (Var i@Internal{} _) var t =
+  diffNode env block (lookupBlock i block) var t
 diffNodeRef env block (Var i s) var t
   | i == var  = eye   (1, numelType env block s)
   | otherwise = zeros (1, numelType env block s) (1, numelType env block t)

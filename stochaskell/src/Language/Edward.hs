@@ -137,7 +137,7 @@ edProgram :: (ExprTuple t) => Int -> Int -> Double -> Prog t -> Maybe t -> Strin
 edProgram numSamples numSteps stepSize prog init =
   edPrelude ++"\n"++
   "if True:\n"++
-    edDAG pn (head block) ++"\n"++
+    edDAG pn (topDAG block) ++"\n"++
   "latent = "++ latent ++"\n"++
   "data = "++ printedConds ++"\n"++
   "inference = ed.HMC(latent, data)\n"++

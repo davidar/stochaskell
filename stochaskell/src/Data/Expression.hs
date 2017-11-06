@@ -114,9 +114,24 @@ instance Show DAG where
   show dag = unlines $ map f (nodes dag)
     where f (i,n) = show (Internal (dagLevel dag) i) ++" = "++ show n
 
-type Block = [DAG]
-emptyBlock :: [DAG]
-emptyBlock = [emptyDAG]
+newtype Block = Block [DAG] deriving (Eq, Ord)
+emptyBlock :: Block
+emptyBlock = Block [emptyDAG]
+
+topDAG :: Block -> DAG
+topDAG (Block ds) = head ds
+
+nextLevel :: Block -> Level
+nextLevel (Block ds) = length ds
+
+lookupBlock :: Id -> Block -> Node
+lookupBlock i@(Internal level ptr) (Block dags) =
+  fromMaybe (error $ "internal lookup failure: " ++ show i) $
+    ptr `lookup` nodes (reverse dags !! level)
+
+deriveBlock :: DAG -> Block -> Block
+deriveBlock d b@(Block ds) = Block (d:parent)
+  where parent = drop (nextLevel b - dagLevel d) ds
 
 data DExpr = DExpr { fromDExpr :: State Block NodeRef }
 runDExpr :: DExpr -> (NodeRef, Block)
@@ -126,8 +141,8 @@ instance Eq DExpr where
 instance Ord DExpr where
   e `compare` f = runDExpr e `compare` runDExpr f
 instance Show DExpr where
-  show e = showLet dag ret
-    where (ret, [dag]) = runDExpr e
+  show e = showLet (topDAG block) ret -- TODO: parents
+    where (ret, block) = runDExpr e
 
 type EEnv = Map Id DExpr
 emptyEEnv :: EEnv
@@ -197,7 +212,8 @@ internal level i = do
     t <- getType
     return $ Var (Internal level i) t
   where getType = do
-          dag:_ <- get
+          block <- get
+          let dag = topDAG block
           if level == dagLevel dag
             then return . typeNode . fromJust . Bimap.lookupR i $ bimap dag
             else liftBlock getType
@@ -252,20 +268,21 @@ cast = expr . fromExpr
 -- http://okmij.org/ftp/tagless-final/sharing/sharing.pdf
 hashcons :: Node -> State Block NodeRef
 hashcons e = do
-    DAG level inp vdag : parent <- get
+    block <- get
+    let (DAG level inp vdag) = topDAG block
     case Bimap.lookup e vdag of
         Just k -> internal level k
         Nothing -> do
             let k = Bimap.size vdag
-            put $ DAG level inp (Bimap.insert e k vdag) : parent
+            put $ deriveBlock (DAG level inp $ Bimap.insert e k vdag) block
             internal level k
 
 -- perform an action in the enclosing block
-liftBlock :: MonadState [a] m => State [a] b -> m b
+liftBlock :: MonadState Block m => State Block b -> m b
 liftBlock s = do
-    dag:parent <- get
-    let (ref, parent') = runState s parent
-    put $ dag:parent'
+    Block (dag:parent) <- get
+    let (ref, parent') = runState s $ Block parent
+    put $ deriveBlock dag parent'
     return ref
 
 -- does a list of expressions depend on the inputs to this block?
@@ -293,10 +310,8 @@ externRefs (DAG _ _ d) = go d
 
 -- recursive data dependencies
 dependsNodeRef :: Block -> NodeRef -> Set Id
-dependsNodeRef block (Var i@(Internal level ptr) _) =
-  let node = fromMaybe (error $ "internal lookup failure: " ++ show i) $
-        ptr `lookup` nodes (reverse block !! level)
-  in Set.insert i (dependsNode block node)
+dependsNodeRef block (Var i@Internal{} _) =
+  Set.insert i . dependsNode block $ lookupBlock i block
 dependsNodeRef _ (Var i _) = Set.singleton i
 dependsNodeRef _ (Const _ _) = Set.empty
 dependsNodeRef block (Index a i) =
@@ -308,17 +323,13 @@ dependsNode block (Apply _ args _) =
 dependsNode block (Array sh body hd _) =
   Set.unions $ map (d . fst) sh ++ map (d . snd) sh ++ [hdeps]
   where d = dependsNodeRef block
-        block' = body : drop (length block - dagLevel body) block
         hdeps = Set.filter ((dagLevel body >) . idLevel) $
-          dependsNodeRef block' hd
+          dependsNodeRef (deriveBlock body block) hd
 
 extractNodeRef :: EEnv -> Block -> NodeRef -> State Block NodeRef
-extractNodeRef env block (Var (Internal level ptr) _) = do
-  node' <- extractNode env block node
+extractNodeRef env block (Var i@Internal{} _) = do
+  node' <- extractNode env block $ lookupBlock i block
   simplify node'
-  where dag = reverse block !! level
-        node = flip fromMaybe (ptr `lookup` nodes dag) $
-          error $ "pointer "++ show level ++":"++ show ptr ++" not found"
 extractNodeRef env block (Var i t)
   | Dummy{} <- i, isJust val = fromDExpr $ fromJust val
   | otherwise = do
@@ -365,8 +376,8 @@ simplify (Apply f args t)
   , Just args' <- sequence (getConstVal <$> args)
   = return $ Const (f' args') t
 simplify e = do
-    dag:_ <- get
-    if varies dag $ fArgs e
+    block <- get
+    if varies (topDAG block) $ fArgs e
       then hashcons e
       else liftBlock $ simplify e
 
@@ -406,27 +417,29 @@ applyClosed2' f x y = DExpr $ do
 
 -- External references captured by this closure
 capture :: AA.AbstractArray DExpr DExpr -> [Id]
-capture ar = externRefs adag
-  where (_,adag:_) = runDExpr $ ar ! replicate (length $ AA.shape ar) x
+capture ar = externRefs $ topDAG block
+  where (_,block) = runDExpr $ ar ! replicate (length $ AA.shape ar) x
         x = DExpr . return $ Const (error "capture dummy") IntT
 
 makeArray :: Maybe String -> AA.AbstractArray DExpr DExpr
           -> [AA.Interval NodeRef] -> State Block NodeRef
 makeArray l ar sh = do
     block <- get
-    let ids = [ Dummy (length block) i | i <- [1..length sh] ]
+    let d = nextLevel block
+        ids = [ Dummy d i | i <- [1..length sh] ]
         e = ar ! [ DExpr . return $ Var i IntT | i <- ids ]
-        (ret, dag:block') = runState (fromDExpr e) $
-            DAG (length block) ids Bimap.empty : block
+        (ret, Block (dag:block')) = runState (fromDExpr e) $
+            deriveBlock (DAG d ids Bimap.empty) block
         t = typeDExpr e
-    put block'
+    put $ Block block'
     hashcons $ Array sh dag ret (ArrayT l sh t)
 
 -- constant floating
 floatArray :: Maybe String -> AA.AbstractArray DExpr DExpr
            -> State Block NodeRef
 floatArray l ar = do
-    dag:_ <- get
+    block <- get
+    let dag = topDAG block
     sh <- sequence . flip map (AA.shape ar) $ \interval -> do
         i <- fromDExpr $ fst interval
         j <- fromDExpr $ snd interval
@@ -440,7 +453,8 @@ floatArray l ar = do
 -- TODO: reduce code duplication
 floatArray' :: Node -> State Block NodeRef
 floatArray' a@(Array sh adag _ _) = do
-    dag:_ <- get
+    block <- get
+    let dag = topDAG block
     if varies dag (map fst sh) ||
        varies dag (map snd sh) ||
        (not . null $ inputs dag `intersect` externRefs adag)
@@ -493,18 +507,18 @@ foldscan isScan dir f r xs = do
     seed <- fromExpr r
     l <- fromExpr xs
     block <- get
-    let d = length block
+    let d = nextLevel block
         (ArrayT _ [(Const 1 IntT,n)] _) = typeRef l
         s = typeIndex $ typeRef l
         TypeIs t = typeOf :: TypeOf b
         i = expr . return $ Var (Dummy d 1) s
         j = expr . return $ Var (Dummy d 2) t
-        (ret, dag:block') = runState (fromExpr $ f i j) $
-            DAG d [Dummy d 1, Dummy d 2] Bimap.empty : block
-    if varies (head block) [seed,l] ||
-       (not . null $ inputs (head block) `intersect` externRefs dag)
+        (ret, Block (dag:block')) = runState (fromExpr $ f i j) $
+          deriveBlock (DAG d [Dummy d 1, Dummy d 2] Bimap.empty) block
+    if varies (topDAG block) [seed,l] ||
+       (not . null $ inputs (topDAG block) `intersect` externRefs dag)
       then do
-        put block'
+        put $ Block block'
         if isScan
           then do
             n1 <- simplify $ Apply "+" [n, Const 1 IntT] IntT
