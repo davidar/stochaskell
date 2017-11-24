@@ -215,6 +215,14 @@ solve :: Expr t -> Expr t -> EEnv -> EEnv
 solve e val env = env `Map.union` solveNodeRef env block ret (erase val)
   where (ret, block) = runExpr e
 
+solveTupleD :: Block -> [NodeRef] -> [DExpr] -> EEnv -> EEnv
+solveTupleD block rets vals = compose
+  [ \env -> env `Map.union` solveNodeRef env block r e
+  | (r,e) <- zip rets vals ]
+
+solveTuple :: (ExprTuple t) => Block -> [NodeRef] -> t -> EEnv -> EEnv
+solveTuple block rets vals env = solveTupleD block rets (fromExprTuple vals) env
+
 solveNodeRef :: EEnv -> Block -> NodeRef -> DExpr -> EEnv
 solveNodeRef env block (Var i@Internal{} _) val =
   solveNode env block (lookupBlock i block) val
@@ -279,12 +287,16 @@ instance (ScalarType t, Integral t) => Integral (Expr t) where
 
 instance IsList RVec where
     type Item RVec = Double
-    fromList = expr . return . flip Const undefined . fromList . map real
+    fromList xs = expr . return $ Const c t
+      where c = fromList $ map real xs
+            t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] RealT
     toList = map real . toList . fromJust . eval_
 
 instance IsList ZVec where
     type Item ZVec = Integer
-    fromList = expr . return . flip Const undefined . fromList . map integer
+    fromList xs = expr . return $ Const c t
+      where c = fromList $ map integer xs
+            t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] IntT
     toList = map integer . toList . fromJust . eval_
 
 instance IsList BVec where

@@ -5,6 +5,7 @@ module Data.Program where
 
 import Prelude hiding (isInfinite)
 
+import Control.Exception
 import Control.Monad.Guard
 import Control.Monad.State hiding (guard)
 import Data.Array.Abstract
@@ -376,11 +377,11 @@ instance MonadGuard Prog where
         (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
         (PBlock block dists given) <- get
         let dag = topDAG block
-        if i /= length (nodes dag) - 1 then undefined else do
-          let (Just (Apply "==" [Var j _, Const a _] _)) =
-                lookup i $ nodes dag
-              dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
-          put $ PBlock (deriveBlock dag' block) dists (Map.insert j a given)
+        assert (i == length (nodes dag) - 1) $ return ()
+        let (Just (Apply "==" [Var j _, Const a _] _)) =
+              lookup i $ nodes dag
+            dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
+        put $ PBlock (deriveBlock dag' block) dists (Map.insert j a given)
 
 dirac :: (Expr t) -> Prog (Expr t)
 dirac c = do
