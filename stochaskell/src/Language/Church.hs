@@ -54,10 +54,10 @@ churchNode :: Label -> Node -> String
 churchNode _ (Apply f js _) =
   "("++ fromMaybe f (lookup f churchBuiltinFunctions) ++" "++
     churchNodeRef `spaced` js ++")"
-churchNode _ (Array _ dag ret _) =
+churchNode _ (Array _ (Lambda dag ret) _) =
   "(mem (lambda ("++ churchId `spaced` inputs dag ++") "++
     "(letrec (\n"++ churchDAG dag ++")\n  "++ churchNodeRef ret ++")))"
-churchNode name (FoldScan True Left_ dag ret seed (Var ls _) _) =
+churchNode name (FoldScan True Left_ (Lambda dag ret) seed (Var ls _) _) =
   "(mem (lambda ("++ churchId idx ++") "++
     "(if (= 1 "++ churchId idx ++") "++ churchNodeRef seed ++" "++
       "(letrec (\n  "++
@@ -72,7 +72,7 @@ churchPNode :: PNode -> String
 churchPNode (Dist f js _) =
   "("++ fromMaybe f (lookup f churchBuiltinDistributions) ++" "++
     churchNodeRef `spaced` js ++")"
-churchPNode (Loop _ dag body _) =
+churchPNode (Loop _ (Lambda dag body) _) =
   "(mem (lambda ("++ churchId `spaced` inputs dag ++") "++
     (if churchDAG dag == ""
       then churchPNode body

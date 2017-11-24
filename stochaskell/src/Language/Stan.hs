@@ -182,11 +182,11 @@ stanNode name (Apply op [i,j] _) | isJust $ lookup op stanMatrixOperators =
 stanNode name (Apply f js _) | isJust $ lookup f stanBuiltinFunctions =
     name ++" = "++ stanCompose fs (stanNodeRef `commas` js) ++";"
   where fs = fromJust $ lookup f stanBuiltinFunctions
-stanNode name (Array sh dag ret _) =
+stanNode name (Array sh (Lambda dag ret) _) =
     forLoop (map stanId $ inputs dag) sh $
         stanDAG Nothing dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] = "++ stanNodeRef ret ++";"
-stanNode name (FoldScan scan lr dag ret seed
+stanNode name (FoldScan scan lr (Lambda dag ret) seed
                (Var ls s@(ArrayT _ ((Const 1 IntT,n):_) _)) t) =
     name ++ sloc ++" = "++ stanNodeRef seed ++";\n"++
     (forLoop [stanId idx] [(Const 1 IntT,n)] $ "  "++
@@ -229,7 +229,7 @@ stanPNode name d@(Dist f args t)
                    " T["++ maybe "" stanNodeRef a ++
                      ","++ maybe "" stanNodeRef b ++"]"
                | otherwise = ""
-stanPNode name (Loop sh ldag body _) =
+stanPNode name (Loop sh (Lambda ldag body) _) =
     forLoop (map stanId $ inputs ldag) sh $
         let lval = name ++"["++ stanId `commas` inputs ldag ++"]"
         in stanDAG Nothing ldag ++ indent (stanPNode lval body)

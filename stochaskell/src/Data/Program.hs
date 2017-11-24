@@ -41,8 +41,7 @@ data PNode = Dist { dName :: String
                   , typePNode :: Type
                   }
            | Loop { lShape :: [Interval NodeRef]
-                  , lDefs  :: DAG
-                  , lBody  :: PNode
+                  , lFunc  :: Lambda PNode
                   , typePNode :: Type
                   }
            | HODist { dName :: String
@@ -55,7 +54,7 @@ data PNode = Dist { dName :: String
 dependsPNode :: Block -> PNode -> Set Id
 dependsPNode block (Dist _ args _) =
   Set.unions $ map (dependsNodeRef block) args
-dependsPNode block (Loop sh defs dist _) =
+dependsPNode block (Loop sh (Lambda defs dist) _) =
   Set.unions $ map (d . fst) sh ++ map (d . snd) sh ++ [ddeps]
   where d = dependsNodeRef block
         ddeps = Set.filter ((dagLevel defs >) . idLevel) $
@@ -63,7 +62,7 @@ dependsPNode block (Loop sh defs dist _) =
 
 instance Show PNode where
   show (Dist d js t) = unwords (d : map show js) ++" :: P "++ show t
-  show (Loop sh defs body t) = unwords ["Loop", show sh, show defs, show body, show t]
+  show (Loop sh (Lambda defs body) t) = unwords ["Loop", show sh, show defs, show body, show t]
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
@@ -353,7 +352,7 @@ instance forall r f. ScalarType r =>
             PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv
         TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
         loopType = ArrayT Nothing sh t
-        loop = Loop sh dag act loopType
+        loop = Loop sh (Lambda dag act) loopType
     put $ PBlock (Block block') (loop:dists) given
     let name = Volatile (d-1) (length dists)
         v = Var name loopType
@@ -362,7 +361,7 @@ instance forall r f. ScalarType r =>
       Var (Volatile depth 0) _ | depth == d ->
         expr $ return v :: Expr f
       Index vec [Var (Volatile depth 0) _] | depth == d ->
-        expr . floatArray' $ Array sh dag (Index vec [ref]) loopType
+        expr . floatArray' $ Array sh (Lambda dag (Index vec [ref])) loopType
           where ref = Index v (reverse [Var i IntT | i <- ids])
       _ -> error $ "non-trivial transform in joint: "++ show ret
 
@@ -486,7 +485,7 @@ densityPNode env block (Dist "discreteUniform" [a,b] _) x =
         x' = toInteger x
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
-densityPNode env block (Loop shp ldag body _) a = product
+densityPNode env block (Loop shp (Lambda ldag body) _) a = product
     [ let p = densityPNode (Map.fromList (zip inps i) `Map.union` env) block' body (fromRational x)
       in {-trace ("density ("++ show body ++") "++ show (fromRational x :: Double) ++" = "++ show p)-} p
     | (i,x) <- evalRange env block shp `zip` entries a ]
@@ -598,7 +597,8 @@ samplePNode env block (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
   where n' = toInteger . fromJust $ evalNodeRef env block n
         v' = toMatrix . fromJust $ evalNodeRef env block v
 
-samplePNode env block (Loop shp ldag hd _) = listArray' (evalShape env block shp) <$> sequence arr
+samplePNode env block (Loop shp (Lambda ldag hd) _) =
+  listArray' (evalShape env block shp) <$> sequence arr
   where inps = inputs ldag
         block' = deriveBlock ldag block
         arr = [ samplePNode (Map.fromList (zip inps idx) `Map.union` env) block' hd

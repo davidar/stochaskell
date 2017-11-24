@@ -66,6 +66,8 @@ instance Show NodeRef where
   show (Const c t) = "("++ show c ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
 
+data Lambda h = Lambda { fDefs :: DAG, fHead :: h } deriving (Eq, Ord)
+
 data LeftRight = Left_ | Right_ deriving (Eq, Ord, Show)
 
 data Node = Apply { fName :: String
@@ -73,15 +75,13 @@ data Node = Apply { fName :: String
                   , typeNode :: Type
                   }
           | Array { aShape :: [AA.Interval NodeRef]
-                  , aDefs  :: DAG
-                  , aHead  :: NodeRef
+                  , aFunc  :: Lambda NodeRef
                   , typeNode :: Type
                   }
           | FoldScan
                   { rScan :: Bool
                   , rDirection :: LeftRight
-                  , rDefs :: DAG
-                  , rHead :: NodeRef
+                  , rFunc :: Lambda NodeRef
                   , rSeed :: NodeRef
                   , rList :: NodeRef
                   , typeNode :: Type
@@ -97,10 +97,21 @@ instance Show Node where
     | all (not . isAlphaNum) f, [i,j] <- args
     = show i ++" "++ f ++" "++ show j ++" :: "++ show t
     | otherwise = f ++" "++ intercalate " " (map show args) ++" :: "++ show t
-  show (Array sh dag hd t) = "\n"++
+  show (Array sh (Lambda dag hd) t) = "\n"++
     "  [ "++ (drop 4 . indent . indent $ showLet dag hd) ++"\n"++
     "  | "++ intercalate ", " (zipWith g (inputs dag) sh) ++" ] :: "++ show t
     where g i (a,b) = show i ++" <- "++ show a ++"..."++ show b
+  show (FoldScan scan lr (Lambda dag hd) seed ls _) =
+    hof ++ dir ++" "++ show seed ++" "++ show ls ++" $ "++
+    "\\"++ show i ++" "++ show j ++" ->\n"++
+      indent (showLet dag hd)
+    where hof = if scan then "scan" else "fold"
+          dir = case lr of
+            Right_ -> "r"
+            Left_ -> "l"
+          [i,j] = case lr of
+            Right_ -> inputs dag
+            Left_ -> reverse $ inputs dag
 
 data DAG = DAG { dagLevel :: Level
                , inputs :: [Id]
@@ -299,7 +310,7 @@ externRefs :: DAG -> [Id]
 externRefs (DAG _ _ d) = go d
   where go defs = concatMap (f . snd) $ Bimap.toAscListR defs
         f (Apply _ args _) = mapMaybe extern args
-        f (Array sh (DAG _ _ defs') r _) =
+        f (Array sh (Lambda (DAG _ _ defs') r) _) =
             mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
                                 ++ mapMaybe (extern . snd) sh ++ go defs'
         f FoldScan{} = [] -- TODO
@@ -320,7 +331,7 @@ dependsNodeRef block (Index a i) =
 dependsNode :: Block -> Node -> Set Id
 dependsNode block (Apply _ args _) =
   Set.unions $ map (dependsNodeRef block) args
-dependsNode block (Array sh body hd _) =
+dependsNode block (Array sh (Lambda body hd) _) =
   Set.unions $ map (d . fst) sh ++ map (d . snd) sh ++ [hdeps]
   where d = dependsNodeRef block
         hdeps = Set.filter ((dagLevel body >) . idLevel) $
@@ -432,7 +443,7 @@ makeArray l ar sh = do
             deriveBlock (DAG d ids Bimap.empty) block
         t = typeDExpr e
     put $ Block block'
-    hashcons $ Array sh dag ret (ArrayT l sh t)
+    hashcons $ Array sh (Lambda dag ret) (ArrayT l sh t)
 
 -- constant floating
 floatArray :: Maybe String -> AA.AbstractArray DExpr DExpr
@@ -452,7 +463,7 @@ floatArray l ar = do
 
 -- TODO: reduce code duplication
 floatArray' :: Node -> State Block NodeRef
-floatArray' a@(Array sh adag _ _) = do
+floatArray' a@(Array sh (Lambda adag _) _) = do
     block <- get
     let dag = topDAG block
     if varies dag (map fst sh) ||
@@ -523,9 +534,9 @@ foldscan isScan dir f r xs = do
           then do
             n1 <- simplify $ Apply "+" [n, Const 1 IntT] IntT
             let t' = (ArrayT Nothing [(Const 1 IntT, n1)] t)
-            hashcons $ FoldScan True  dir dag ret seed l t'
+            hashcons $ FoldScan True  dir (Lambda dag ret) seed l t'
           else
-            hashcons $ FoldScan False dir dag ret seed l t
+            hashcons $ FoldScan False dir (Lambda dag ret) seed l t
       else liftBlock $ foldscan isScan dir f r xs
 
 
@@ -749,22 +760,18 @@ const = constExpr
 instance (ScalarType a) => ExprTuple (Expr a) where
     fromExprTuple (a) = [erase a]
     fromConstVals [a] = (const a)
-    fromConstVals _ = undefined
 instance (ScalarType a, ScalarType b) =>
          ExprTuple (Expr a, Expr b) where
     fromExprTuple (a,b) = [erase a, erase b]
     fromConstVals [a,b] = (const a, const b)
-    fromConstVals _ = undefined
 instance (ScalarType a, ScalarType b, ScalarType c) =>
          ExprTuple (Expr a, Expr b, Expr c) where
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
     fromConstVals [a,b,c] = (const a, const b, const c)
-    fromConstVals _ = undefined
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d) where
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
     fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
-    fromConstVals _ = undefined
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
@@ -772,7 +779,6 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
       [erase a, erase b, erase c, erase d, erase e]
     fromConstVals [a,b,c,d,e] =
       (const a, const b, const c, const d, const e)
-    fromConstVals _ = undefined
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e, ScalarType f) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
@@ -780,7 +786,6 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
       [erase a, erase b, erase c, erase d, erase e, erase f]
     fromConstVals [a,b,c,d,e,f] =
       (const a, const b, const c, const d, const e, const f)
-    fromConstVals _ = undefined
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e, ScalarType f, ScalarType g) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
@@ -788,7 +793,6 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g]
     fromConstVals [a,b,c,d,e,f,g] =
       (const a, const b, const c, const d, const e, const f, const g)
-    fromConstVals _ = undefined
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e, ScalarType f, ScalarType g, ScalarType h) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
@@ -796,4 +800,3 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g, erase h]
     fromConstVals [a,b,c,d,e,f,g,h] =
       (const a, const b, const c, const d, const e, const f, const g, const h)
-    fromConstVals _ = undefined

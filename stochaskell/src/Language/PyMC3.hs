@@ -102,7 +102,7 @@ pmNode _ name (Apply op [i,j] _) | s /= "" =
 pmNode _ name (Apply f js _) | s /= "" =
   name ++" = "++ s ++"("++ pmNodeRef `commas` js ++")"
   where s = fromMaybe "" $ lookup f pmBuiltinFunctions
-pmNode r name (Array sh dag ret (ArrayT _ _ t))
+pmNode r name (Array sh (Lambda dag ret) _)
   | pmDAG r dag /= "" = undefined -- TODO: or ret depends on index
   | otherwise = name ++" = "++ pmNodeRef ret ++" * np.ones(("++
                   pmNodeRef `commas` map snd sh ++"))"
@@ -118,7 +118,7 @@ pmPNode name (Dist "lkj_corr" [v] (ArrayT _ [(Const 1 _, Const n _),_] _)) Nothi
 pmPNode name (Dist f args t) val =
   pmPNode' name f (map pmNodeRef args) t val
 
-pmPNode name (Loop sh defs dist _) Nothing =
+pmPNode name (Loop sh (Lambda defs dist) _) Nothing =
   "def "++ fn ++":\n"++
     pmDAG (Map.empty, emptyEnv) defs ++"\n  "++
     "return "++ ret ++"\n"++

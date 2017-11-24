@@ -95,7 +95,7 @@ edNode _ name a@(Apply f js _)
   | s /= "" = name ++" = "++ s ++"("++ edNodeRef `commas` js ++")"
   | otherwise = error $ "edNode "++ show a
   where s = fromMaybe "" (lookup f edBuiltinFunctions)
-edNode r name (Array sh dag ret (ArrayT _ _ t))
+edNode r name (Array sh (Lambda dag ret) (ArrayT _ _ t))
   | edDAG r dag /= "" = -- TODO: or ret depends on index
     "def "++ fn ++":\n"++
       edDAG r dag ++"\n  "++

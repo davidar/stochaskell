@@ -86,32 +86,33 @@ evalNode env block (Apply fn args _) =
   f <$> sequence (evalNodeRef env block <$> args)
   where f = fromMaybe (error $ "builtin lookup failure: " ++ fn) $
               Map.lookup fn constFuns
-evalNode env block (Array sh body hd _) = do
+evalNode env block (Array sh lam _) = do
   sh' <- sequence [ do x <- evalNodeRef env block a
                        y <- evalNodeRef env block b
                        return (toInteger x, toInteger y)
                   | (a,b) <- sh ]
-  let block' = deriveBlock body block
-  ar <- sequence $ toArray [
-    let env' = evalDAG block' body $
-          Map.fromList (inputs body `zip` map fromInteger xs) `Map.union` env
-    in toRational <$> evalNodeRef env' block' hd
+  ar <- sequence $ toArray
+    [ toRational <$> evalFn env block lam (map fromInteger xs)
     | xs <- fromShape sh' ]
   return $ fromRationalArray ar
-evalNode env block (FoldScan scan lr body hd seed ls _) = do
+evalNode env block (FoldScan scan lr lam seed ls _) = do
   r  <- evalNodeRef env block seed
   xs <- evalNodeRef env block ls
-  let f = evalFn2 env block body hd
+  let f = evalFn2 env block lam
   case (scan,lr) of
     (False, Right_) -> foldrConst' f        r xs
     (False, Left_)  -> foldlConst' (flip f) r xs
     (True,  Right_) -> scanrConst' f        r xs
     (True,  Left_)  -> scanlConst' (flip f) r xs
 
-evalFn2 :: Env -> Block -> DAG -> NodeRef -> ConstVal -> ConstVal -> Maybe ConstVal
-evalFn2 env block body hd a b = evalNodeRef env' (deriveBlock body block) hd
-  where [i,j] = inputs body
-        env' = Map.insert i a $ Map.insert j b env
+evalFn :: Env -> Block -> Lambda NodeRef -> [ConstVal] -> Maybe ConstVal
+evalFn env block (Lambda body hd) args = evalNodeRef env'' block' hd
+  where block' = deriveBlock body block
+        env' = Map.fromList (inputs body `zip` args) `Map.union` env
+        env'' = evalDAG block' body env' -- optional caching
+
+evalFn2 :: Env -> Block -> Lambda NodeRef -> ConstVal -> ConstVal -> Maybe ConstVal
+evalFn2 env block lam a b = evalFn env block lam [a,b]
 
 -- TODO: deriveBlock for each dag?
 evalBlock :: Block -> Env -> Env
@@ -146,7 +147,7 @@ unifyNodeRef _ _ (Const c _) val = if c == val then emptyEnv else error $ show c
 unifyNodeRef _ _ Index{} _ = trace "WARN not unifying Index" emptyEnv
 
 unifyNode :: Env -> Block -> Node -> ConstVal -> Env
-unifyNode env block (Array sh body hd _) val = Map.unions $ do -- TODO unify sh
+unifyNode env block (Array sh (Lambda body hd) _) val = Map.unions $ do -- TODO unify sh
     idx <- range (bounds val)
     let env' = Map.fromList (inputs body `zip` map fromInteger idx) `Map.union` env
     return $ unifyNodeRef env' (deriveBlock body block) hd (val ! idx)
@@ -199,7 +200,7 @@ unifyNode env block (Apply "insertIndex" [a,i,e] _) val | isJust a' && dimension
         elt = val![idx]
 unifyNode env block node val | isJust lhs && fromJust lhs == val = emptyEnv
   where lhs = evalNode env block node
-unifyNode env block (FoldScan True Left_ dag ret seed ls _) val =
+unifyNode env block (FoldScan True Left_ (Lambda dag ret) seed ls _) val =
   unifyNodeRef env block seed seed' `Map.union` unifyNodeRef env block ls ls'
   where seed' = val![1]
         ls' = fromList $ pairWith f' (elems' val)
@@ -235,7 +236,7 @@ solveNode env block (Apply "+" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (val - reDExpr env block a)
 solveNode env block (Apply "*" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (val / reDExpr env block a)
-solveNode env block (FoldScan True Left_ dag ret seed ls _) val =
+solveNode env block (FoldScan True Left_ (Lambda dag ret) seed ls _) val =
   solveNodeRef env block seed seed' `Map.union` solveNodeRef env block ls ls'
   where (ArrayT _ [(lo,hi)] _) = typeRef ls
         lo' = reDExpr env block lo
