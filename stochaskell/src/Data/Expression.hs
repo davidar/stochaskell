@@ -49,6 +49,7 @@ instance Show Id where
 data NodeRef = Var Id Type
              | Const ConstVal Type
              | Index NodeRef [NodeRef]
+             | Extract NodeRef Int
              deriving (Eq, Ord)
 
 getId :: NodeRef -> Maybe Id
@@ -65,6 +66,7 @@ instance Show NodeRef where
   show (Const c RealT) = show (real c)
   show (Const c t) = "("++ show c ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
+  show (Extract v i) = show v ++"."++ show i
 
 data Lambda h = Lambda { fDefs :: DAG, fHead :: h } deriving (Eq, Ord)
 
@@ -87,7 +89,7 @@ data Node = Apply { fName :: String
                   , typeNode :: Type
                   }
           deriving (Eq, Ord)
-showLet :: DAG -> NodeRef -> String
+showLet :: (Show r) => DAG -> r -> String
 showLet dag ret
   | dag == emptyDAG = show ret
   | otherwise = "let "++ (drop 4 . indent . indent $ show dag) ++"\n"++
@@ -193,6 +195,7 @@ data Type
     | SubrangeT Type (Maybe NodeRef) (Maybe NodeRef)
     -- TODO: better encoding of constraints than (Maybe String)
     | ArrayT (Maybe String) [AA.Interval NodeRef] Type
+    | TupleT [Type]
     deriving (Eq, Ord)
 boolT :: Type
 boolT = SubrangeT IntT (Just $ Const 0 IntT) (Just $ Const 1 IntT)
@@ -204,6 +207,7 @@ instance Show Type where
   show (SubrangeT t a b) = unwords ["Subrange", show t, show a, show b]
   show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
   show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
+  show (TupleT ts) = show ts
 
 newtype TypeOf t = TypeIs Type
 class ScalarType t where
@@ -741,6 +745,7 @@ instance (Ord t, ScalarType t) => Transfinite (Expr t) where
 
 class ExprTuple t where
     fromExprTuple :: t -> [DExpr]
+    toExprTuple :: [DExpr] -> t
     fromConstVals :: [ConstVal] -> t
 
 zipExprTuple :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
@@ -759,24 +764,30 @@ const = constExpr
 
 instance (ScalarType a) => ExprTuple (Expr a) where
     fromExprTuple (a) = [erase a]
+    toExprTuple [a] = (Expr a)
     fromConstVals [a] = (const a)
 instance (ScalarType a, ScalarType b) =>
          ExprTuple (Expr a, Expr b) where
     fromExprTuple (a,b) = [erase a, erase b]
+    toExprTuple [a,b] = (Expr a, Expr b)
     fromConstVals [a,b] = (const a, const b)
 instance (ScalarType a, ScalarType b, ScalarType c) =>
          ExprTuple (Expr a, Expr b, Expr c) where
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
+    toExprTuple [a,b,c] = (Expr a, Expr b, Expr c)
     fromConstVals [a,b,c] = (const a, const b, const c)
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d) where
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
+    toExprTuple [a,b,c,d] = (Expr a, Expr b, Expr c, Expr d)
     fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
     fromExprTuple (a,b,c,d,e) =
       [erase a, erase b, erase c, erase d, erase e]
+    toExprTuple [a,b,c,d,e] =
+      (Expr a, Expr b, Expr c, Expr d, Expr e)
     fromConstVals [a,b,c,d,e] =
       (const a, const b, const c, const d, const e)
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
@@ -784,6 +795,8 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
     fromExprTuple (a,b,c,d,e,f) =
       [erase a, erase b, erase c, erase d, erase e, erase f]
+    toExprTuple [a,b,c,d,e,f] =
+      (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f)
     fromConstVals [a,b,c,d,e,f] =
       (const a, const b, const c, const d, const e, const f)
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
@@ -791,6 +804,8 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
     fromExprTuple (a,b,c,d,e,f,g) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g]
+    toExprTuple [a,b,c,d,e,f,g] =
+      (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g)
     fromConstVals [a,b,c,d,e,f,g] =
       (const a, const b, const c, const d, const e, const f, const g)
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
@@ -798,5 +813,7 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
     fromExprTuple (a,b,c,d,e,f,g,h) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g, erase h]
+    toExprTuple [a,b,c,d,e,f,g,h] =
+      (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h)
     fromConstVals [a,b,c,d,e,f,g,h] =
       (const a, const b, const c, const d, const e, const f, const g, const h)
