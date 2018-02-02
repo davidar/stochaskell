@@ -11,10 +11,10 @@ import Control.Monad.State hiding (guard)
 import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
 import Data.Boolean
-import Data.Expression hiding (const)
+import Data.Expression hiding (const,foldl,foldr,scanl,scanr)
 import Data.Expression.Const
 import Data.Expression.Eval
-import qualified Data.List as List
+import Data.List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
@@ -49,6 +49,12 @@ data PNode = Dist { dName :: String
                     , dArgs :: [NodeRef]
                     , typePNode :: Type
                     }
+           | ITDist { dDefs :: DAG
+                    , dBase :: [PNode]
+                    , dRets :: [NodeRef]
+                    , dInvF :: [DExpr]
+                    , typePNode :: Type
+                    }
            deriving (Eq)
 
 dependsPNode :: Block -> PNode -> Set Id
@@ -62,7 +68,12 @@ dependsPNode block (Loop sh (Lambda defs dist) _) =
 
 instance Show PNode where
   show (Dist d js t) = unwords (d : map show js) ++" :: P "++ show t
-  show (Loop sh (Lambda defs body) t) = unwords ["Loop", show sh, show defs, show body, show t]
+  show (Loop sh (Lambda dag hd) t) = "\n"++
+    "  [ "++ (drop 4 . indent . indent $ showLet dag hd) ++"\n"++
+    "  | "++ intercalate ", " (zipWith g (inputs dag) sh) ++" ] :: "++ show t
+    where g i (a,b) = show i ++" <- "++ show a ++"..."++ show b
+  show (ITDist defs base rets invf t) = "ITDist"++
+    show (defs, reverse base, rets, reverse invf, t)
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
@@ -154,6 +165,30 @@ truncated a b p = Prog $ do
       d' = d { typePNode = t' }
   put $ PBlock block (d':rhs) given
   return (expr $ return (Var name t'))
+
+transform :: (ExprTuple t) => Prog t -> Prog t
+transform prog = Prog $ do
+  (PBlock block acts given) <- get
+  assert (given == emptyEnv) $ return ()
+  let d = nextLevel block
+      dBlock = deriveBlock (DAG d [] Bimap.empty) block
+      (rets, PBlock dBlock'@(Block (dag:block')) acts' _) =
+        runState (fromProgExprs prog) $ PBlock dBlock [] emptyEnv
+      ids = Dummy (d-1) <$> [0..(length rets - 1)]
+      zs = zipWith Var ids $ map typeRef rets
+      eenv = solveTupleD dBlock' rets (DExpr . return <$> zs) emptyEEnv
+      invfs = [fromMaybe (error "not invertible") $ Map.lookup x eenv
+              | x <- reverse $ map (Volatile d) [0..(length acts' - 1)]]
+      ts = typeRef <$> rets
+      t = if length rets > 1 then TupleT ts else head ts
+      pnode = ITDist dag acts' rets invfs t
+  put $ PBlock (Block block') (pnode:acts) emptyEnv
+  let k = length acts
+      name = Volatile (d-1) k
+      v = Var name t
+  return . toExprTuple . map (DExpr . return) $ if length rets > 1
+    then Extract v <$> [0..(length rets - 1)]
+    else [v]
 
 instance Distribution Bernoulli R Prog B where
     sample (Bernoulli p) = dist $ do
@@ -605,7 +640,7 @@ samplePNode env block (Loop shp (Lambda ldag hd) _) =
               | idx <- evalRange env block shp ]
 
 samplePNode env block (HODist "orderedSample" d [n] _) =
-  (fromList . List.sort) <$> sequence [samplePNode env block d | _ <- [1..n']]
+  (fromList . sort) <$> sequence [samplePNode env block d | _ <- [1..n']]
   where n' = toInteger . fromJust $ evalNodeRef env block n
 
 samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
@@ -617,7 +652,7 @@ samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
 
 -- from hsc3
 chain :: Monad m => Int -> (b -> m b) -> b -> m b
-chain n f = List.foldr (<=<) return (replicate n f)
+chain n f = foldr (<=<) return (replicate n f)
 loop :: Monad m => a -> (a -> m a) -> m ()
 loop s f = do
   s' <- f s
