@@ -186,12 +186,12 @@ stanNode name (Array sh (Lambda dag ret) _) =
     forLoop (map stanId $ inputs dag) sh $
         stanDAG Nothing dag ++"\n  "++
         name ++"["++ stanId  `commas` inputs dag ++"] = "++ stanNodeRef ret ++";"
-stanNode name (FoldScan scan lr (Lambda dag ret) seed
+stanNode name (FoldScan fs lr (Lambda dag ret) seed
                (Var ls s@(ArrayT _ ((Const 1 IntT,n):_) _)) t) =
     name ++ sloc ++" = "++ stanNodeRef seed ++";\n"++
     (forLoop [stanId idx] [(Const 1 IntT,n)] $ "  "++
       stanDecl False (stanId i) (typeIndex s) ++"\n  "++
-      stanDecl False (stanId j) (if scan then typeIndex t else t) ++"\n  "++
+      stanDecl False (stanId j) (if fs == Fold then t else typeIndex t) ++"\n  "++
       stanId i ++" = "++ stanId ls ++"["++ loc ++"];\n  "++
       stanId j ++" = "++ name ++ ploc ++";\n  "++
       "{\n"++ stanDAG Nothing dag ++"\n  "++
@@ -203,14 +203,14 @@ stanNode name (FoldScan scan lr (Lambda dag ret) seed
         loc = case lr of
           Left_  -> stanId idx
           Right_ -> stanNodeRef n ++"+1-"++ stanId idx
-        sloc = case scan of
-          False -> ""
-          True -> case lr of
+        sloc = case fs of
+          Fold -> ""
+          Scan -> case lr of
             Left_ -> "[1]"
             Right_ -> "["++ stanNodeRef n ++"+1]"
-        (ploc,rloc) = case scan of
-          False -> ("","")
-          True -> case lr of
+        (ploc,rloc) = case fs of
+          Fold -> ("","")
+          Scan -> case lr of
             Left_  -> ("["++ loc ++"]", "["++ loc ++"+1]")
             Right_ -> ("["++ loc ++"+1]", "["++ loc ++"]")
 stanNode _ node = error $ "unable to codegen node "++ show node

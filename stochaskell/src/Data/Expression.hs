@@ -70,6 +70,7 @@ instance Show NodeRef where
 
 data Lambda h = Lambda { fDefs :: DAG, fHead :: h } deriving (Eq, Ord)
 
+data FoldOrScan = Fold | Scan | ScanRest deriving (Eq, Ord, Show)
 data LeftRight = Left_ | Right_ deriving (Eq, Ord, Show)
 
 data Node = Apply { fName :: String
@@ -81,7 +82,7 @@ data Node = Apply { fName :: String
                   , typeNode :: Type
                   }
           | FoldScan
-                  { rScan :: Bool
+                  { rScan :: FoldOrScan
                   , rDirection :: LeftRight
                   , rFunc :: Lambda NodeRef
                   , rSeed :: NodeRef
@@ -103,14 +104,16 @@ instance Show Node where
     "  [ "++ (drop 4 . indent . indent $ showLet dag hd) ++"\n"++
     "  | "++ intercalate ", " (zipWith g (inputs dag) sh) ++" ] :: "++ show t
     where g i (a,b) = show i ++" <- "++ show a ++"..."++ show b
-  show (FoldScan scan lr (Lambda dag hd) seed ls _) =
-    hof ++ dir ++" "++ show seed ++" "++ show ls ++" $ "++
+  show (FoldScan fs lr (Lambda dag hd) seed ls _) =
+    name ++" "++ show seed ++" "++ show ls ++" $ "++
     "\\"++ show i ++" "++ show j ++" ->\n"++
       indent (showLet dag hd)
-    where hof = if scan then "scan" else "fold"
-          dir = case lr of
-            Right_ -> "r"
-            Left_ -> "l"
+    where name = case (fs,lr) of
+            (Fold, Right_) -> "foldr"
+            (Fold, Left_)  -> "foldl"
+            (Scan, Right_) -> "scanr"
+            (Scan, Left_)  -> "scanl"
+            (ScanRest, Left_) -> "scan"
           [i,j] = case lr of
             Right_ -> inputs dag
             Left_ -> reverse $ inputs dag
@@ -405,9 +408,11 @@ apply1 :: String -> Type -> Expr a -> Expr r
 apply1 f t x = apply f t [x]
 
 apply2 :: String -> Type -> Expr a -> Expr b -> Expr r
-apply2 f t x y = expr $ do
-    i <- fromExpr x
-    j <- fromExpr y
+apply2 f t x y = Expr $ apply2' f t (erase x) (erase y)
+apply2' :: String -> Type -> DExpr -> DExpr -> DExpr
+apply2' f t x y = DExpr $ do
+    i <- fromDExpr x
+    j <- fromDExpr y
     simplify $ Apply f [i,j] t
 
 applyClosed1 :: String -> Expr a -> Expr a
@@ -498,27 +503,27 @@ index a es = expr $ do
 
 foldl :: (ScalarType b) =>
   (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr b
-foldl f r xs = expr $ foldscan False Left_ (flip f) r xs
+foldl f r xs = expr $ foldscan Fold Left_ (flip f) r xs
 
 foldr :: (ScalarType b) =>
   (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr b
-foldr f r xs = expr $ foldscan False Right_ f r xs
-
-scan :: (ScalarType b) =>
-  (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
-scan = scanl
+foldr f r xs = expr $ foldscan Fold Right_ f r xs
 
 scanl :: (ScalarType b) =>
   (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
-scanl f r xs = expr $ foldscan True Left_ (flip f) r xs
+scanl f r xs = expr $ foldscan Scan Left_ (flip f) r xs
 
 scanr :: (ScalarType b) =>
   (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
-scanr f r xs = expr $ foldscan True Right_ f r xs
+scanr f r xs = expr $ foldscan Scan Right_ f r xs
 
-foldscan :: forall a b. (ScalarType b) => Bool -> LeftRight ->
+scan :: (ScalarType b) =>
+  (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
+scan f r xs = expr $ foldscan ScanRest Left_ (flip f) r xs
+
+foldscan :: forall a b. (ScalarType b) => FoldOrScan -> LeftRight ->
   (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> State Block NodeRef
-foldscan isScan dir f r xs = do
+foldscan fs dir f r xs = do
     seed <- fromExpr r
     l <- fromExpr xs
     block <- get
@@ -534,14 +539,17 @@ foldscan isScan dir f r xs = do
        (not . null $ inputs (topDAG block) `intersect` externRefs dag)
       then do
         put $ Block block'
-        if isScan
-          then do
+        case fs of
+          Fold ->
+            hashcons $ FoldScan fs dir (Lambda dag ret) seed l t
+          Scan -> do
             n1 <- simplify $ Apply "+" [n, Const 1 IntT] IntT
             let t' = (ArrayT Nothing [(Const 1 IntT, n1)] t)
-            hashcons $ FoldScan True  dir (Lambda dag ret) seed l t'
-          else
-            hashcons $ FoldScan False dir (Lambda dag ret) seed l t
-      else liftBlock $ foldscan isScan dir f r xs
+            hashcons $ FoldScan fs dir (Lambda dag ret) seed l t'
+          ScanRest -> do
+            let t' = (ArrayT Nothing [(Const 1 IntT, n)] t)
+            hashcons $ FoldScan fs dir (Lambda dag ret) seed l t'
+      else liftBlock $ foldscan fs dir f r xs
 
 
 ------------------------------------------------------------------------------
@@ -712,6 +720,7 @@ instance AA.Broadcastable (Expr e) (Expr [[e]]) (Expr [[e]]) where
 instance AA.Broadcastable (Expr [[e]]) (Expr e) (Expr [[e]]) where
     bsxfun op a b = op (cast a) (cast b)
 
+instance Boolean DExpr
 instance Boolean (Expr Bool) where
     true  = apply "true" boolT []
     false = apply "false" boolT []
@@ -719,17 +728,23 @@ instance Boolean (Expr Bool) where
     (&&*) = applyClosed2 "&&"
     (||*) = applyClosed2 "||"
 
+type instance BooleanOf DExpr = DExpr
 type instance BooleanOf (Expr t) = Expr Bool
 
 instance IfB (Expr t) where
-  ifB c x y = expr $ do
-    k <- fromExpr c
-    i <- fromExpr x
-    j <- fromExpr y
+  ifB c x y = Expr $ ifB (erase c) (erase x) (erase y)
+instance IfB DExpr where
+  ifB c x y = DExpr $ do
+    k <- fromDExpr c
+    i <- fromDExpr x
+    j <- fromDExpr y
     let s = typeRef i
         t = typeRef j
     simplify $ Apply "ifThenElse" [k,i,j] (coerce s t)
 
+instance EqB DExpr where
+    (==*) = apply2' "==" boolT
+    (/=*) = apply2' "/=" boolT
 instance EqB (Expr t) where
     (==*) = apply2 "==" boolT
     (/=*) = apply2 "/=" boolT

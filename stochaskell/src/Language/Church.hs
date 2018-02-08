@@ -57,7 +57,7 @@ churchNode _ (Apply f js _) =
 churchNode _ (Array _ (Lambda dag ret) _) =
   "(mem (lambda ("++ churchId `spaced` inputs dag ++") "++
     "(letrec (\n"++ churchDAG dag ++")\n  "++ churchNodeRef ret ++")))"
-churchNode name (FoldScan True Left_ (Lambda dag ret) seed (Var ls _) _) =
+churchNode name (FoldScan Scan Left_ (Lambda dag ret) seed (Var ls _) _) =
   "(mem (lambda ("++ churchId idx ++") "++
     "(if (= 1 "++ churchId idx ++") "++ churchNodeRef seed ++" "++
       "(letrec (\n  "++

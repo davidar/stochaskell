@@ -95,15 +95,15 @@ evalNode env block (Array sh lam _) = do
     [ toRational <$> evalFn env block lam (map fromInteger xs)
     | xs <- fromShape sh' ]
   return $ fromRationalArray ar
-evalNode env block (FoldScan scan lr lam seed ls _) = do
+evalNode env block (FoldScan fs lr lam seed ls _) = do
   r  <- evalNodeRef env block seed
   xs <- evalNodeRef env block ls
   let f = evalFn2 env block lam
-  case (scan,lr) of
-    (False, Right_) -> foldrConst' f        r xs
-    (False, Left_)  -> foldlConst' (flip f) r xs
-    (True,  Right_) -> scanrConst' f        r xs
-    (True,  Left_)  -> scanlConst' (flip f) r xs
+  case (fs,lr) of
+    (Fold, Right_) -> foldrConst' f        r xs
+    (Fold, Left_)  -> foldlConst' (flip f) r xs
+    (Scan, Right_) -> scanrConst' f        r xs
+    (Scan, Left_)  -> scanlConst' (flip f) r xs
 
 evalFn :: Env -> Block -> Lambda NodeRef -> [ConstVal] -> Maybe ConstVal
 evalFn env block (Lambda body hd) args = evalNodeRef env'' block' hd
@@ -200,7 +200,7 @@ unifyNode env block (Apply "insertIndex" [a,i,e] _) val | isJust a' && dimension
         elt = val![idx]
 unifyNode env block node val | isJust lhs && fromJust lhs == val = emptyEnv
   where lhs = evalNode env block node
-unifyNode env block (FoldScan True Left_ (Lambda dag ret) seed ls _) val =
+unifyNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
   unifyNodeRef env block seed seed' `Map.union` unifyNodeRef env block ls ls'
   where seed' = val![1]
         ls' = fromList $ pairWith f' (elems' val)
@@ -236,13 +236,24 @@ solveNode env block (Apply "+" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (val - reDExpr env block a)
 solveNode env block (Apply "*" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (val / reDExpr env block a)
-solveNode env block (FoldScan True Left_ (Lambda dag ret) seed ls _) val =
+solveNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
   solveNodeRef env block seed seed' `Map.union` solveNodeRef env block ls ls'
   where (ArrayT _ [(lo,hi)] _) = typeRef ls
         lo' = reDExpr env block lo
         hi' = reDExpr env block hi
         seed' = val!lo'
         ls' = vector [ f' (val!k) (val!(k+1)) | k <- lo'...hi' ]
+        block' = deriveBlock dag block
+        [i,j] = inputs dag
+        f' x y = let env' = Map.insert j x env
+                 in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
+solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
+  | evaluable env block seed = solveNodeRef env block ls ls'
+  where (ArrayT _ [(lo,hi)] _) = typeRef ls
+        lo' = reDExpr env block lo
+        hi' = reDExpr env block hi
+        seed' = reDExpr env block seed
+        ls' = vector [ f' (ifB (k ==* lo') seed' (val!(k-1))) (val!k) | k <- lo'...hi' ]
         block' = deriveBlock dag block
         [i,j] = inputs dag
         f' x y = let env' = Map.insert j x env
