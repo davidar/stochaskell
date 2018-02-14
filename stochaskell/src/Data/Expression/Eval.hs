@@ -289,6 +289,52 @@ diffNode env block (Apply "#>" [a,b] _) var t | isJust a' =
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
 
+derivD :: EEnv -> DExpr -> NodeRef -> DExpr
+derivD env e = derivNodeRef env block ret
+  where (ret, block) = runDExpr e
+
+derivNodeRef :: EEnv -> Block -> NodeRef -> NodeRef -> DExpr
+derivNodeRef env block (Var i@Internal{} _) var =
+  derivNode env block (lookupBlock i block) var
+derivNodeRef _ _ u@(Var Volatile{} t) v
+  | u == v    = constDExpr 1 t
+  | otherwise = constDExpr 0 t
+derivNodeRef _ _ (Const _ t) _ = constDExpr 0 t
+derivNodeRef env block (Index u [x]) (Index v [y]) | u == v =
+  ifB (x' ==* y') (constDExpr 1 t) (constDExpr 0 t)
+  where x' = reDExpr env block x
+        y' = reDExpr env block y
+        t = typeIndex (typeRef u)
+derivNodeRef env block (Index u [x]) v@(Var _ (ArrayT _ [(lo,hi)] _)) | u == v =
+  array' Nothing 1 [ ifB (x' ==* i) (constDExpr 1 t) (constDExpr 0 t) | i <- lo'...hi' ]
+  where lo' = reDExpr env block lo
+        hi' = reDExpr env block hi
+        x' = reDExpr env block x
+        t = typeIndex (typeRef u)
+derivNodeRef _ _ ref var = error $ "d "++ show ref ++" / d "++ show var
+
+derivNode :: EEnv -> Block -> Node -> NodeRef -> DExpr
+derivNode env block (Array sh (Lambda body hd) _) var = array' Nothing (length sh)
+  [ let env' = Map.fromList (inputs body `zip` i) `Map.union` env
+    in derivNodeRef env' block' hd var | i <- fromShape sh' ]
+  where sh' = [(reDExpr env block lo, reDExpr env block hi) | (lo,hi) <- sh]
+        block' = deriveBlock body block
+derivNode env block (Apply "ifThenElse" [c,a,b] _) var =
+  ifB (reDExpr env block c) (derivNodeRef env block a var)
+                            (derivNodeRef env block b var)
+derivNode env block (Apply "+" [a,b] _) var =
+  derivNodeRef env block a var + derivNodeRef env block b var
+derivNode env block (Apply "-" [a,b] _) var =
+  derivNodeRef env block a var - derivNodeRef env block b var
+derivNode env block (Apply op [a,b] _) var
+  | op == "*" = (f' * g + f * g')
+  | op == "/" = (f' * g - f * g') / (g ** 2)
+  where f = reDExpr env block a
+        f' = derivNodeRef env block a var
+        g = reDExpr env block b
+        g' = derivNodeRef env block b var
+derivNode _ _ node var = error $ "d "++ show node ++" / d "++ show var
+
 instance (ScalarType t, Enum t) => Enum (Expr t)
 
 instance (ScalarType t, Real t) => Real (Expr t) where

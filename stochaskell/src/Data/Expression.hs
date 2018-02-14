@@ -357,7 +357,11 @@ extractNodeRef env block (Var i t)
 extractNodeRef env block (Const c t) = do
   t' <- extractType env block t
   return $ Const c t'
-extractNodeRef _ _ r = error $ show r
+extractNodeRef env block (Index v i) = do
+  v' <- extractNodeRef env block v
+  i' <- sequence $ extractNodeRef env block <$> i
+  return $ Index v' i'
+extractNodeRef _ _ r = error $ "extractNodeRef "++ show r
 
 extractNode :: EEnv -> Block -> Node -> State Block Node
 extractNode env block (Apply f args t) = do
@@ -389,6 +393,11 @@ extractType env block (ArrayT k sh t) = do
 -- simplify and float constants
 simplify :: Node -> State Block NodeRef
 simplify (Apply "ifThenElse" [_,a,b] _) | a == b = return a
+simplify (Apply "*" [Const c _,_] t) | c == 0 = return $ Const 0 t
+simplify (Apply "*" [_,Const c _] t) | c == 0 = return $ Const 0 t
+simplify (Apply "+" [Const c _,x] _) | c == 0 = return x
+simplify (Apply "+" [x,Const c _] _) | c == 0 = return x
+simplify (Apply "-" [x,Const c _] _) | c == 0 = return x
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
@@ -564,6 +573,8 @@ instance Num DExpr where
       DExpr . return $ Const (fromInteger x) IntT
 instance Fractional DExpr where
     (/) = applyClosed2' "/"
+instance Floating DExpr where
+    (**) = applyClosed2' "**"
 
 instance (ScalarType t, Num t) => Num (Expr t) where
     (+) = applyClosed2 "+"
@@ -765,6 +776,9 @@ class ExprTuple t where
 
 zipExprTuple :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
 zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
+
+constDExpr :: ConstVal -> Type -> DExpr
+constDExpr c = DExpr . return . Const c
 
 constExpr :: forall t. (ScalarType t) => ConstVal -> Expr t
 constExpr c = expr . return $ Const c t'
