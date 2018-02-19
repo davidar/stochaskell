@@ -91,10 +91,13 @@ data Node = Apply { fName :: String
                   }
           deriving (Eq, Ord)
 showLet :: (Show r) => DAG -> r -> String
-showLet dag ret
-  | dag == emptyDAG = show ret
-  | otherwise = "let "++ (drop 4 . indent . indent $ show dag) ++"\n"++
-                "in "++ show ret
+showLet dag ret = showLet' dag $ show ret
+showLet' :: DAG -> String -> String
+showLet' dag ret
+  | dag == emptyDAG = ret
+  | otherwise = "let "++ indent' (show dag) ++"\n"++
+                " in "++ indent' ret
+  where indent' = drop 4 . indent . indent
 instance Show Node where
   show (Apply f args t)
     | all (not . isAlphaNum) f, [i,j] <- args
@@ -149,6 +152,10 @@ deriveBlock :: DAG -> Block -> Block
 deriveBlock d b@(Block ds) = Block (d:parent)
   where parent = drop (nextLevel b - dagLevel d) ds
 
+showBlock :: [DAG] -> String -> String
+showBlock (dag:block) r = showBlock block $ showLet' dag r
+showBlock [] r = r
+
 data DExpr = DExpr { fromDExpr :: State Block NodeRef }
 runDExpr :: DExpr -> (NodeRef, Block)
 runDExpr e = runState (fromDExpr e) emptyBlock
@@ -157,8 +164,8 @@ instance Eq DExpr where
 instance Ord DExpr where
   e `compare` f = runDExpr e `compare` runDExpr f
 instance Show DExpr where
-  show e = showLet (topDAG block) ret -- TODO: parents
-    where (ret, block) = runDExpr e
+  show e = showBlock block $ show ret
+    where (ret, Block block) = runDExpr e
 
 type EEnv = Map Id DExpr
 emptyEEnv :: EEnv
@@ -211,6 +218,10 @@ instance Show Type where
   show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
   show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
   show (TupleT ts) = show ts
+
+isArrayT :: Type -> Bool
+isArrayT ArrayT{} = True
+isArrayT _ = False
 
 newtype TypeOf t = TypeIs Type
 class ScalarType t where
@@ -368,6 +379,21 @@ extractNode env block (Apply f args t) = do
   js <- sequence $ extractNodeRef env block <$> args
   t' <- extractType env block t
   return $ Apply f js t'
+extractNode env block (Array sh (Lambda body hd) t) = do
+  lo' <- sequence $ extractNodeRef env block <$> lo
+  hi' <- sequence $ extractNodeRef env block <$> hi
+  t' <- extractType env block t
+  newBlock <- get
+  let d = nextLevel newBlock
+      ids = [ Dummy d i | i <- [1..length sh] ]
+      ids' = DExpr . return . flip Var IntT <$> ids
+      env' = Map.fromList (inputs body `zip` ids') `Map.union` env
+      (ret, Block (dag:newBlock')) = runState (extractNodeRef env' block' hd) $
+        deriveBlock (DAG d ids Bimap.empty) newBlock
+  put $ Block newBlock'
+  return $ Array (zip lo' hi') (Lambda dag ret) t'
+  where block' = deriveBlock body block
+        (lo,hi) = unzip sh
 extractNode _ _ n = error $ show n
 
 extractType :: EEnv -> Block -> Type -> State Block Type
@@ -385,6 +411,35 @@ extractType env block (ArrayT k sh t) = do
   return $ ArrayT k (zip lo' hi') t'
   where (lo,hi) = unzip sh
 
+extractIndex :: EEnv -> DExpr -> [DExpr] -> DExpr
+extractIndex env e = DExpr . (extractIndexNode env block $ lookupBlock r block)
+  where (Var r _, block) = runDExpr e
+
+extractIndexNode :: EEnv -> Block -> Node -> [DExpr] -> State Block NodeRef
+extractIndexNode env block (Array _ (Lambda body hd) _) idx =
+  extractNodeRef env' block' hd
+  where env' = Map.fromList (inputs body `zip` idx) `Map.union` env
+        block' = deriveBlock body block
+extractIndexNode env block (Apply op [a,b] t) idx
+  | op `elem` ["+","-","*","/"] = do
+  a' <- extractIndexNodeRef env block a idx
+  b' <- extractIndexNodeRef env block b idx
+  t' <- extractType env block t
+  simplify $ Apply op [a',b'] t'
+extractIndexNode env block (Apply "ifThenElse" [c,a,b] t) idx = do
+  c' <- extractNodeRef env block c
+  a' <- extractIndexNodeRef env block a idx
+  b' <- extractIndexNodeRef env block b idx
+  t' <- extractType env block t
+  simplify $ Apply "ifThenElse" [c',a',b'] t'
+extractIndexNode _ _ n idx = error $ "extractIndexNode "++ show n ++" "++ show idx
+
+extractIndexNodeRef :: EEnv -> Block -> NodeRef -> [DExpr] -> State Block NodeRef
+extractIndexNodeRef env block r _ | not . isArrayT $ typeRef r =
+  extractNodeRef env block r
+extractIndexNodeRef env block (Var i@Internal{} _) idx =
+  extractIndexNode env block (lookupBlock i block) idx
+extractIndexNodeRef _ _ r idx = error $ "extractIndexNodeRef "++ show r ++" "++ show idx
 
 ------------------------------------------------------------------------------
 -- FUNCTION APPLICATION                                                     --
@@ -398,15 +453,17 @@ simplify (Apply "*" [_,Const c _] t) | c == 0 = return $ Const 0 t
 simplify (Apply "+" [Const c _,x] _) | c == 0 = return x
 simplify (Apply "+" [x,Const c _] _) | c == 0 = return x
 simplify (Apply "-" [x,Const c _] _) | c == 0 = return x
+simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
   = return $ Const (f' args') t
-simplify e = do
+simplify e@(Apply _ args _) = do
     block <- get
-    if varies (topDAG block) $ fArgs e
+    if varies (topDAG block) args
       then hashcons e
       else liftBlock $ simplify e
+simplify e = hashcons e
 
 apply :: String -> Type -> [ Expr a ] -> Expr r
 apply f t xs = expr $ do
