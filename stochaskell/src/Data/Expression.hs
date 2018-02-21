@@ -94,7 +94,7 @@ showLet :: (Show r) => DAG -> r -> String
 showLet dag ret = showLet' dag $ show ret
 showLet' :: DAG -> String -> String
 showLet' dag ret
-  | dag == emptyDAG = ret
+  | show dag == "" = ret
   | otherwise = "let "++ indent' (show dag) ++"\n"++
                 " in "++ indent' ret
   where indent' = drop 4 . indent . indent
@@ -364,7 +364,7 @@ extractNodeRef env block (Var i@Internal{} _) = do
   node' <- extractNode env block $ lookupBlock i block
   simplify node'
 extractNodeRef env block (Var i t)
-  | Dummy{} <- i, isJust val = fromDExpr $ fromJust val
+  | isJust val = fromDExpr $ fromJust val
   | otherwise = do
     t' <- extractType env block t
     return $ Var i t'
@@ -462,6 +462,7 @@ collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret =
   put $ Block newBlock'
   hashcons $ Array sh (Lambda dag ret') (ArrayT Nothing sh t')
   where (ret, block) = runDExpr e
+collapseArray e = substD emptyEEnv e
 
 
 ------------------------------------------------------------------------------
@@ -471,6 +472,8 @@ collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret =
 -- simplify and float constants
 simplify :: Node -> State Block NodeRef
 simplify (Apply "ifThenElse" [_,a,b] _) | a == b = return a
+simplify (Apply "ifThenElse" [_,Const a _,Const b _] t)
+  | a == b = return $ Const a t
 simplify (Apply "*" [Const c _,_] t) | c == 0 = return $ Const 0 t
 simplify (Apply "*" [_,Const c _] t) | c == 0 = return $ Const 0 t
 simplify (Apply "*" [Const c _,x] _) | c == 1 = return x
@@ -478,17 +481,34 @@ simplify (Apply "*" [x,Const c _] _) | c == 1 = return x
 simplify (Apply "+" [Const c _,x] _) | c == 0 = return x
 simplify (Apply "+" [x,Const c _] _) | c == 0 = return x
 simplify (Apply "-" [x,Const c _] _) | c == 0 = return x
+simplify (Apply "*" [Const c _,x] t)
+  | c == -1 = simplify (Apply "negate" [x] t)
+simplify (Apply "*" [x,Const c _] t)
+  | c == -1 = simplify (Apply "negate" [x] t)
+simplify (Apply "-" [Const c _,x] t) | c == 0 = simplify (Apply "negate" [x] t)
 simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
   = return $ Const (f' args') t
 simplify e@(Apply _ args _) = do
-    block <- get
-    if varies (topDAG block) args
+  mr <- simplify' e
+  block <- get
+  case mr of
+    Just r -> return r
+    Nothing -> if varies (topDAG block) args
       then hashcons e
       else liftBlock $ simplify e
 simplify e = hashcons e
+
+-- TODO: generalise to something less hacky
+simplify' :: Node -> State Block (Maybe NodeRef)
+simplify' (Apply "==" [Var i@Internal{} _,x] t) = do
+  block <- get
+  case lookupBlock i block of
+    (Apply "-" [y,Const c _] _) | x == y, c /= 0 -> return . Just $ Const 0 t
+    _ -> return Nothing
+simplify' _ = return Nothing
 
 apply :: String -> Type -> [ Expr a ] -> Expr r
 apply f t xs = expr $ do

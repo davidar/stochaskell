@@ -53,6 +53,7 @@ data PNode = Dist { dName :: String
                     , dBase :: [PNode]
                     , dRets :: [NodeRef]
                     , dInvF :: [DExpr]
+                    , dInvJ :: [[DExpr]] -- TODO: just the determinant
                     , typePNode :: Type
                     }
            deriving (Eq)
@@ -72,8 +73,8 @@ instance Show PNode where
     "  [ "++ (drop 4 . indent . indent $ showLet dag hd) ++"\n"++
     "  | "++ intercalate ", " (zipWith g (inputs dag) sh) ++" ] :: "++ show t
     where g i (a,b) = show i ++" <- "++ show a ++"..."++ show b
-  show (ITDist defs base rets invf t) = "ITDist"++
-    show (defs, reverse base, rets, reverse invf, t)
+  show (ITDist defs base rets invf invj t) = "ITDist"++
+    show (defs, reverse base, rets, reverse invf, invj, t)
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
@@ -178,10 +179,12 @@ transform prog = Prog $ do
       zs = zipWith Var ids $ map typeRef rets
       eenv = solveTupleD dBlock' rets (DExpr . return <$> zs) emptyEEnv
       invfs = [fromMaybe (error "not invertible") $ Map.lookup x eenv
-              | x <- reverse $ map (Volatile d) [0..(length acts' - 1)]]
+              | x <- map (Volatile d) [0..(length acts' - 1)]]
       ts = typeRef <$> rets
       t = if length rets > 1 then TupleT ts else head ts
-      pnode = ITDist dag acts' rets invfs t
+      jacobian = [[collapseArray $ derivD emptyEEnv u (Var (Dummy 0 j) (ts!!j))
+                  | u <- invfs] | j <- [0..(length rets - 1)]]
+      pnode = ITDist dag acts' rets (reverse invfs) jacobian t
   put $ PBlock (Block block') (pnode:acts) emptyEnv
   let k = length acts
       name = Volatile (d-1) k

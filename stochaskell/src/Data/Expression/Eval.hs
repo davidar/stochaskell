@@ -296,9 +296,9 @@ derivD env e = derivNodeRef env block ret
 derivNodeRef :: EEnv -> Block -> NodeRef -> NodeRef -> DExpr
 derivNodeRef env block (Var i@Internal{} _) var =
   derivNode env block (lookupBlock i block) var
-derivNodeRef _ _ u@(Var Volatile{} t) v
-  | u == v    = constDExpr 1 t
-  | otherwise = constDExpr 0 t
+derivNodeRef _ _ u@Var{} v
+  | u == v    = constDExpr 1 $ typeRef u -- TODO: identity matrix
+  | otherwise = constDExpr 0 $ typeRef u
 derivNodeRef _ _ (Const _ t) _ = constDExpr 0 t
 derivNodeRef env block (Index u [x]) (Index v [y]) | u == v =
   ifB (x' ==* y') (constDExpr 1 t) (constDExpr 0 t)
@@ -311,6 +311,8 @@ derivNodeRef env block (Index u [x]) v@(Var _ (ArrayT _ [(lo,hi)] _)) | u == v =
         hi' = reDExpr env block hi
         x' = reDExpr env block x
         t = typeIndex (typeRef u)
+derivNodeRef _ _ (Index u@(Var Dummy{} _) _) v@(Var Dummy{} _) | u /= v =
+  constDExpr 0 $ typeIndex (typeRef u)
 derivNodeRef _ _ ref var = error $ "d "++ show ref ++" / d "++ show var
 
 derivNode :: EEnv -> Block -> Node -> NodeRef -> DExpr
