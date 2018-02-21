@@ -355,6 +355,10 @@ dependsNode block (Array sh (Lambda body hd) _) =
         hdeps = Set.filter ((dagLevel body >) . idLevel) $
           dependsNodeRef (deriveBlock body block) hd
 
+substD :: EEnv -> DExpr -> DExpr
+substD env e = DExpr $ extractNodeRef env block ret
+  where (ret, block) = runDExpr e
+
 extractNodeRef :: EEnv -> Block -> NodeRef -> State Block NodeRef
 extractNodeRef env block (Var i@Internal{} _) = do
   node' <- extractNode env block $ lookupBlock i block
@@ -411,8 +415,8 @@ extractType env block (ArrayT k sh t) = do
   return $ ArrayT k (zip lo' hi') t'
   where (lo,hi) = unzip sh
 
-extractIndex :: EEnv -> DExpr -> [DExpr] -> DExpr
-extractIndex env e = DExpr . (extractIndexNode env block $ lookupBlock r block)
+extractIndex :: DExpr -> [DExpr] -> DExpr
+extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block)
   where (Var r _, block) = runDExpr e
 
 extractIndexNode :: EEnv -> Block -> Node -> [DExpr] -> State Block NodeRef
@@ -424,13 +428,13 @@ extractIndexNode env block (Apply op [a,b] t) idx
   | op `elem` ["+","-","*","/"] = do
   a' <- extractIndexNodeRef env block a idx
   b' <- extractIndexNodeRef env block b idx
-  t' <- extractType env block t
+  t' <- extractType env block $ typeIndex t -- TODO: broken for length sh > 1
   simplify $ Apply op [a',b'] t'
 extractIndexNode env block (Apply "ifThenElse" [c,a,b] t) idx = do
   c' <- extractNodeRef env block c
   a' <- extractIndexNodeRef env block a idx
   b' <- extractIndexNodeRef env block b idx
-  t' <- extractType env block t
+  t' <- extractType env block $ typeIndex t
   simplify $ Apply "ifThenElse" [c',a',b'] t'
 extractIndexNode _ _ n idx = error $ "extractIndexNode "++ show n ++" "++ show idx
 
@@ -441,6 +445,25 @@ extractIndexNodeRef env block (Var i@Internal{} _) idx =
   extractIndexNode env block (lookupBlock i block) idx
 extractIndexNodeRef _ _ r idx = error $ "extractIndexNodeRef "++ show r ++" "++ show idx
 
+collapseArray :: DExpr -> DExpr
+collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret = DExpr $ do
+  los <- sequence $ extractNodeRef emptyEEnv block <$> [lo,lo']
+  his <- sequence $ extractNodeRef emptyEEnv block <$> [hi,hi']
+  t' <- extractType emptyEEnv block t
+  newBlock <- get
+  let sh = zip los his
+      d = nextLevel newBlock
+      v = (e `extractIndex` [DExpr . return $ Var (Dummy (-1) 1) IntT])
+             `extractIndex` [DExpr . return $ Var (Dummy (-1) 2) IntT]
+      env' = Map.fromList [(Dummy (-1) 1, DExpr . return $ Var (Dummy d 1) IntT)
+                          ,(Dummy (-1) 2, DExpr . return $ Var (Dummy d 2) IntT)]
+      (ret', Block (dag:newBlock')) = runState (fromDExpr $ substD env' v) $
+        deriveBlock (DAG d [Dummy d 1,Dummy d 2] Bimap.empty) newBlock
+  put $ Block newBlock'
+  hashcons $ Array sh (Lambda dag ret') (ArrayT Nothing sh t')
+  where (ret, block) = runDExpr e
+
+
 ------------------------------------------------------------------------------
 -- FUNCTION APPLICATION                                                     --
 ------------------------------------------------------------------------------
@@ -450,6 +473,8 @@ simplify :: Node -> State Block NodeRef
 simplify (Apply "ifThenElse" [_,a,b] _) | a == b = return a
 simplify (Apply "*" [Const c _,_] t) | c == 0 = return $ Const 0 t
 simplify (Apply "*" [_,Const c _] t) | c == 0 = return $ Const 0 t
+simplify (Apply "*" [Const c _,x] _) | c == 1 = return x
+simplify (Apply "*" [x,Const c _] _) | c == 1 = return x
 simplify (Apply "+" [Const c _,x] _) | c == 0 = return x
 simplify (Apply "+" [x,Const c _] _) | c == 0 = return x
 simplify (Apply "-" [x,Const c _] _) | c == 0 = return x
