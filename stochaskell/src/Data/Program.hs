@@ -12,6 +12,7 @@ import Data.Array.Abstract
 import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Expression hiding (const,foldl,foldr,scanl,scanr)
+import qualified Data.Expression as E
 import Data.Expression.Const
 import Data.Expression.Eval
 import Data.List
@@ -190,7 +191,7 @@ transform prog = Prog $ do
       name = Volatile (d-1) k
       v = Var name t
   return . toExprTuple . map (DExpr . return) $ if length rets > 1
-    then Extract v <$> [0..(length rets - 1)]
+    then Extract v 0 <$> [0..(length rets - 1)] -- TODO extractD
     else [v]
 
 instance Distribution Bernoulli R Prog B where
@@ -260,6 +261,12 @@ instance Distribution LKJ (R, Interval Z) Prog RMat where
         l <- fromExpr a
         h <- fromExpr b
         return $ Dist "lkj_corr" [i] (ArrayT (Just "corr_matrix") [(l,h),(l,h)] RealT)
+
+instance Distribution NegBinomial (R,R) Prog Z where
+    sample (NegBinomial (r,p)) = dist $ do
+        i <- fromExpr r
+        j <- fromExpr p
+        return $ Dist "neg_binomial" [i,j] IntT
 
 instance Distribution Normal (R,R) Prog R where
     sample (Normal (m,s)) = dist $ do
@@ -432,6 +439,33 @@ dirac c = do
 ------------------------------------------------------------------------------
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
+
+pdf :: (ExprTuple t) => Prog t -> t -> R
+pdf prog vals = pdfPBlock env pb
+  where (rets, pb@(PBlock block _ _)) = runProgExprs prog
+        env = solveTupleD block rets (fromExprTuple vals) emptyEEnv
+
+pdfPBlock :: EEnv -> PBlock -> R
+pdfPBlock env (PBlock block refs _) = product $ do
+    (i,d) <- zip [0..] $ reverse refs
+    let ident = Volatile (dagLevel $ topDAG block) i
+    return $ case Map.lookup ident env of
+      Just val -> pdfPNode env block d val
+      Nothing  -> trace (show ident ++" is unconstrained") 1
+
+pdfPNode :: EEnv -> Block -> PNode -> DExpr -> R
+pdfPNode env block (Dist f args _) x = expr $ do
+  i <- fromDExpr x
+  case i of
+    Unconstrained _ -> return (Const 1 RealT)
+    _ -> do
+      js <- sequence $ extractNodeRef env block <$> args
+      simplify $ Apply (f ++"_pdf") (i:js) RealT
+pdfPNode env block (Loop _ (Lambda ldag body) _) a
+  | (Unconstrained _,_) <- runDExpr a = 1
+  | otherwise = E.foldl f 1 (Expr a)
+  where block' = deriveBlock ldag block
+        f p x = p * pdfPNode env block' body (erase x) -- TODO only works for iid
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env' pb / adjust

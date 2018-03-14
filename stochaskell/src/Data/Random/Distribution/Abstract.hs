@@ -96,6 +96,9 @@ instance Distribution LKJ (Double, Interval Integer) IO (ShapedMatrix Double) wh
     return . ShMat (1,2) (1,2) $ LAD.matrix 2 [1,r,r,1]
 corrLKJ v sh = sample $ LKJ (v,sh)
 
+newtype NegBinomial a = NegBinomial a
+negBinomial r p = sample $ NegBinomial (r,p)
+
 newtype Normal a = Normal a
 instance Distribution Normal (Double,Double) IO Double where
     sample (Normal (m,s)) = Rand.sample (Rand.Normal m s)

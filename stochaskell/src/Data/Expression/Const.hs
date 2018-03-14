@@ -73,6 +73,7 @@ real = fromRational . toRational
 
 data ConstVal = Exact  (UArray [Integer] Int)
               | Approx (UArray [Integer] Double)
+              | Tagged -- TODO
 
 instance Show ConstVal where
     show c | dimension c >= 1 = show (toList c)

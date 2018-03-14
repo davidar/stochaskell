@@ -31,6 +31,7 @@ import Util
 
 type Pointer = Int
 type Level = Int
+type Tag = Int
 
 data Id = Dummy    { idLevel :: Level, idPointer :: Pointer }
         | Volatile { idLevel :: Level, idPointer :: Pointer }
@@ -48,8 +49,10 @@ instance Show Id where
 
 data NodeRef = Var Id Type
              | Const ConstVal Type
+             | Data Tag [NodeRef] Type
              | Index NodeRef [NodeRef]
-             | Extract NodeRef Int
+             | Extract NodeRef Tag Int
+             | Unconstrained Type
              deriving (Eq, Ord)
 
 getId :: NodeRef -> Maybe Id
@@ -65,8 +68,10 @@ instance Show NodeRef where
   show (Const c IntT) = show (integer c)
   show (Const c RealT) = show (real c)
   show (Const c t) = "("++ show c ++" :: "++ show t ++")"
+  show (Data c rs t) = "(C"++ show c ++ show rs ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
-  show (Extract v i) = show v ++"."++ show i
+  show (Extract v i j) = show v ++"."++ show i ++"_"++ show j
+  show (Unconstrained _) = "???"
 
 data Lambda h = Lambda { fDefs :: DAG, fHead :: h } deriving (Eq, Ord)
 
@@ -87,6 +92,10 @@ data Node = Apply { fName :: String
                   , rFunc :: Lambda NodeRef
                   , rSeed :: NodeRef
                   , rList :: NodeRef
+                  , typeNode :: Type
+                  }
+          | Case  { cHead :: NodeRef
+                  , cAlts :: [Lambda NodeRef]
                   , typeNode :: Type
                   }
           deriving (Eq, Ord)
@@ -120,6 +129,11 @@ instance Show Node where
           [i,j] = case lr of
             Right_ -> inputs dag
             Left_ -> reverse $ inputs dag
+  show (Case e alts _) = "case "++ show e ++" of\n"++ indent cases
+    where cases = unlines
+            ["C"++ show i ++" "++ intercalate " " (map show $ inputs dag) ++" ->\n"++
+              indent (showLet dag ret)
+            | (i, Lambda dag ret) <- zip [0..] alts]
 
 data DAG = DAG { dagLevel :: Level
                , inputs :: [Id]
@@ -206,6 +220,7 @@ data Type
     -- TODO: better encoding of constraints than (Maybe String)
     | ArrayT (Maybe String) [AA.Interval NodeRef] Type
     | TupleT [Type]
+    | UnionT [[Type]]
     deriving (Eq, Ord)
 boolT :: Type
 boolT = SubrangeT IntT (Just $ Const 0 IntT) (Just $ Const 1 IntT)
@@ -218,6 +233,7 @@ instance Show Type where
   show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
   show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
   show (TupleT ts) = show ts
+  show (UnionT ts) = "Union"++ show ts
 
 isArrayT :: Type -> Bool
 isArrayT ArrayT{} = True
@@ -247,16 +263,28 @@ internal level i = do
             then return . typeNode . fromJust . Bimap.lookupR i $ bimap dag
             else liftBlock getType
 
+extractD :: DExpr -> Tag -> Int -> DExpr
+extractD e c j = DExpr $ do
+  i <- fromDExpr e
+  return $ case i of
+    (Data c' args _) | c == c' -> args !! j
+                     | otherwise -> error "tag mismatch"
+    _ -> Extract i c j
+
 typeDExpr :: DExpr -> Type
 typeDExpr = typeRef . fst . runDExpr
 
 typeRef :: NodeRef -> Type
 typeRef (Var _ t) = t
 typeRef (Const _ t) = t
+typeRef (Data _ _ t) = t
 typeRef (Index a js) = case typeRef a of
   (ArrayT k sh t) | length js == length sh -> t
                   | otherwise -> ArrayT k (drop (length js) sh) t
   t -> error $ "cannot index non-array type "++ show t
+typeRef (Extract v c k) | UnionT ts <- typeRef v = ts!!c!!k
+typeRef (Extract v 0 k) | TupleT ts <- typeRef v = ts!!k
+typeRef (Unconstrained t) = t
 
 typeArray :: ([Integer],[Integer]) -> Type -> Type
 typeArray ([],[]) = id
@@ -314,6 +342,15 @@ liftBlock s = do
     put $ deriveBlock dag parent'
     return ref
 
+runLambda :: [Id] -> State Block r -> State Block (Lambda r)
+runLambda ids s = do
+  block <- get
+  let d = nextLevel block
+      (ret, Block (dag:block')) = runState s $
+          deriveBlock (DAG d ids Bimap.empty) block
+  put $ Block block'
+  return (Lambda dag ret)
+
 -- does a list of expressions depend on the inputs to this block?
 varies :: DAG -> [NodeRef] -> Bool
 varies (DAG level inp _) xs = level == 0 || any p xs
@@ -321,7 +358,10 @@ varies (DAG level inp _) xs = level == 0 || any p xs
         p (Var (Volatile l _) _) = l == level
         p (Var s _) = s `elem` inp
         p (Const _ _) = False
+        p (Data _ is _) = any p is
         p (Index a is) = p a || any p is
+        p (Extract v _ _) = p v
+        p (Unconstrained _) = False
 
 -- collect External references
 externRefs :: DAG -> [Id]
@@ -359,6 +399,11 @@ substD :: EEnv -> DExpr -> DExpr
 substD env e = DExpr $ extractNodeRef env block ret
   where (ret, block) = runDExpr e
 
+getNextLevel :: State Block Level
+getNextLevel = do
+  block <- get
+  return (nextLevel block)
+
 extractNodeRef :: EEnv -> Block -> NodeRef -> State Block NodeRef
 extractNodeRef env block (Var i@Internal{} _) = do
   node' <- extractNode env block $ lookupBlock i block
@@ -387,15 +432,12 @@ extractNode env block (Array sh (Lambda body hd) t) = do
   lo' <- sequence $ extractNodeRef env block <$> lo
   hi' <- sequence $ extractNodeRef env block <$> hi
   t' <- extractType env block t
-  newBlock <- get
-  let d = nextLevel newBlock
-      ids = [ Dummy d i | i <- [1..length sh] ]
+  d <- getNextLevel
+  let ids = [ Dummy d i | i <- [1..length sh] ]
       ids' = DExpr . return . flip Var IntT <$> ids
       env' = Map.fromList (inputs body `zip` ids') `Map.union` env
-      (ret, Block (dag:newBlock')) = runState (extractNodeRef env' block' hd) $
-        deriveBlock (DAG d ids Bimap.empty) newBlock
-  put $ Block newBlock'
-  return $ Array (zip lo' hi') (Lambda dag ret) t'
+  lam <- runLambda ids (extractNodeRef env' block' hd)
+  return $ Array (zip lo' hi') lam t'
   where block' = deriveBlock body block
         (lo,hi) = unzip sh
 extractNode _ _ n = error $ show n
@@ -450,19 +492,35 @@ collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret =
   los <- sequence $ extractNodeRef emptyEEnv block <$> [lo,lo']
   his <- sequence $ extractNodeRef emptyEEnv block <$> [hi,hi']
   t' <- extractType emptyEEnv block t
-  newBlock <- get
+  d <- getNextLevel
   let sh = zip los his
-      d = nextLevel newBlock
       v = (e `extractIndex` [DExpr . return $ Var (Dummy (-1) 1) IntT])
              `extractIndex` [DExpr . return $ Var (Dummy (-1) 2) IntT]
       env' = Map.fromList [(Dummy (-1) 1, DExpr . return $ Var (Dummy d 1) IntT)
                           ,(Dummy (-1) 2, DExpr . return $ Var (Dummy d 2) IntT)]
-      (ret', Block (dag:newBlock')) = runState (fromDExpr $ substD env' v) $
-        deriveBlock (DAG d [Dummy d 1,Dummy d 2] Bimap.empty) newBlock
-  put $ Block newBlock'
-  hashcons $ Array sh (Lambda dag ret') (ArrayT Nothing sh t')
+  lam <- runLambda [Dummy d 1,Dummy d 2] (fromDExpr $ substD env' v)
+  hashcons $ Array sh lam (ArrayT Nothing sh t')
   where (ret, block) = runDExpr e
 collapseArray e = substD emptyEEnv e
+
+caseD :: DExpr -> [[DExpr] -> DExpr] -> DExpr
+caseD e fs = DExpr $ do
+  k <- fromDExpr e
+  case k of
+    Data c args _ -> do
+      block <- get
+      let f = fs !! c
+          args' = DExpr . extractNodeRef emptyEEnv block <$> args
+      fromDExpr (f args')
+    _ -> do
+      d <- getNextLevel
+      let UnionT tss = typeRef k
+      cases <- sequence $ do
+        (ts,f) <- zip tss fs
+        let ids = [Dummy d i | i <- [0..(length ts - 1)]]
+            args = [DExpr . return $ Var i t | (i,t) <- zip ids ts]
+        return . runLambda ids . fromDExpr $ f args
+      hashcons $ Case k cases (unreplicate $ typeRef . fHead <$> cases)
 
 
 ------------------------------------------------------------------------------
@@ -510,9 +568,11 @@ simplify' (Apply "==" [Var i@Internal{} _,x] t) = do
     _ -> return Nothing
 simplify' _ = return Nothing
 
-apply :: String -> Type -> [ Expr a ] -> Expr r
-apply f t xs = expr $ do
-    js <- mapM fromExpr xs
+apply :: String -> Type -> [Expr a] -> Expr r
+apply f t = Expr . apply' f t . map erase
+apply' :: String -> Type -> [DExpr] -> DExpr
+apply' f t xs = DExpr $ do
+    js <- mapM fromDExpr xs
     simplify $ Apply f js t
 
 apply1 :: String -> Type -> Expr a -> Expr r
@@ -527,8 +587,10 @@ apply2' f t x y = DExpr $ do
     simplify $ Apply f [i,j] t
 
 applyClosed1 :: String -> Expr a -> Expr a
-applyClosed1 f x = expr $ do
-    i <- fromExpr x
+applyClosed1 f = Expr . applyClosed1' f . erase
+applyClosed1' :: String -> DExpr -> DExpr
+applyClosed1' f x = DExpr $ do
+    i <- fromDExpr x
     simplify $ Apply f [i] (typeRef i)
 
 applyClosed2 :: String -> Expr a -> Expr a -> Expr a
@@ -555,15 +617,12 @@ capture ar = externRefs $ topDAG block
 makeArray :: Maybe String -> AA.AbstractArray DExpr DExpr
           -> [AA.Interval NodeRef] -> State Block NodeRef
 makeArray l ar sh = do
-    block <- get
-    let d = nextLevel block
-        ids = [ Dummy d i | i <- [1..length sh] ]
+    d <- getNextLevel
+    let ids = [ Dummy d i | i <- [1..length sh] ]
         e = ar ! [ DExpr . return $ Var i IntT | i <- ids ]
-        (ret, Block (dag:block')) = runState (fromDExpr e) $
-            deriveBlock (DAG d ids Bimap.empty) block
         t = typeDExpr e
-    put $ Block block'
-    hashcons $ Array sh (Lambda dag ret) (ArrayT l sh t)
+    lam <- runLambda ids (fromDExpr e)
+    hashcons $ Array sh lam (ArrayT l sh t)
 
 -- constant floating
 floatArray :: Maybe String -> AA.AbstractArray DExpr DExpr
@@ -644,6 +703,7 @@ foldscan fs dir f r xs = do
         TypeIs t = typeOf :: TypeOf b
         i = expr . return $ Var (Dummy d 1) s
         j = expr . return $ Var (Dummy d 2) t
+        -- TODO: runLambda
         (ret, Block (dag:block')) = runState (fromExpr $ f i j) $
           deriveBlock (DAG d [Dummy d 1, Dummy d 2] Bimap.empty) block
     if varies (topDAG block) [seed,l] ||
@@ -833,7 +893,12 @@ instance AA.Broadcastable (Expr e) (Expr [[e]]) (Expr [[e]]) where
 instance AA.Broadcastable (Expr [[e]]) (Expr e) (Expr [[e]]) where
     bsxfun op a b = op (cast a) (cast b)
 
-instance Boolean DExpr
+instance Boolean DExpr where
+    true  = apply' "true" boolT []
+    false = apply' "false" boolT []
+    notB  = applyClosed1' "not"
+    (&&*) = applyClosed2' "&&"
+    (||*) = applyClosed2' "||"
 instance Boolean (Expr Bool) where
     true  = apply "true" boolT []
     false = apply "false" boolT []
@@ -883,6 +948,7 @@ constDExpr :: ConstVal -> Type -> DExpr
 constDExpr c = DExpr . return . Const c
 
 constExpr :: forall t. (ScalarType t) => ConstVal -> Expr t
+constExpr Tagged{} = error "TODO"
 constExpr c = expr . return $ Const c t'
   where (lo,hi) = AA.bounds c
         sh = map f lo `zip` map f hi

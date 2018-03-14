@@ -72,6 +72,10 @@ pairWith :: (a -> a -> b) -> [a] -> [b]
 pairWith f (x:y:zs) = f x y : pairWith f (y:zs)
 pairWith _ _ = []
 
+unreplicate :: (Eq a, Show a) => [a] -> a
+unreplicate (x:xs) | (x ==) `all` xs = x
+                   | otherwise = error $ show (x:xs) ++" is not replicated"
+
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
     (-) = zipWith (-)

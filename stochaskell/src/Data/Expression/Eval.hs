@@ -222,20 +222,40 @@ solveTupleD block rets vals = compose
   | (r,e) <- zip rets vals ]
 
 solveTuple :: (ExprTuple t) => Block -> [NodeRef] -> t -> EEnv -> EEnv
-solveTuple block rets vals env = solveTupleD block rets (fromExprTuple vals) env
+solveTuple block rets = solveTupleD block rets . fromExprTuple
 
 solveNodeRef :: EEnv -> Block -> NodeRef -> DExpr -> EEnv
 solveNodeRef env block (Var i@Internal{} _) val =
   solveNode env block (lookupBlock i block) val
 solveNodeRef _ _ (Var ref _) val = Map.singleton ref val
+solveNodeRef env block (Data c rs _) val = Map.unions
+  [solveNodeRef env block r $ extractD val c j | (r,j) <- zip rs [0..]]
 solveNodeRef _ _ ref val =
   trace ("WARN assuming "++ show ref ++" unifies with "++ show val) emptyEEnv
 
 solveNode :: EEnv -> Block -> Node -> DExpr -> EEnv
+solveNode env block (Array sh (Lambda body hd) _) val
+  | evaluable emptyEEnv block `all` lo, evaluable emptyEEnv block `all` hi =
+  Map.unions $ do
+    idx <- range (fromJust . evalNodeRef emptyEnv block <$> lo
+                 ,fromJust . evalNodeRef emptyEnv block <$> hi) :: [[ConstVal]]
+    let env' = Map.fromList (inputs body `zip` map integer idx) `Map.union` env
+    return $ solveNodeRef env' (deriveBlock body block) hd $
+      Prelude.foldl (!) val (flip constDExpr IntT <$> idx)
+  where (lo,hi) = unzip sh
 solveNode env block (Apply "+" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (val - reDExpr env block a)
 solveNode env block (Apply "*" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (val / reDExpr env block a)
+solveNode env block (Apply "ifThenElse" [c,(Data 0 as _),(Data 1 bs _)] _) val = Map.unions $
+  [solveNodeRef env block c c'] ++ zipWith (solveNodeRef env block) as as'
+                                ++ zipWith (solveNodeRef env block) bs bs'
+  where c' = caseD val [const true, const false]
+        as' = [caseD val [const $ extractD val 0 i, const $ unconstrained t]
+              | (i,a) <- zip [0..] as, let t = typeRef a]
+        bs' = [caseD val [const $ unconstrained t, const $ extractD val 1 i]
+              | (i,b) <- zip [0..] bs, let t = typeRef b]
+        unconstrained = DExpr . return . Unconstrained
 solveNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
   solveNodeRef env block seed seed' `Map.union` solveNodeRef env block ls ls'
   where (ArrayT _ [(lo,hi)] _) = typeRef ls
@@ -258,6 +278,7 @@ solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
         [i,j] = inputs dag
         f' x y = let env' = Map.insert j x env
                  in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
+solveNode _ _ n v = error $ "solveNode "++ show n ++" "++ show v
 
 diff :: Env -> Expr t -> Id -> Type -> ConstVal
 diff env = diffD env . erase
