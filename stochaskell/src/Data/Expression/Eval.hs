@@ -9,7 +9,7 @@ import Data.Array.IArray (listArray)
 import Data.Array.Abstract
 import Data.Boolean
 import Data.Expression hiding (const)
-import Data.Expression.Const
+import Data.Expression.Const hiding (isScalar)
 import Data.Ix
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
@@ -28,13 +28,10 @@ emptyEnv = Map.empty
 numelType :: Env -> Block -> Type -> Integer
 numelType _ _ IntT = 1
 numelType _ _ RealT = 1
-numelType _ _ SubrangeT{} = 1
+numelType env block (SubrangeT t _ _) = numelType env block t
 numelType env block (ArrayT _ sh _) = product $ map f sh'
   where sh' = evalShape env block sh
         f (lo,hi) = hi - lo + 1
-
-reDExpr :: EEnv -> Block -> NodeRef -> DExpr
-reDExpr env block = DExpr . extractNodeRef env block
 
 evaluable :: EEnv -> Block -> NodeRef -> Bool
 evaluable env block ref = deps `Set.isSubsetOf` Map.keysSet env
@@ -243,6 +240,8 @@ solveNode env block (Array sh (Lambda body hd) _) val
     return $ solveNodeRef env' (deriveBlock body block) hd $
       Prelude.foldl (!) val (flip constDExpr IntT <$> idx)
   where (lo,hi) = unzip sh
+solveNode env block (Apply "exp" [a] _) val =
+  solveNodeRef env block a (log val)
 solveNode env block (Apply "+" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (val - reDExpr env block a)
 solveNode env block (Apply "*" [a,b] _) val | evaluable env block a =
@@ -315,11 +314,25 @@ derivD env e = derivNodeRef env block ret
   where (ret, block) = runDExpr e
 
 derivNodeRef :: EEnv -> Block -> NodeRef -> NodeRef -> DExpr
+derivNodeRef env block (Data _ is _) (Data _ js _) = blockMatrix
+  [[derivNodeRef env block i j | j <- js] | i <- is]
+derivNodeRef env block (Data _ is _) j = blockVector
+  [derivNodeRef env block i j | i <- is]
+derivNodeRef env block i (Data _ js _) = blockVector
+  [derivNodeRef env block i j | j <- js]
 derivNodeRef env block (Var i@Internal{} _) var =
   derivNode env block (lookupBlock i block) var
-derivNodeRef _ _ u@Var{} v
-  | u == v    = constDExpr 1 $ typeRef u -- TODO: identity matrix
-  | otherwise = constDExpr 0 $ typeRef u
+derivNodeRef env block u@Var{} v =
+  if u /= v then constDExpr 0 t else case t of
+    _ | isScalar t -> constDExpr 1 t
+    ArrayT _ ((lo,hi):_) _ -> eye (reDExpr env block lo, reDExpr env block hi)
+  where t | (ArrayT _ [m] _) <- typeRef u
+          , (ArrayT _ [n] _) <- typeRef v = ArrayT (Just "matrix")   [m,n] RealT
+          | (ArrayT _ [m] _) <- typeRef u
+          , isScalar (typeRef v)          = ArrayT (Just "vector")     [m] RealT
+          | isScalar (typeRef u)
+          , (ArrayT _ [n] _) <- typeRef v = ArrayT (Just "row_vector") [n] RealT
+          | isScalar (typeRef u), isScalar (typeRef v) = RealT
 derivNodeRef _ _ (Const _ t) _ = constDExpr 0 t
 derivNodeRef env block (Index u [x]) (Index v [y]) | u == v =
   ifB (x' ==* y') (constDExpr 1 t) (constDExpr 0 t)
@@ -345,6 +358,10 @@ derivNode env block (Array sh (Lambda body hd) _) var = array' Nothing (length s
 derivNode env block (Apply "ifThenElse" [c,a,b] _) var =
   ifB (reDExpr env block c) (derivNodeRef env block a var)
                             (derivNodeRef env block b var)
+derivNode env block (Apply "exp" [a] _) var =
+  exp (reDExpr env block a) * derivNodeRef env block a var
+derivNode env block (Apply "log" [a] _) var =
+  derivNodeRef env block a var / reDExpr env block a
 derivNode env block (Apply "+" [a,b] _) var =
   derivNodeRef env block a var + derivNodeRef env block b var
 derivNode env block (Apply "-" [a,b] _) var =

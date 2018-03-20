@@ -28,7 +28,7 @@ import Data.Random.Distribution.Abstract
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Debug.Trace
-import GHC.Exts
+import GHC.Exts hiding ((<#))
 import Numeric.SpecFunctions
 import Util
 
@@ -717,3 +717,25 @@ mhAdjust adjust target proposal x = do
   putStrLn $ "acceptance ratio = "++ show b ++" / "++ show c ++" = "++ show a
   accept <- bernoulli $ if a > 1 then 1 else a
   return $ if accept then y else x
+
+rjmcTransRatio :: (ScalarType t) => (t -> P (Expr t)) -> (t -> Expr t) -> t -> t -> R
+rjmcTransRatio q f x y = (pu' / pu) * abs (det jacobian)
+  where pu  = q x `pdf` f y
+        pu' = q y `pdf` f x
+        getAux a b =
+          let (rets, PBlock block _ _) = runProgExprs (q a)
+              env = solveTuple block rets (f b) emptyEEnv
+              p Volatile{} _ = True
+              p _ _ = False
+          in Map.filterWithKey p env
+        u' = getAux y x
+        u = let (_,PBlock _ refs _) = runProgExprs (q x)
+            in [Var (Volatile 0 i) (typePNode r) | (i,r) <- [0..] `zip` reverse refs]
+        x' = let ([ret], PBlock block _ _) = runProgExprs (q x)
+             in reDExpr emptyEEnv block ret
+        d_ = derivD emptyEEnv
+        d a = d_ a . fst . runExpr . f
+        top =   d x' x                     : [d_ x' r          | r <- u]
+        bot = [(d v x + (d v y <# d x' x)) : [d v y <> d_ x' r | r <- u]
+              | v <- Map.elems u']
+        jacobian = Expr . substD (getAux x y) $ blockMatrix (top:bot) :: RMat

@@ -43,16 +43,22 @@ cardinality :: (Num a) => Interval a -> a
 cardinality (a,b) = b - a + 1
 
 data AbstractArray i e = AArr [Interval i] ([i] -> e)
-apply :: AbstractArray i e -> [i] -> e
-apply = (!) -- TODO
 
 toArray :: (Ix i, Show i) => AbstractArray i e -> A.Array [i] e
 toArray a = A.array (bounds a) assocs
-  where assocs = [ (i, apply a i) | i <- range (bounds a) ]
+  where assocs = [ (i, a!i) | i <- range (bounds a) ]
 
 fromArray :: (Ix i, Show i) => A.Array [i] e -> AbstractArray i e
 fromArray a = AArr sh $ (A.!) a
   where sh = zip (fst $ A.bounds a) (snd $ A.bounds a)
+
+instance (Ix i, Show i, Eq e) => Eq (AbstractArray i e) where
+  a == b = bounds a == bounds b && elems a == elems b
+
+instance (Ix i, Show i, Ord e) => Ord (AbstractArray i e) where
+  compare a b = case bounds a `compare` bounds b of
+    EQ -> elems a `compare` elems b
+    o -> o
 
 instance Functor (AbstractArray i) where
     fmap f (AArr sh g) = AArr sh (f . g)
@@ -69,7 +75,7 @@ instance Monad (AbstractArray i) where
     (AArr sa f) >>= k = AArr (sa ++ sb) h
       where sb = shape (k $ error "non-rectangular array")
             h x = let (is,js) = splitAt (length sa) x
-                  in k (f is) `apply` js
+                  in k (f is) ! js
 
 fromShape :: [Interval a] -> AbstractArray a [a]
 fromShape = flip AArr id
@@ -107,6 +113,9 @@ instance Indexable (AbstractArray i e) [i] e where
     (AArr _ f) ! i = f i
     bounds (AArr s _) = unzip s
 
+elems :: (Ix i, Show i) => AbstractArray i e -> [e]
+elems a = [a!i | i <- range (bounds a)]
+
 instance (Ix i) => Indexable (A.Array i e) i e where
     (!) = (A.!)
     bounds = A.bounds
@@ -117,6 +126,7 @@ instance (A.IArray A.UArray e, Ix i) => Indexable (A.UArray i e) i e where
 
 class (Indexable v i e) => Vector v i e | v -> i e, i e -> v where
     vector :: AbstractArray i e -> v
+    blockVector :: [v] -> v
 
 data ShapedVector t = ShVec (Interval Integer) (LAD.Vector t)
 instance (Show t, Storable t) => Show (ShapedVector t) where
@@ -157,6 +167,8 @@ instance (LA.Numeric t) => InnerProduct (ShapedVector t) t where
 
 class Matrix m i e | m -> i e where
     matrix :: AbstractArray i e -> m
+    blockMatrix :: [[m]] -> m
+    eye :: Interval i -> m
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
 instance (Show t, LA.Element t) => Show (ShapedMatrix t) where
@@ -180,6 +192,7 @@ infixr 8 #>
 infixl 7 <\>
 class LinearOperator m v | m -> v, v -> m where
     (#>)  :: m -> v -> v
+    (<#)  :: v -> m -> v
     (<\>) :: m -> v -> v
     diag  :: v -> m
     asColumn :: v -> m

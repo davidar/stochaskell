@@ -5,12 +5,13 @@ module Data.Expression where
 
 import Prelude hiding (const,foldl,foldr,scanl,scanr)
 
+import qualified Data.Array as A
 import qualified Data.Array.Abstract as AA
 import Data.Array.Abstract ((!))
 import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Char
-import Data.Expression.Const
+import Data.Expression.Const hiding (isScalar)
 import Data.List hiding (foldl,foldr,scanl,scanr)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
@@ -50,6 +51,7 @@ instance Show Id where
 data NodeRef = Var Id Type
              | Const ConstVal Type
              | Data Tag [NodeRef] Type
+             | BlockArray (A.Array [Int] NodeRef) Type
              | Index NodeRef [NodeRef]
              | Extract NodeRef Tag Int
              | Unconstrained Type
@@ -69,6 +71,7 @@ instance Show NodeRef where
   show (Const c RealT) = show (real c)
   show (Const c t) = "("++ show c ++" :: "++ show t ++")"
   show (Data c rs t) = "(C"++ show c ++ show rs ++" :: "++ show t ++")"
+  show (BlockArray a t) = "(block "++ show a ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
   show (Extract v i j) = show v ++"."++ show i ++"_"++ show j
   show (Unconstrained _) = "???"
@@ -235,6 +238,12 @@ instance Show Type where
   show (TupleT ts) = show ts
   show (UnionT ts) = "Union"++ show ts
 
+isScalar :: Type -> Bool
+isScalar IntT = True
+isScalar RealT = True
+isScalar (SubrangeT t _ _) = isScalar t
+isScalar _ = False
+
 isArrayT :: Type -> Bool
 isArrayT ArrayT{} = True
 isArrayT _ = False
@@ -278,12 +287,14 @@ typeRef :: NodeRef -> Type
 typeRef (Var _ t) = t
 typeRef (Const _ t) = t
 typeRef (Data _ _ t) = t
+typeRef (BlockArray a t) = t
 typeRef (Index a js) = case typeRef a of
   (ArrayT k sh t) | length js == length sh -> t
                   | otherwise -> ArrayT k (drop (length js) sh) t
   t -> error $ "cannot index non-array type "++ show t
 typeRef (Extract v c k) | UnionT ts <- typeRef v = ts!!c!!k
 typeRef (Extract v 0 k) | TupleT ts <- typeRef v = ts!!k
+typeRef Extract{} = error "cannot extract invalid tag"
 typeRef (Unconstrained t) = t
 
 typeArray :: ([Integer],[Integer]) -> Type -> Type
@@ -310,6 +321,10 @@ coerce IntT RealT = RealT
 coerce RealT IntT = RealT
 coerce a@(ArrayT _ _ t) t' | t == t' = a
 coerce t a@(ArrayT _ _ t') | t == t' = a
+coerce (ArrayT Nothing sh t) (ArrayT n sh' t') | t == t' =
+  ArrayT n (AA.coerceShape sh sh') t
+coerce (ArrayT n sh t) (ArrayT Nothing sh' t') | t == t' =
+  ArrayT n (AA.coerceShape sh sh') t
 coerce (ArrayT n sh t) (ArrayT n' sh' t') | n == n' && t == t' =
   ArrayT n (AA.coerceShape sh sh') t
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
@@ -399,6 +414,9 @@ substD :: EEnv -> DExpr -> DExpr
 substD env e = DExpr $ extractNodeRef env block ret
   where (ret, block) = runDExpr e
 
+reDExpr :: EEnv -> Block -> NodeRef -> DExpr
+reDExpr env block = DExpr . extractNodeRef env block
+
 getNextLevel :: State Block Level
 getNextLevel = do
   block <- get
@@ -417,6 +435,14 @@ extractNodeRef env block (Var i t)
 extractNodeRef env block (Const c t) = do
   t' <- extractType env block t
   return $ Const c t'
+extractNodeRef env block (Data c i t) = do
+  i' <- sequence $ extractNodeRef env block <$> i
+  t' <- extractType env block t
+  return $ Data c i' t'
+extractNodeRef env block (BlockArray a t) = do
+  a' <- sequence $ extractNodeRef env block <$> a
+  t' <- extractType env block t
+  return $ BlockArray a' t'
 extractNodeRef env block (Index v i) = do
   v' <- extractNodeRef env block v
   i' <- sequence $ extractNodeRef env block <$> i
@@ -456,6 +482,12 @@ extractType env block (ArrayT k sh t) = do
   t' <- extractType env block t
   return $ ArrayT k (zip lo' hi') t'
   where (lo,hi) = unzip sh
+extractType env block (TupleT ts) = do
+  ts' <- sequence $ extractType env block <$> ts
+  return $ TupleT ts'
+extractType env block (UnionT tss) = do
+  tss' <- sequence $ sequence . (extractType env block <$>) <$> tss
+  return $ UnionT tss'
 
 extractIndex :: DExpr -> [DExpr] -> DExpr
 extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block)
@@ -534,8 +566,10 @@ simplify (Apply "ifThenElse" [_,Const a _,Const b _] t)
   | a == b = return $ Const a t
 simplify (Apply "*" [Const c _,_] t) | c == 0 = return $ Const 0 t
 simplify (Apply "*" [_,Const c _] t) | c == 0 = return $ Const 0 t
+simplify (Apply "/" [Const c _,_] t) | c == 0 = return $ Const 0 t
 simplify (Apply "*" [Const c _,x] _) | c == 1 = return x
 simplify (Apply "*" [x,Const c _] _) | c == 1 = return x
+simplify (Apply "/" [x,Const c _] _) | c == 1 = return x
 simplify (Apply "+" [Const c _,x] _) | c == 0 = return x
 simplify (Apply "+" [x,Const c _] _) | c == 0 = return x
 simplify (Apply "-" [x,Const c _] _) | c == 0 = return x
@@ -545,6 +579,8 @@ simplify (Apply "*" [x,Const c _] t)
   | c == -1 = simplify (Apply "negate" [x] t)
 simplify (Apply "-" [Const c _,x] t) | c == 0 = simplify (Apply "negate" [x] t)
 simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
+simplify (Apply "#>" [_,Const c _] t) | c == 0 = return $ Const 0 t
+simplify (Apply "<#" [Const c _,_] t) | c == 0 = return $ Const 0 t
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
@@ -736,7 +772,23 @@ instance Num DExpr where
 instance Fractional DExpr where
     (/) = applyClosed2' "/"
 instance Floating DExpr where
+    pi = apply' "pi" RealT []
     (**) = applyClosed2' "**"
+    exp   = applyClosed1' "exp"
+    log   = applyClosed1' "log"
+    sqrt  = applyClosed1' "sqrt"
+    sin   = applyClosed1' "sin"
+    cos   = applyClosed1' "cos"
+    tan   = applyClosed1' "tan"
+    asin  = applyClosed1' "asin"
+    acos  = applyClosed1' "acos"
+    atan  = applyClosed1' "atan"
+    sinh  = applyClosed1' "sinh"
+    cosh  = applyClosed1' "cosh"
+    tanh  = applyClosed1' "tanh"
+    asinh = applyClosed1' "asinh"
+    acosh = applyClosed1' "acosh"
+    atanh = applyClosed1' "atanh"
 
 instance (ScalarType t, Num t) => Num (Expr t) where
     (+) = applyClosed2 "+"
@@ -784,6 +836,60 @@ instance AA.Indexable DExpr DExpr DExpr where
             _            -> Index f [j]
 instance AA.Vector DExpr DExpr DExpr where
     vector = array' (Just "vector") 1
+    blockVector v = DExpr $ do
+      k <- sequence $ fromDExpr <$> v
+      let bnd = ([1],[length v])
+          ns = do
+            t <- typeRef <$> k
+            return $ case t of
+              _ | isScalar t -> Const 1 IntT
+              ArrayT _ [(Const 1 IntT,hi)] _ -> hi
+      n <- simplify $ Apply "+s" ns IntT
+      let kind = case [s | ArrayT (Just s) _ _ <- typeRef <$> k] of
+                   [] -> Nothing
+                   xs -> Just $ unreplicate xs
+          t = ArrayT kind [(Const 1 IntT,n)] $
+            unreplicate [t' | ArrayT _ _ t' <- typeRef <$> k]
+      return $ if isZero `all` k then Const 0 t else
+        BlockArray (A.array bnd [([i], k !! (i-1)) | [i] <- A.range bnd]) t
+      where isZero (Const c _) | c == 0 = True
+            isZero _ = False
+instance AA.Matrix DExpr DExpr DExpr where
+    matrix = array' (Just "matrix") 2
+    -- TODO: flatten block of blocks when possible
+    blockMatrix m = DExpr $ do
+      k <- sequence $ sequence . map fromDExpr <$> m
+      let bnd = ([1,1],[length m, length $ head m])
+          rs = do
+            t <- typeRef . head <$> k
+            return $ case t of
+              _ | isScalar t -> Const 1 IntT
+              ArrayT (Just "row_vector") _ _ -> Const 1 IntT
+              ArrayT _ ((Const 1 IntT,hi):_) _ -> hi
+          cs = do
+            t <- typeRef <$> head k
+            return $ case t of
+              _ | isScalar t -> Const 1 IntT
+              ArrayT (Just "row_vector") [(Const 1 IntT,hi)] _ -> hi
+              ArrayT _ [_] _ -> Const 1 IntT
+              ArrayT _ [_,(Const 1 IntT,hi)] _ -> hi
+      r <- simplify $ Apply "+s" rs IntT
+      c <- simplify $ Apply "+s" cs IntT
+      let t = ArrayT (Just "matrix") [(Const 1 IntT,r),(Const 1 IntT,c)] $
+            unreplicate [t' | ArrayT _ _ t' <- typeRef <$> concat k]
+      return . flip BlockArray t $ A.array bnd
+        [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
+    eye (lo,hi) = DExpr $ do
+      lo' <- fromDExpr lo
+      hi' <- fromDExpr hi
+      simplify $ Apply "eye" [] (ArrayT (Just "matrix") [(lo',hi')] RealT)
+instance Monoid DExpr where
+    mappend a b = DExpr $ do
+        i <- fromDExpr a
+        j <- fromDExpr b
+        let (ArrayT _ [r,_] t) = typeRef i
+            (ArrayT _ [_,c] _) = typeRef j
+        simplify $ Apply "<>" [i,j] (ArrayT (Just "matrix") [r,c] t)
 
 instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = Expr $ erase a ! erase e
@@ -807,12 +913,7 @@ instance (ScalarType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
 instance (ScalarType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
     matrix = array (Just "matrix") 2
 instance (ScalarType e) => Monoid (Expr [[e]]) where
-    mappend a b = expr $ do
-        i <- fromExpr a
-        j <- fromExpr b
-        let (ArrayT _ [r,_] t) = typeRef i
-            (ArrayT _ [_,c] _) = typeRef j
-        simplify $ Apply "<>" [i,j] (ArrayT (Just "matrix") [r,c] t)
+    mappend a b = Expr $ erase a `mappend` erase b
 
 instance AA.Scalable R RVec where
     a *> v = expr $ do
@@ -825,15 +926,18 @@ instance (ScalarType e) => AA.Scalable (Expr e) (Expr [[e]]) where
         j <- fromExpr m
         simplify $ Apply "*>" [i,j] (typeRef j)
 
-instance (ScalarType e) => LA.Transposable (Expr [[e]]) (Expr [[e]]) where
-    tr m = expr $ do
-        i <- fromExpr m
+instance LA.Transposable DExpr DExpr where
+    tr m = DExpr $ do
+        i <- fromDExpr m
         let (ArrayT _ [r,c] t) = typeRef i
         simplify $ Apply "tr" [i] (ArrayT (Just "matrix") [c,r] t)
-    tr' m = expr $ do
-        i <- fromExpr m
+    tr' m = DExpr $ do
+        i <- fromDExpr m
         let (ArrayT _ [r,c] t) = typeRef i
         simplify $ Apply "tr'" [i] (ArrayT (Just "matrix") [c,r] t)
+instance (ScalarType e) => LA.Transposable (Expr [[e]]) (Expr [[e]]) where
+    tr  = Expr . LA.tr  . erase
+    tr' = Expr . LA.tr' . erase
 
 instance AA.InnerProduct (Expr [e]) (Expr e) where
     u <.> v = expr $ do
@@ -842,24 +946,35 @@ instance AA.InnerProduct (Expr [e]) (Expr e) where
         let (ArrayT _ _ t) = typeRef i
         simplify $ Apply "<.>" [i,j] t
 
-instance AA.LinearOperator (Expr [[e]]) (Expr [e]) where
-    m #> v = expr $ do
-        i <- fromExpr m
-        j <- fromExpr v
+instance AA.LinearOperator DExpr DExpr where
+    m #> v = DExpr $ do
+        i <- fromDExpr m
+        j <- fromDExpr v
         let (ArrayT _ [r,_] t) = typeRef i
         simplify $ Apply "#>" [i,j] (ArrayT (Just "vector") [r] t)
-    diag v = expr $ do
-        i <- fromExpr v
+    v <# m = DExpr $ do
+        i <- fromDExpr v
+        j <- fromDExpr m
+        let (ArrayT _ [_,c] t) = typeRef j
+        simplify $ Apply "<#" [i,j] (ArrayT (Just "row_vector") [c] t)
+    diag v = DExpr $ do
+        i <- fromDExpr v
         let (ArrayT _ [n] t) = typeRef i
         simplify $ Apply "diag" [i] (ArrayT (Just "matrix") [n,n] t)
-    asColumn v = expr $ do
-        i <- fromExpr v
+    asColumn v = DExpr $ do
+        i <- fromDExpr v
         let (ArrayT _ [n] t) = typeRef i
         simplify $ Apply "asColumn" [i] (ArrayT (Just "matrix") [n,(Const 1 IntT, Const 1 IntT)] t)
-    asRow v = expr $ do
-        i <- fromExpr v
+    asRow v = DExpr $ do
+        i <- fromDExpr v
         let (ArrayT _ [n] t) = typeRef i
         simplify $ Apply "asRow"    [i] (ArrayT (Just "matrix") [(Const 1 IntT, Const 1 IntT),n] t)
+instance AA.LinearOperator (Expr [[e]]) (Expr [e]) where
+    m #> v = Expr $ erase m AA.#> erase v
+    v <# m = Expr $ erase v AA.<# erase m
+    diag     = Expr . AA.diag     . erase
+    asColumn = Expr . AA.asColumn . erase
+    asRow    = Expr . AA.asRow    . erase
 
 instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
     chol m = expr $ do

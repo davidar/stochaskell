@@ -2,7 +2,7 @@
 module Data.Expression.Const.IO where
 
 import Control.Monad
-import Data.Array.Abstract
+import Data.Array.Abstract hiding (elems)
 import Data.Array.IO
 import Data.Array.Unboxed
 import Data.Binary

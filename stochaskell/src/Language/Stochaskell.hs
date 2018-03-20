@@ -25,7 +25,7 @@ import Control.Monad.Guard
 import Data.Array.Abstract
 import Data.Boolean.Overload hiding (boolean) -- TODO: no infix declaration
 import Data.Expression hiding (apply,const)
-import Data.Expression.Const
+import Data.Expression.Const hiding (isScalar)
 import Data.Expression.Const.IO
 import Data.Monoid
 import Data.Number.Transfinite hiding (log,isNaN,isInfinite)

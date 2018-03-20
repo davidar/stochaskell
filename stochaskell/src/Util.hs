@@ -108,6 +108,9 @@ instance (Floating t) => Floating [t] where
   acosh = map acosh
   atanh = map atanh
 
+type instance BooleanOf (IO a) = Bool
+instance IfB (IO a) where ifB a b c = if a then b else c
+
 type instance BooleanOf (a,b,c,d,e,f,g) = BooleanOf a
 
 instance ( bool ~ BooleanOf a, IfB a

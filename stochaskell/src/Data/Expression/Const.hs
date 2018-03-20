@@ -4,7 +4,7 @@ module Data.Expression.Const where
 
 import Prelude hiding ((<*),(*>),isInfinite)
 
-import Data.Array.Abstract
+import Data.Array.Abstract hiding (elems)
 import Data.Array.Unboxed hiding ((!),bounds)
 import Data.Boolean
 import Data.Char
@@ -22,6 +22,7 @@ import Util
 constFuns :: Map String ([ConstVal] -> ConstVal)
 constFuns = Map.fromList
   [("+", \[a,b] -> a + b)
+  ,("+s", \xs -> sum xs)
   ,("-", \[a,b] -> a - b)
   ,("*", \[a,b] -> a * b)
   ,("/", \[a,b] -> a / b)
@@ -131,14 +132,11 @@ binarize :: (forall a. (Num a, EqB a, OrdB a) => a -> BooleanOf a) -> ConstVal -
 binarize f (Exact  a) = Exact $ amap (\x -> if f x then 1 else 0) a
 binarize f (Approx a) = Exact $ amap (\x -> if f x then 1 else 0) a
 
-isScalar :: (IArray UArray r, Ix t, Show t) => UArray [t] r -> Bool
 isScalar a = bounds a == ([],[])
 
-toScalar :: (IArray UArray r, Ix t, Show t, Show r) => UArray [t] r -> r
 toScalar a | isScalar a = a![]
            | otherwise  = error $ "can't convert non-scalar "++ show a ++" to real"
 
-fromScalar :: (IArray a e, Ix t, Show t) => e -> a [t] e
 fromScalar x = array ([],[]) [([], x)]
 
 toDouble :: ConstVal -> Double
@@ -211,10 +209,6 @@ scanlConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal 
 scanlConst' f r = fmap fromList . sequence . scanl f' (Just r) . toList
   where f' Nothing _ = Nothing
         f' (Just y) x = f y x
-
-eye :: Interval Integer -> ConstVal
-eye (lo,hi) = Exact $ array ([lo,lo],[hi,hi])
-  [ ([i,j], if i == j then 1 else 0) | i <- [lo..hi], j <- [lo..hi] ]
 
 zeros :: Interval Integer -> Interval Integer -> ConstVal
 zeros (lo,hi) (lo',hi') = Exact $ array ([lo,lo'],[hi,hi'])
@@ -338,6 +332,10 @@ instance LinearOperator ConstVal ConstVal where
     diag     = fromMatrix . diag     . toVector
     asColumn = fromMatrix . asColumn . toVector
     asRow    = fromMatrix . asRow    . toVector
+
+instance Matrix ConstVal Integer ConstVal where
+    eye (lo,hi) = Exact $ array ([lo,lo],[hi,hi])
+      [ ([i,j], if i == j then 1 else 0) | i <- [lo..hi], j <- [lo..hi] ]
 
 instance SquareMatrix ConstVal ConstVal where
     chol   = fromMatrix . chol   . toMatrix
