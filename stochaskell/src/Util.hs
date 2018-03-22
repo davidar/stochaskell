@@ -18,7 +18,10 @@ fixpt f x | f x == x  = x
           | otherwise = fixpt f (f x)
 
 indent :: String -> String
-indent = intercalate "\n" . map ("  "++) . lines
+indent = indent' 2 2
+indent' :: Int -> Int -> String -> String
+indent' a b s = replicate a ' ' ++ intercalate "\n" (hd : [replicate b ' ' ++ l | l <- tl])
+  where (hd:tl) = lines s
 
 commas :: (a -> String) -> [a] -> String
 commas f xs = intercalate ", " $ map f xs

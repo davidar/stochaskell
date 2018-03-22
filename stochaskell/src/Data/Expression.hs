@@ -107,9 +107,8 @@ showLet dag ret = showLet' dag $ show ret
 showLet' :: DAG -> String -> String
 showLet' dag ret
   | show dag == "" = ret
-  | otherwise = "let "++ indent' (show dag) ++"\n"++
-                " in "++ indent' ret
-  where indent' = drop 4 . indent . indent
+  | otherwise = "let "++ indent' 0 4 (show dag) ++"\n"++
+                " in "++ indent' 0 4 ret
 instance Show Node where
   show (Apply f args t)
     | all (not . isAlphaNum) f, [i,j] <- args
@@ -374,6 +373,7 @@ varies (DAG level inp _) xs = level == 0 || any p xs
         p (Var s _) = s `elem` inp
         p (Const _ _) = False
         p (Data _ is _) = any p is
+        p (BlockArray a _) = any p (A.elems a)
         p (Index a is) = p a || any p is
         p (Extract v _ _) = p v
         p (Unconstrained _) = False
@@ -428,6 +428,10 @@ extractNodeRef env block (Var i@Internal{} _) = do
   simplify node'
 extractNodeRef env block (Var i t)
   | isJust val = fromDExpr $ fromJust val
+  | Volatile{} <- i = do
+    t' <- extractType env block t
+    _ <- simplify $ Apply "getExternal" [Var i t'] t'
+    return $ Var i t'
   | otherwise = do
     t' <- extractType env block t
     return $ Var i t'
@@ -542,17 +546,20 @@ caseD e fs = DExpr $ do
     Data c args _ -> do
       block <- get
       let f = fs !! c
-          args' = DExpr . extractNodeRef emptyEEnv block <$> args
+          args' = reDExpr emptyEEnv block <$> args
       fromDExpr (f args')
-    _ -> do
-      d <- getNextLevel
-      let UnionT tss = typeRef k
-      cases <- sequence $ do
-        (ts,f) <- zip tss fs
-        let ids = [Dummy d i | i <- [0..(length ts - 1)]]
-            args = [DExpr . return $ Var i t | (i,t) <- zip ids ts]
-        return . runLambda ids . fromDExpr $ f args
-      hashcons $ Case k cases (unreplicate $ typeRef . fHead <$> cases)
+    _ -> caseD' k fs
+
+caseD' :: NodeRef -> [[DExpr] -> DExpr] -> State Block NodeRef
+caseD' k fs = do
+  d <- getNextLevel
+  let UnionT tss = typeRef k
+  cases <- sequence $ do
+    (ts,f) <- zip tss fs
+    let ids = [Dummy d i | i <- [0..(length ts - 1)]]
+        args = [DExpr . return $ Var i t | (i,t) <- zip ids ts]
+    return . runLambda ids . fromDExpr $ f args
+  hashcons $ Case k cases (unreplicate $ typeRef . fHead <$> cases)
 
 
 ------------------------------------------------------------------------------
@@ -585,24 +592,33 @@ simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
   = return $ Const (f' args') t
-simplify e@(Apply _ args _) = do
-  mr <- simplify' e
+simplify f = do
   block <- get
-  case mr of
-    Just r -> return r
-    Nothing -> if varies (topDAG block) args
+  case simplify' block f of
+    Right r -> return r
+    Left e@(Apply _ args _) ->
+      if varies (topDAG block) args
       then hashcons e
       else liftBlock $ simplify e
-simplify e = hashcons e
+    Left e -> hashcons e
 
 -- TODO: generalise to something less hacky
-simplify' :: Node -> State Block (Maybe NodeRef)
-simplify' (Apply "==" [Var i@Internal{} _,x] t) = do
-  block <- get
-  case lookupBlock i block of
-    (Apply "-" [y,Const c _] _) | x == y, c /= 0 -> return . Just $ Const 0 t
-    _ -> return Nothing
-simplify' _ = return Nothing
+simplify' :: Block -> Node -> Either Node NodeRef
+simplify' block (Apply "==" [Var i@Internal{} _,x] t)
+  | (Apply "-" [y,Const c _] _) <- lookupBlock i block, x == y, c /= 0
+  = Right $ Const 0 t
+simplify' block (Apply "*" [x,Var i@Internal{} _] _)
+  | (Apply "/" [j,y] _) <- lookupBlock i block, x == y = Right j
+simplify' block (Apply "/" [Var i@Internal{} _,x] _)
+  | (Apply "*" [y,j] _) <- lookupBlock i block, x == y = Right j
+simplify' block (Apply "/" [Const c s,Var i@Internal{} _] t)
+  | (Apply "/" [j,Const d s'] _) <- lookupBlock i block
+  = Left $ Apply "/" [Const (c*d) (coerce s s'),j] t
+simplify' block (Apply "exp" [Var i@Internal{} _] _)
+  | (Apply "log" [j] _) <- lookupBlock i block = Right j
+simplify' block (Apply "log" [Var i@Internal{} _] _)
+  | (Apply "exp" [j] _) <- lookupBlock i block = Right j
+simplify' _ n = Left n
 
 apply :: String -> Type -> [Expr a] -> Expr r
 apply f t = Expr . apply' f t . map erase

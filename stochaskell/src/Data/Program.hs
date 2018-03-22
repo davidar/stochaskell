@@ -57,6 +57,10 @@ data PNode = Dist { dName :: String
                     , dInvJ :: [[DExpr]] -- TODO: just the determinant
                     , typePNode :: Type
                     }
+           | Switch { sHead :: NodeRef
+                    , sAlts :: [(Lambda NodeRef, [PNode])]
+                    , typePNode :: Type
+                    }
            deriving (Eq)
 
 dependsPNode :: Block -> PNode -> Set Id
@@ -76,6 +80,11 @@ instance Show PNode where
     where g i (a,b) = show i ++" <- "++ show a ++"..."++ show b
   show (ITDist defs base rets invf invj t) = "ITDist"++
     show (defs, reverse base, rets, reverse invf, invj, t)
+  show (Switch e alts _) = "switch "++ show e ++" of\n"++ indent cases
+    where cases = unlines
+            ["C"++ show i ++" "++ intercalate " " (map show $ inputs dag) ++" ->\n"++
+              indent (showLet' dag . showPNodes (dagLevel dag) refs $ show ret)
+            | (i, (Lambda dag ret, refs)) <- zip [0..] alts]
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
@@ -86,8 +95,14 @@ emptyPBlock :: PBlock
 emptyPBlock = PBlock emptyBlock [] emptyEnv
 
 pnodes :: PBlock -> Map Id PNode
-pnodes (PBlock _ refs _) = Map.fromList $
-  map (Volatile 0) [0..] `zip` reverse refs
+pnodes (PBlock _ refs _) = pnodes' 0 $ reverse refs
+pnodes' :: Int -> [PNode] -> Map Id PNode
+pnodes' d = Map.fromList . zip (Volatile d <$> [0..])
+
+showPNodes :: Int -> [PNode] -> String -> String
+showPNodes d refs ret = "do "++ indent' 0 3 s ++"\n"++
+                        "   return "++ ret
+  where s = unlines [show i ++" <- "++ show r | (i,r) <- Map.toList $ pnodes' d refs]
 
 -- lift into Block
 liftExprBlock :: MonadState PBlock m => State Block b -> m b
@@ -103,6 +118,10 @@ type P t = Prog t
 instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
 runProg :: Prog a -> (a, PBlock)
 runProg p = runState (fromProg p) emptyPBlock
+
+instance (ExprTuple t) => Show (Prog t) where
+  show p = showBlock block . showPNodes 0 (reverse refs) $ show rets
+    where (rets, PBlock (Block block) refs _) = runProgExprs p
 
 fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NodeRef]
 fromProgExprs p = do
@@ -132,6 +151,36 @@ evalProg env prog = do
   return $ fromConstVals xs
   where (rets, PBlock block _ given) = runProgExprs prog
 
+caseP :: DExpr -> [[DExpr] -> P DExpr] -> P DExpr
+caseP e ps = Prog $ do
+  k <- liftExprBlock $ fromDExpr e
+  case k of
+    Data c args _ -> do
+      block <- liftExprBlock get
+      let p = ps !! c
+          args' = reDExpr emptyEEnv block <$> args
+      fromProg $ p args'
+    _ -> fromProg $ caseP' k ps
+
+caseP' :: NodeRef -> [[DExpr] -> P DExpr] -> P DExpr
+caseP' k ps = fmap erase . dist $ do
+  d <- getNextLevel
+  let UnionT tss = typeRef k
+  cases <- sequence $ do
+    (ts,p) <- zip tss ps
+    let ids = [Dummy d i | i <- [0..(length ts - 1)]]
+        args = [DExpr . return $ Var i t | (i,t) <- zip ids ts]
+    return $ do
+      block <- get
+      let s = do
+            r <- fromProg $ p args
+            liftExprBlock $ fromDExpr r
+          (ret, PBlock (Block (dag:block')) acts _) = runState s $
+            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv
+      put $ Block block'
+      return (Lambda dag ret, reverse acts)
+  return $ Switch k cases (unreplicate $ typeRef . fHead . fst <$> cases)
+
 
 ------------------------------------------------------------------------------
 -- PRIMITIVE DISTRIBUTIONS                                                  --
@@ -147,9 +196,7 @@ dist s = Prog $ do
         name = Volatile depth k
         t = typePNode d
         v = Var name t
-    when (depth == 0) $ do
-      _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
-      return ()
+    _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
     return (expr $ return v)
 
 truncated :: (Expr t) -> (Expr t) -> P (Expr t) -> P (Expr t)
@@ -718,13 +765,21 @@ mhAdjust adjust target proposal x = do
   accept <- bernoulli $ if a > 1 then 1 else a
   return $ if accept then y else x
 
-rjmcTransRatio :: (ScalarType t) => (t -> P (Expr t)) -> (t -> Expr t) -> t -> t -> R
-rjmcTransRatio q f x y = (pu' / pu) * abs (det jacobian)
-  where pu  = q x `pdf` f y
-        pu' = q y `pdf` f x
+rjmc :: (ScalarType e) => P (Expr e) -> (Expr e -> P (Expr e)) -> Expr e -> P (Expr e)
+rjmc target proposal x = do
+  y <- proposal x
+  let f = pdf target -- TODO: jacobian adjustment for transformed dist
+      a = (f y / f x) * rjmcTransRatio proposal x y
+  accept <- bernoulli $ ifB (a >* 1) 1 a
+  return $ ifB accept y x
+
+rjmcTransRatio :: (ScalarType e) => (Expr e -> P (Expr e)) -> Expr e -> Expr e -> R
+rjmcTransRatio q x y = (pu' / pu) * abs (det jacobian)
+  where pu  = q x `pdf` y
+        pu' = q y `pdf` x
         getAux a b =
           let (rets, PBlock block _ _) = runProgExprs (q a)
-              env = solveTuple block rets (f b) emptyEEnv
+              env = solveTuple block rets b emptyEEnv
               p Volatile{} _ = True
               p _ _ = False
           in Map.filterWithKey p env
@@ -734,7 +789,7 @@ rjmcTransRatio q f x y = (pu' / pu) * abs (det jacobian)
         x' = let ([ret], PBlock block _ _) = runProgExprs (q x)
              in reDExpr emptyEEnv block ret
         d_ = derivD emptyEEnv
-        d a = d_ a . fst . runExpr . f
+        d a = d_ a . fst . runExpr
         top =   d x' x                     : [d_ x' r          | r <- u]
         bot = [(d v x + (d v y <# d x' x)) : [d v y <> d_ x' r | r <- u]
               | v <- Map.elems u']
