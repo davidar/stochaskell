@@ -330,8 +330,10 @@ instance LinearOperator ConstVal ConstVal where
     m  #> v = fromVector $ toMatrix m  #> toVector v
     m <\> v = fromVector $ toMatrix m <\> toVector v
     diag     = fromMatrix . diag     . toVector
-    asColumn = fromMatrix . asColumn . toVector
-    asRow    = fromMatrix . asRow    . toVector
+    asColumn a | isZeros a = 0
+    asColumn a = fromMatrix . asColumn $ toVector a
+    asRow    a | isZeros a = 0
+    asRow    a = fromMatrix . asRow    $ toVector a
 
 instance Matrix ConstVal Integer ConstVal where
     eye (lo,hi) = Exact $ array ([lo,lo],[hi,hi])

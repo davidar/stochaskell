@@ -65,6 +65,14 @@ getConstVal :: NodeRef -> Maybe ConstVal
 getConstVal (Const c _) = Just c
 getConstVal _ = Nothing
 
+isBlockArray :: NodeRef -> Bool
+isBlockArray BlockArray{} = True
+isBlockArray _ = False
+
+fromBlockMatrix :: NodeRef -> [[NodeRef]]
+fromBlockMatrix (BlockArray a _) = [[a![i,j] | j <- [1..n]] | i <- [1..m]]
+  where [(1,m),(1,n)] = AA.shape a
+
 instance Show NodeRef where
   show (Var   i t) = "("++ show i ++" :: "++ show t ++")"
   show (Const c IntT) = show (integer c)
@@ -588,6 +596,19 @@ simplify (Apply "-" [Const c _,x] t) | c == 0 = simplify (Apply "negate" [x] t)
 simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
 simplify (Apply "#>" [_,Const c _] t) | c == 0 = return $ Const 0 t
 simplify (Apply "<#" [Const c _,_] t) | c == 0 = return $ Const 0 t
+simplify (Apply "det" [i@BlockArray{}] t)
+  | isZ . sequence $ getConstVal <$> th = do
+      x <- det' [[hh]]
+      y <- det' tt
+      simplify $ Apply "*" [x,y] t
+  -- TODO: negate if matrix has even number of total rows
+  | getConstVal hh == Just 0 = det' $ tail a ++ [head a]
+  where a = fromBlockMatrix i
+        hh = head $ head a
+        th = tail $ head a
+        tt = tail <$> tail a
+        isZ = maybe False $ all isZeros
+        det' = fromDExpr . AA.det . DExpr . blockMatrix'
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
@@ -618,6 +639,8 @@ simplify' block (Apply "exp" [Var i@Internal{} _] _)
   | (Apply "log" [j] _) <- lookupBlock i block = Right j
 simplify' block (Apply "log" [Var i@Internal{} _] _)
   | (Apply "exp" [j] _) <- lookupBlock i block = Right j
+simplify' block (Apply "det" [Var i@Internal{} _] t)
+  | (Apply "eye" [] _) <- lookupBlock i block = Right $ Const 1 t
 simplify' _ n = Left n
 
 apply :: String -> Type -> [Expr a] -> Expr r
@@ -850,6 +873,7 @@ instance AA.Indexable DExpr DExpr DExpr where
         return $ case f of
             (Index g js) -> Index g (j:js)
             _            -> Index f [j]
+
 instance AA.Vector DExpr DExpr DExpr where
     vector = array' (Just "vector") 1
     blockVector v = DExpr $ do
@@ -870,35 +894,46 @@ instance AA.Vector DExpr DExpr DExpr where
         BlockArray (A.array bnd [([i], k !! (i-1)) | [i] <- A.range bnd]) t
       where isZero (Const c _) | c == 0 = True
             isZero _ = False
+
+blockMatrix' :: [[NodeRef]] -> State Block NodeRef
+blockMatrix' [[r]] = return r
+blockMatrix' k' = do
+  r <- simplify $ Apply "+s" rs IntT
+  c <- simplify $ Apply "+s" cs IntT
+  let t = ArrayT (Just "matrix") [(Const 1 IntT,r),(Const 1 IntT,c)] $
+        unreplicate [t' | ArrayT _ _ t' <- typeRef <$> concat k]
+  return . flip BlockArray t $ A.array bnd
+    [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
+  where flattenRow = foldr1 (zipWith (++))
+        flattenMatrix = concat . map flattenRow
+        k | isBlockArray `all` concat k' = flattenMatrix $ map fromBlockMatrix <$> k'
+          | otherwise = k'
+        bnd = ([1,1],[length k, length $ head k])
+        rs = do
+          t <- typeRef . head <$> k
+          return $ case t of
+            _ | isScalar t -> Const 1 IntT
+            ArrayT _ [(Const 1 IntT,hi),_] _ -> hi
+        cs = do
+          t <- typeRef <$> head k
+          return $ case t of
+            _ | isScalar t -> Const 1 IntT
+            ArrayT _ [_,(Const 1 IntT,hi)] _ -> hi
+
 instance AA.Matrix DExpr DExpr DExpr where
     matrix = array' (Just "matrix") 2
-    -- TODO: flatten block of blocks when possible
     blockMatrix m = DExpr $ do
-      k <- sequence $ sequence . map fromDExpr <$> m
-      let bnd = ([1,1],[length m, length $ head m])
-          rs = do
-            t <- typeRef . head <$> k
-            return $ case t of
-              _ | isScalar t -> Const 1 IntT
-              ArrayT (Just "row_vector") _ _ -> Const 1 IntT
-              ArrayT _ ((Const 1 IntT,hi):_) _ -> hi
-          cs = do
-            t <- typeRef <$> head k
-            return $ case t of
-              _ | isScalar t -> Const 1 IntT
-              ArrayT (Just "row_vector") [(Const 1 IntT,hi)] _ -> hi
-              ArrayT _ [_] _ -> Const 1 IntT
-              ArrayT _ [_,(Const 1 IntT,hi)] _ -> hi
-      r <- simplify $ Apply "+s" rs IntT
-      c <- simplify $ Apply "+s" cs IntT
-      let t = ArrayT (Just "matrix") [(Const 1 IntT,r),(Const 1 IntT,c)] $
-            unreplicate [t' | ArrayT _ _ t' <- typeRef <$> concat k]
-      return . flip BlockArray t $ A.array bnd
-        [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
+      k' <- sequence $ sequence . map (fromDExpr . asMatrixD) <$> m
+      blockMatrix' k'
+      where asMatrixD a = case typeDExpr a of
+              (ArrayT (Just "row_vector") [_] _) -> AA.asRow a
+              (ArrayT _ [_] _) -> AA.asColumn a
+              (ArrayT _ [_,_] _) -> a
+              t | isScalar t -> a
     eye (lo,hi) = DExpr $ do
       lo' <- fromDExpr lo
       hi' <- fromDExpr hi
-      simplify $ Apply "eye" [] (ArrayT (Just "matrix") [(lo',hi')] RealT)
+      simplify $ Apply "eye" [] (ArrayT (Just "matrix") [(lo',hi'),(lo',hi')] RealT)
 instance Monoid DExpr where
     mappend a b = DExpr $ do
         i <- fromDExpr a
@@ -978,13 +1013,29 @@ instance AA.LinearOperator DExpr DExpr where
         let (ArrayT _ [n] t) = typeRef i
         simplify $ Apply "diag" [i] (ArrayT (Just "matrix") [n,n] t)
     asColumn v = DExpr $ do
-        i <- fromDExpr v
-        let (ArrayT _ [n] t) = typeRef i
-        simplify $ Apply "asColumn" [i] (ArrayT (Just "matrix") [n,(Const 1 IntT, Const 1 IntT)] t)
+        k <- fromDExpr v
+        let (ArrayT _ [n] t) = typeRef k
+            t' = ArrayT (Just "matrix") [n,(Const 1 IntT, Const 1 IntT)] t
+        case k of
+          BlockArray a _ -> do
+            let [(1,n')] = AA.shape a
+            a' <- sequence $ A.array ([1,1],[n',1]) [([i,1], asCol' $ a![i]) | i <- [1..n']]
+            return (BlockArray a' t')
+          _ -> simplify $ Apply "asColumn" [k] t'
+      where asCol' x | isScalar (typeRef x) = return x
+                     | otherwise = fromDExpr . AA.asColumn . DExpr $ return x
     asRow v = DExpr $ do
-        i <- fromDExpr v
-        let (ArrayT _ [n] t) = typeRef i
-        simplify $ Apply "asRow"    [i] (ArrayT (Just "matrix") [(Const 1 IntT, Const 1 IntT),n] t)
+        k <- fromDExpr v
+        let (ArrayT _ [n] t) = typeRef k
+            t' = ArrayT (Just "matrix") [(Const 1 IntT, Const 1 IntT),n] t
+        case k of
+          BlockArray a _ -> do
+            let [(1,n')] = AA.shape a
+            a' <- sequence $ A.array ([1,1],[1,n']) [([1,j], asRow' $ a![j]) | j <- [1..n']]
+            return (BlockArray a' t')
+          _ -> simplify $ Apply "asRow" [k] t'
+      where asRow' x | isScalar (typeRef x) = return x
+                     | otherwise = fromDExpr . AA.asRow . DExpr $ return x
 instance AA.LinearOperator (Expr [[e]]) (Expr [e]) where
     m #> v = Expr $ erase m AA.#> erase v
     v <# m = Expr $ erase v AA.<# erase m
@@ -992,19 +1043,24 @@ instance AA.LinearOperator (Expr [[e]]) (Expr [e]) where
     asColumn = Expr . AA.asColumn . erase
     asRow    = Expr . AA.asRow    . erase
 
-instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
-    chol m = expr $ do
-        i <- fromExpr m
+instance AA.SquareMatrix DExpr DExpr where
+    chol m = DExpr $ do
+        i <- fromDExpr m
         let (ArrayT _ sh t) = typeRef i
         simplify $ Apply "chol" [i] (ArrayT (Just "matrix") sh t)
-    inv m = expr $ do
-        i <- fromExpr m
+    inv m = DExpr $ do
+        i <- fromDExpr m
         let (ArrayT _ sh t) = typeRef i
         simplify $ Apply "inv" [i] (ArrayT (Just "matrix") sh t)
-    det m = expr $ do
-        i <- fromExpr m
+    det x | isScalar (typeDExpr x) = x
+    det m = DExpr $ do
+        i <- fromDExpr m
         let (ArrayT _ _ t) = typeRef i
         simplify $ Apply "det" [i] t
+instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
+    chol = Expr . AA.chol . erase
+    inv  = Expr . AA.inv  . erase
+    det  = Expr . AA.det  . erase
 
 qfDiag :: RMat -> RVec -> RMat
 qfDiag m v = expr $ do
