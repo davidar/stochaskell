@@ -10,6 +10,7 @@ import qualified Data.Random.Distribution.Categorical as Categorical
 import qualified Data.Random.Distribution.ChiSquare as ChiSquare
 import qualified Data.Random.Distribution.Poisson as Poisson
 import qualified Numeric.LinearAlgebra.Data as LAD
+import Numeric.SpecFunctions
 import System.Random
 
 class (Monad m) => Distribution d s m t | d m t -> s where
@@ -67,6 +68,7 @@ newtype Gamma a = Gamma a
 instance Distribution Gamma (Double,Double) IO Double where
     sample (Gamma (a,b)) = Rand.sample (Rand.Gamma a (1/b))
 gamma a b = sample $ Gamma (a,b)
+lpdfGamma x a b = a * log b + (a - 1) * log x - b * x - logGamma a
 exponential x = gamma 1 x
 
 newtype InvGamma a = InvGamma a
@@ -98,6 +100,9 @@ corrLKJ v sh = sample $ LKJ (v,sh)
 
 newtype NegBinomial a = NegBinomial a
 negBinomial r p = sample $ NegBinomial (r,p)
+lpdfNegBinomial k r p =
+  logGamma (r + fromInteger k) - logGamma r - logFactorial k +
+  fromInteger k * log p + r * log (1-p)
 
 newtype Normal a = Normal a
 instance Distribution Normal (Double,Double) IO Double where
@@ -123,6 +128,7 @@ newtype Poisson a = Poisson a
 instance Distribution Poisson Double IO Integer where
     sample (Poisson a) = Rand.sample (Poisson.Poisson a)
 poisson a = sample $ Poisson a
+lpdfPoisson k l = fromInteger k * log l - logFactorial k - l
 
 newtype Uniform a = Uniform a
 instance (Random t) => Distribution Uniform (t,t) IO t where

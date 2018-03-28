@@ -488,31 +488,38 @@ dirac c = do
 ------------------------------------------------------------------------------
 
 pdf :: (ExprTuple t) => Prog t -> t -> R
-pdf prog vals = pdfPBlock env pb
+pdf prog vals = pdfPBlock False env pb
   where (rets, pb@(PBlock block _ _)) = runProgExprs prog
-        env = solveTupleD block rets (fromExprTuple vals) emptyEEnv
+        env = solveTuple block rets vals emptyEEnv
 
-pdfPBlock :: EEnv -> PBlock -> R
-pdfPBlock env (PBlock block refs _) = product $ do
+lpdf :: (ExprTuple t) => Prog t -> t -> R
+lpdf prog vals = pdfPBlock True env pb
+  where (rets, pb@(PBlock block _ _)) = runProgExprs prog
+        env = solveTuple block rets vals emptyEEnv
+
+pdfPBlock :: Bool -> EEnv -> PBlock -> R
+pdfPBlock lg env (PBlock block refs _) = (if lg then sum else product) $ do
     (i,d) <- zip [0..] $ reverse refs
     let ident = Volatile (dagLevel $ topDAG block) i
     return $ case Map.lookup ident env of
-      Just val -> pdfPNode env block d val
-      Nothing  -> trace (show ident ++" is unconstrained") 1
+      Just val -> pdfPNode lg env block d val
+      Nothing  -> trace (show ident ++" is unconstrained") $ if lg then 0 else 1
 
-pdfPNode :: EEnv -> Block -> PNode -> DExpr -> R
-pdfPNode env block (Dist f args _) x = expr $ do
+pdfPNode :: Bool -> EEnv -> Block -> PNode -> DExpr -> R
+pdfPNode lg env block (Dist f args _) x = expr $ do
   i <- fromDExpr x
   case i of
-    Unconstrained _ -> return (Const 1 RealT)
+    Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
     _ -> do
       js <- sequence $ extractNodeRef env block <$> args
-      simplify $ Apply (f ++"_pdf") (i:js) RealT
-pdfPNode env block (Loop _ (Lambda ldag body) _) a
-  | (Unconstrained _,_) <- runDExpr a = 1
+      simplify $ Apply (f ++ if lg then "_lpdf" else "_pdf") (i:js) RealT
+pdfPNode lg env block (Loop _ (Lambda ldag body) _) a
+  | (Unconstrained _,_) <- runDExpr a = if lg then 0 else 1
+  | lg        = E.foldl g 0 (Expr a)
   | otherwise = E.foldl f 1 (Expr a)
   where block' = deriveBlock ldag block
-        f p x = p * pdfPNode env block' body (erase x) -- TODO only works for iid
+        f p x = p * pdfPNode lg env block' body (erase x) -- TODO only works for iid
+        g l x = l + pdfPNode lg env block' body (erase x)
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env' pb / adjust
@@ -560,12 +567,11 @@ densityPNode env block (Dist "categorical" cats _) x = LF.logFloat $ toDouble p
         xs = fromJust . evalNodeRef env block <$> drop n cats
         p = fromMaybe 0 . lookup x $ zip xs ps
 densityPNode env block (Dist "gamma" [a,b] _) x
-    | x' >= 0 = LF.logToLogFloat l
+    | x' >= 0 = LF.logToLogFloat $ lpdfGamma x' a' b'
     | otherwise = LF.logFloat 0
   where a' = toDouble . fromJust $ evalNodeRef env block a
         b' = toDouble . fromJust $ evalNodeRef env block b
         x' = toDouble x
-        l = a' * log b' + (a' - 1) * log x' - b' * x' - logGamma a'
 densityPNode env block (Dist "inv_gamma" [a,b] _) x
     | x' >= 0 = LF.logToLogFloat l
     | otherwise = LF.logFloat 0
@@ -589,7 +595,7 @@ densityPNode env block (Dist "multi_normal" [m,s] _) x =
         n = integer $ length (toList m')
         x' = x - m'
 densityPNode env block (Dist "poisson" [l] _) x =
-    LF.logToLogFloat $ fromIntegral k * log l' - l' - logFactorial k
+    LF.logToLogFloat $ lpdfPoisson k l'
   where l' = toDouble . fromJust $ evalNodeRef env block l
         k = toInteger x
 densityPNode env block (Dist "uniform" [a,b] _) x =
@@ -624,10 +630,12 @@ simulate :: (ExprTuple t) => Prog t -> IO t
 simulate = sampleP
 
 sampleP :: (ExprTuple t) => Prog t -> IO t
-sampleP p = do
-    env <- samplePNodes emptyEnv block idents
-    let env' = Map.filterWithKey (\k _ -> not $ isInternal k) env
-    return . fromConstVals $ map (fromJust . evalNodeRef env' block) rets
+sampleP = sampleP' emptyEnv
+sampleP' :: (ExprTuple t) => Env -> Prog t -> IO t
+sampleP' env p = do
+    env' <- samplePNodes env block idents
+    let env'' = Map.filterWithKey (const . not . isInternal) env'
+    return . fromConstVals $ map (fromJust . evalNodeRef env'' block) rets
   where (rets, PBlock block refs _) = runProgExprs p
         idents = [ (Volatile (dagLevel $ topDAG block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
@@ -727,6 +735,15 @@ samplePNode env block (HODist "orderedSample" d [n] _) =
   (fromList . sort) <$> sequence [samplePNode env block d | _ <- [1..n']]
   where n' = toInteger . fromJust $ evalNodeRef env block n
 
+samplePNode env block (Switch hd alts _) = do
+  env' <- samplePNodes (Map.fromList (inputs ldag `zip` ks) `Map.union` env) block' idents
+  let env'' = Map.filterWithKey (const . not . isInternal) env'
+  return . fromJust $ evalNodeRef env'' block' lhd
+  where Tagged c ks = fromJust $ evalNodeRef env block hd
+        (Lambda ldag lhd, ds) = alts !! c
+        block' = deriveBlock ldag block
+        idents = [ (Volatile (dagLevel ldag) i, d) | (i,d) <- zip [0..] ds ]
+
 samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
 
 
@@ -768,15 +785,15 @@ mhAdjust adjust target proposal x = do
 rjmc :: (ScalarType e) => P (Expr e) -> (Expr e -> P (Expr e)) -> Expr e -> P (Expr e)
 rjmc target proposal x = do
   y <- proposal x
-  let f = pdf target -- TODO: jacobian adjustment for transformed dist
-      a = (f y / f x) * rjmcTransRatio proposal x y
+  let f = lpdf target -- TODO: jacobian adjustment for transformed dist
+      a = exp $ f y - f x + rjmcTransRatio proposal x y
   accept <- bernoulli $ ifB (a >* 1) 1 a
   return $ ifB accept y x
 
 rjmcTransRatio :: (ScalarType e) => (Expr e -> P (Expr e)) -> Expr e -> Expr e -> R
-rjmcTransRatio q x y = (pu' / pu) * abs (det jacobian)
-  where pu  = q x `pdf` y
-        pu' = q y `pdf` x
+rjmcTransRatio q x y = lu' - lu + logDet jacobian
+  where lu  = q x `lpdf` y
+        lu' = q y `lpdf` x
         getAux a b =
           let (rets, PBlock block _ _) = runProgExprs (q a)
               env = solveTuple block rets b emptyEEnv

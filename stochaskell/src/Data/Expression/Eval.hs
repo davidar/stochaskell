@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, MonadComprehensions, TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances, MonadComprehensions, ScopedTypeVariables, TypeFamilies #-}
 
 module Data.Expression.Eval where
 
@@ -65,6 +65,10 @@ evalNodeRef env block (Index arr idx) = do
   a <- evalNodeRef env block arr
   js <- sequence (evalNodeRef env block <$> reverse idx)
   return (a!(toInteger <$> js))
+evalNodeRef env block (Data c args _) = do
+  js <- sequence $ evalNodeRef env block <$> args
+  return $ Tagged c js
+evalNodeRef _ _ r = error $ "evalNodeRef "++ show r
 
 evalRange :: Env -> Block -> [(NodeRef,NodeRef)] -> [[ConstVal]]
 evalRange env block sh = range (a,b)
@@ -414,13 +418,10 @@ instance IsList RMat where
                                ,(Const 1 IntT, Const (fromInteger m) IntT)] RealT
     toList = map (map real . toList) . toList . fromJust . eval_
 
-instance Show R    where show = show . real
-instance Show Z    where show = show . integer
-instance Show B    where show = show . toBool
-instance Show RVec where show = show . toList
-instance Show ZVec where show = show . toList
-instance Show BVec where show = show . toList
-instance Show RMat where show = show . toList
+instance forall t. (Show t, ScalarType t) => Show (Expr t) where
+  show x = case eval_ x of
+    Just c  -> show (toConcrete c :: t)
+    Nothing -> show (erase x)
 
 wrapReadsPrec :: (Read a) => (a -> t) -> Int -> ReadS t
 wrapReadsPrec f d s = [(f x, s') | (x, s') <- readsPrec d s]

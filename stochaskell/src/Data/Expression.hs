@@ -22,6 +22,7 @@ import qualified Data.Set as Set
 import Debug.Trace
 import Control.Applicative ()
 import Control.Monad.State
+import GHC.Exts (fromList,toList)
 import qualified Numeric.LinearAlgebra as LA
 import Util
 
@@ -32,7 +33,6 @@ import Util
 
 type Pointer = Int
 type Level = Int
-type Tag = Int
 
 data Id = Dummy    { idLevel :: Level, idPointer :: Pointer }
         | Volatile { idLevel :: Level, idPointer :: Pointer }
@@ -168,9 +168,12 @@ nextLevel :: Block -> Level
 nextLevel (Block ds) = length ds
 
 lookupBlock :: Id -> Block -> Node
-lookupBlock i@(Internal level ptr) (Block dags) =
+lookupBlock i@(Internal level ptr) (Block dags)
+  | level < length dags =
   fromMaybe (error $ "internal lookup failure: " ++ show i) $
     ptr `lookup` nodes (reverse dags !! level)
+  | otherwise = error $ "trying to access level "++ show level ++
+                        " but block only has "++ show (length dags)
 
 deriveBlock :: DAG -> Block -> Block
 deriveBlock d b@(Block ds) = Block (d:parent)
@@ -258,15 +261,35 @@ isArrayT _ = False
 newtype TypeOf t = TypeIs Type
 class ScalarType t where
     typeOf :: TypeOf t
+    toConcrete :: ConstVal -> t
+    fromConcrete :: t -> Expr t
+    constExpr :: ConstVal -> Expr t
+    constExpr = fromConcrete . toConcrete
 instance ScalarType Integer where
     typeOf = TypeIs IntT
+    toConcrete = toInteger
+    fromConcrete = fromInteger
+    constExpr c = expr . return $ Const c IntT
 instance ScalarType Bool where
     typeOf = TypeIs boolT
+    toConcrete = toBool
+    fromConcrete True  = true
+    fromConcrete False = false
+    constExpr c = expr . return $ Const c boolT
 instance ScalarType Double where
     typeOf = TypeIs RealT
+    toConcrete = toDouble
+    fromConcrete = fromRational . toRational
+    constExpr c = expr . return $ Const c RealT
 instance forall t. (ScalarType t) => ScalarType [t] where
     typeOf = TypeIs t
       where TypeIs t = typeOf :: TypeOf t
+    toConcrete = map toConcrete . toList
+    constExpr c = expr . return . Const c $ ArrayT Nothing sh t
+      where (lo,hi) = AA.bounds c
+            f = flip Const IntT . fromInteger
+            sh = map f lo `zip` map f hi
+            TypeIs t = typeOf :: TypeOf t
 
 internal :: Level -> Pointer -> State Block NodeRef
 internal level i = do
@@ -596,19 +619,8 @@ simplify (Apply "-" [Const c _,x] t) | c == 0 = simplify (Apply "negate" [x] t)
 simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
 simplify (Apply "#>" [_,Const c _] t) | c == 0 = return $ Const 0 t
 simplify (Apply "<#" [Const c _,_] t) | c == 0 = return $ Const 0 t
-simplify (Apply "det" [i@BlockArray{}] t)
-  | isZ . sequence $ getConstVal <$> th = do
-      x <- det' [[hh]]
-      y <- det' tt
-      simplify $ Apply "*" [x,y] t
-  -- TODO: negate if matrix has even number of total rows
-  | getConstVal hh == Just 0 = det' $ tail a ++ [head a]
-  where a = fromBlockMatrix i
-        hh = head $ head a
-        th = tail $ head a
-        tt = tail <$> tail a
-        isZ = maybe False $ all isZeros
-        det' = fromDExpr . AA.det . DExpr . blockMatrix'
+simplify (Apply "det"     [i@BlockArray{}] t) | Just s <- simplifyDet False i t = s
+simplify (Apply "log_det" [i@BlockArray{}] t) | Just s <- simplifyDet True  i t = s
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
@@ -642,6 +654,24 @@ simplify' block (Apply "log" [Var i@Internal{} _] _)
 simplify' block (Apply "det" [Var i@Internal{} _] t)
   | (Apply "eye" [] _) <- lookupBlock i block = Right $ Const 1 t
 simplify' _ n = Left n
+
+simplifyDet :: Bool -> NodeRef -> Type -> Maybe (State Block NodeRef)
+simplifyDet lg i t
+  | isZ . sequence $ getConstVal <$> th = Just $ do
+      x <- det' [[hh]]
+      y <- det' tt
+      simplify $ Apply (if lg then "+" else "*") [x,y] t
+  -- TODO: negate if matrix has even number of total rows
+  | getConstVal hh == Just 0 = Just . det' $ tail a ++ [head a]
+  where a = fromBlockMatrix i
+        hh = head $ head a
+        th = tail $ head a
+        tt = tail <$> tail a
+        isZ = maybe False $ all isZeros
+        det x | isScalar (typeDExpr x) = if lg then log x else x
+              | lg        = AA.logDet x
+              | otherwise = AA.det x
+        det' = fromDExpr . det . DExpr . blockMatrix'
 
 apply :: String -> Type -> [Expr a] -> Expr r
 apply f t = Expr . apply' f t . map erase
@@ -901,7 +931,7 @@ blockMatrix' k' = do
   r <- simplify $ Apply "+s" rs IntT
   c <- simplify $ Apply "+s" cs IntT
   let t = ArrayT (Just "matrix") [(Const 1 IntT,r),(Const 1 IntT,c)] $
-        unreplicate [t' | ArrayT _ _ t' <- typeRef <$> concat k]
+        foldr1 coerce [t' | ArrayT _ _ t' <- typeRef <$> concat k]
   return . flip BlockArray t $ A.array bnd
     [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
   where flattenRow = foldr1 (zipWith (++))
@@ -933,7 +963,7 @@ instance AA.Matrix DExpr DExpr DExpr where
     eye (lo,hi) = DExpr $ do
       lo' <- fromDExpr lo
       hi' <- fromDExpr hi
-      simplify $ Apply "eye" [] (ArrayT (Just "matrix") [(lo',hi'),(lo',hi')] RealT)
+      simplify $ Apply "eye" [lo',hi'] (ArrayT (Just "matrix") [(lo',hi'),(lo',hi')] RealT)
 instance Monoid DExpr where
     mappend a b = DExpr $ do
         i <- fromDExpr a
@@ -1052,15 +1082,19 @@ instance AA.SquareMatrix DExpr DExpr where
         i <- fromDExpr m
         let (ArrayT _ sh t) = typeRef i
         simplify $ Apply "inv" [i] (ArrayT (Just "matrix") sh t)
-    det x | isScalar (typeDExpr x) = x
     det m = DExpr $ do
         i <- fromDExpr m
         let (ArrayT _ _ t) = typeRef i
         simplify $ Apply "det" [i] t
+    logDet m = DExpr $ do
+        i <- fromDExpr m
+        let (ArrayT _ _ t) = typeRef i
+        simplify $ Apply "log_det" [i] t
 instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
-    chol = Expr . AA.chol . erase
-    inv  = Expr . AA.inv  . erase
-    det  = Expr . AA.det  . erase
+    chol   = Expr . AA.chol   . erase
+    inv    = Expr . AA.inv    . erase
+    det    = Expr . AA.det    . erase
+    logDet = Expr . AA.logDet . erase
 
 qfDiag :: RMat -> RVec -> RMat
 qfDiag m v = expr $ do
@@ -1133,15 +1167,6 @@ zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
 
 constDExpr :: ConstVal -> Type -> DExpr
 constDExpr c = DExpr . return . Const c
-
-constExpr :: forall t. (ScalarType t) => ConstVal -> Expr t
-constExpr Tagged{} = error "TODO"
-constExpr c = expr . return $ Const c t'
-  where (lo,hi) = AA.bounds c
-        sh = map f lo `zip` map f hi
-          where f = flip Const IntT . fromInteger
-        TypeIs t = typeOf :: TypeOf t
-        t' = if sh == [] then t else ArrayT Nothing sh t
 
 const :: (ScalarType t) => ConstVal -> Expr t
 const = constExpr

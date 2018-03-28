@@ -12,6 +12,9 @@ import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Monoid
 import Data.Number.Transfinite hiding (log)
+import qualified Data.Random as Rand
+import Data.Random.Distribution (logPdf)
+import Data.Random.Distribution.Abstract
 import Data.Ratio
 import Debug.Trace
 import GHC.Exts
@@ -28,6 +31,7 @@ constFuns = Map.fromList
   ,("/", \[a,b] -> a / b)
   ,("**", \[a,b] -> a ** b)
   ,("negate", negate . head)
+  ,("abs", abs . head)
   ,("exp", exp . head)
   ,("log", log . head)
   ,("sqrt", sqrt . head)
@@ -43,8 +47,11 @@ constFuns = Map.fromList
   ,("diag", diag . head)
   ,("asColumn", asColumn . head)
   ,("asRow", asRow . head)
+  ,("eye", \[lo,hi] -> eye (integer lo, integer hi))
   ,("chol", chol . head)
   ,("inv", inv . head)
+  ,("det", det . head)
+  ,("log_det", logDet . head)
   ,("tr", tr . head)
   ,("tr'", tr' . head)
   ,("ifThenElse", \[a,b,c] -> ifB a b c)
@@ -57,6 +64,12 @@ constFuns = Map.fromList
   ,("deleteIndex", \[a,i]   -> deleteIndex a [integer i])
   ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
   ,("quad_form_diag", \[m,v] -> diag v <> m <> diag v)
+  ,("bernoulli_pdf",     \[b,p]   -> if toBool b then p else 1-p)
+  ,("bernoulli_lpdf",    \[b,p]   -> log $ if toBool b then p else 1-p)
+  ,("gamma_lpdf",        \[g,a,b] -> real $ lpdfGamma (real g) (real a) (real b))
+  ,("neg_binomial_lpdf", \[k,r,p] -> real $ lpdfNegBinomial (integer k) (real r) (real p))
+  ,("poisson_lpdf",      \[k,l]   -> real $ lpdfPoisson (integer k) (real l))
+  ,("normal_lpdf",       \[x,m,s] -> real $ logPdf (Rand.Normal (toDouble m) (toDouble s)) (real x))
   ]
 
 toBool :: (Boolean b, Eq b) => b -> Bool
@@ -72,9 +85,11 @@ integer = fromInteger . toInteger
 real :: (Real r, Fractional f) => r -> f
 real = fromRational . toRational
 
+type Tag = Int
+
 data ConstVal = Exact  (UArray [Integer] Int)
               | Approx (UArray [Integer] Double)
-              | Tagged -- TODO
+              | Tagged Tag [ConstVal]
 
 instance Show ConstVal where
     show c | dimension c >= 1 = show (toList c)
@@ -342,7 +357,8 @@ instance Matrix ConstVal Integer ConstVal where
 instance SquareMatrix ConstVal ConstVal where
     chol   = fromMatrix . chol   . toMatrix
     inv    = fromMatrix . inv    . toMatrix
-    det    = fromDouble . det    . toMatrix
+    det a | isZeros a = 0
+    det a  = fromDouble . det    $ toMatrix a
     logDet = fromDouble . logDet . toMatrix
 
 instance LA.Transposable ConstVal ConstVal where
