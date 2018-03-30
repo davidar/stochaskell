@@ -67,7 +67,7 @@ constFuns = Map.fromList
   ,("bernoulli_pdf",     \[b,p]   -> if toBool b then p else 1-p)
   ,("bernoulli_lpdf",    \[b,p]   -> log $ if toBool b then p else 1-p)
   ,("gamma_lpdf",        \[g,a,b] -> real $ lpdfGamma (real g) (real a) (real b))
-  ,("neg_binomial_lpdf", \[k,r,p] -> real $ lpdfNegBinomial (integer k) (real r) (real p))
+  ,("neg_binomial_lpdf", \[k,a,b] -> real $ lpdfNegBinomial (integer k) (real a) (real b))
   ,("poisson_lpdf",      \[k,l]   -> real $ lpdfPoisson (integer k) (real l))
   ,("normal_lpdf",       \[x,m,s] -> real $ logPdf (Rand.Normal (toDouble m) (toDouble s)) (real x))
   ]

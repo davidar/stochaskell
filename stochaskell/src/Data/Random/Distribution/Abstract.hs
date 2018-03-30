@@ -9,6 +9,7 @@ import qualified Data.Random.Distribution.Beta as Beta
 import qualified Data.Random.Distribution.Categorical as Categorical
 import qualified Data.Random.Distribution.ChiSquare as ChiSquare
 import qualified Data.Random.Distribution.Poisson as Poisson
+import Debug.Trace
 import qualified Numeric.LinearAlgebra.Data as LAD
 import Numeric.SpecFunctions
 import System.Random
@@ -99,10 +100,14 @@ instance Distribution LKJ (Double, Interval Integer) IO (ShapedMatrix Double) wh
 corrLKJ v sh = sample $ LKJ (v,sh)
 
 newtype NegBinomial a = NegBinomial a
-negBinomial r p = sample $ NegBinomial (r,p)
-lpdfNegBinomial k r p =
-  logGamma (r + fromInteger k) - logGamma r - logFactorial k +
-  fromInteger k * log p + r * log (1-p)
+instance Distribution NegBinomial (Double, Double) IO Integer where
+  sample (NegBinomial (a,b)) = do
+    l <- gamma a b
+    poisson l
+negBinomial a b = sample $ NegBinomial (a,b)
+lpdfNegBinomial k a b =
+  logGamma (a + fromInteger k) - logGamma a - logFactorial k +
+  fromInteger k * log (1 / (b + 1)) + a * log (b / (b + 1))
 
 newtype Normal a = Normal a
 instance Distribution Normal (Double,Double) IO Double where

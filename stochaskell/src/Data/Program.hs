@@ -310,9 +310,9 @@ instance Distribution LKJ (R, Interval Z) Prog RMat where
         return $ Dist "lkj_corr" [i] (ArrayT (Just "corr_matrix") [(l,h),(l,h)] RealT)
 
 instance Distribution NegBinomial (R,R) Prog Z where
-    sample (NegBinomial (r,p)) = dist $ do
-        i <- fromExpr r
-        j <- fromExpr p
+    sample (NegBinomial (a,b)) = dist $ do
+        i <- fromExpr a
+        j <- fromExpr b
         return $ Dist "neg_binomial" [i,j] IntT
 
 instance Distribution Normal (R,R) Prog R where
@@ -691,6 +691,9 @@ samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric 0 p'
 samplePNode env block (Dist "lkj_corr" [v] (ArrayT _ sh _)) = fromMatrix <$> corrLKJ v' (head sh')
   where v' = toDouble . fromJust $ evalNodeRef env block v
         sh' = evalShape env block sh
+samplePNode env block (Dist "neg_binomial" [a,b] _) = fromInteger <$> negBinomial a' b'
+  where a' = toDouble . fromJust $ evalNodeRef env block a
+        b' = toDouble . fromJust $ evalNodeRef env block b
 samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
   where m' = toDouble . fromJust $ evalNodeRef env block m
         s' = toDouble . fromJust $ evalNodeRef env block s
