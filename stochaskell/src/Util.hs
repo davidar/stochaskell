@@ -8,6 +8,7 @@ import Data.List
 import qualified Data.Number.LogFloat as LF
 import GHC.Exts
 import Numeric.SpecFunctions
+import System.IO
 import System.Process
 import Text.Printf (printf)
 
@@ -56,9 +57,12 @@ linspace lo hi n = fromList [lo + step * fromIntegral i | i <- [0..n-1]]
 
 system_ :: String -> IO ()
 system_ cmd = do
-    putStrLn cmd
+    putStrLn' cmd
     _ <- system cmd
     return ()
+
+putStrLn' :: String -> IO ()
+putStrLn' = hPutStrLn stderr
 
 mean :: (Foldable t, Fractional a) => t a -> a
 mean xs = sum xs / fromIntegral (length xs)

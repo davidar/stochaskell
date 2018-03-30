@@ -1,6 +1,6 @@
 {-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables, TypeFamilies,
              TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,
-             FlexibleContexts, ConstraintKinds #-}
+             FlexibleContexts, ConstraintKinds, RankNTypes #-}
 module Data.Expression where
 
 import Prelude hiding (const,foldl,foldr,scanl,scanr)
@@ -260,36 +260,54 @@ isArrayT _ = False
 
 newtype TypeOf t = TypeIs Type
 class ScalarType t where
-    typeOf :: TypeOf t
-    toConcrete :: ConstVal -> t
+    typeOf       :: TypeOf t
+    toConcrete   :: ConstVal -> t
     fromConcrete :: t -> Expr t
-    constExpr :: ConstVal -> Expr t
-    constExpr = fromConcrete . toConcrete
+    constVal     :: t -> ConstVal
+    constExpr    :: ConstVal -> Expr t
+    constExpr    = fromConcrete . toConcrete
 instance ScalarType Integer where
-    typeOf = TypeIs IntT
-    toConcrete = toInteger
+    typeOf       = TypeIs IntT
+    toConcrete   = toInteger
     fromConcrete = fromInteger
-    constExpr c = expr . return $ Const c IntT
+    constVal     = fromInteger
+    constExpr c  = expr . return $ Const c IntT
 instance ScalarType Bool where
-    typeOf = TypeIs boolT
-    toConcrete = toBool
-    fromConcrete True  = true
-    fromConcrete False = false
-    constExpr c = expr . return $ Const c boolT
+    typeOf       = TypeIs boolT
+    toConcrete   = toBool
+    fromConcrete b = if b then true else false
+    constVal     b = if b then true else false
+    constExpr c  = expr . return $ Const c boolT
 instance ScalarType Double where
-    typeOf = TypeIs RealT
-    toConcrete = toDouble
+    typeOf       = TypeIs RealT
+    toConcrete   = toDouble
     fromConcrete = fromRational . toRational
-    constExpr c = expr . return $ Const c RealT
+    constVal     = fromRational . toRational
+    constExpr c  = expr . return $ Const c RealT
 instance forall t. (ScalarType t) => ScalarType [t] where
-    typeOf = TypeIs t
-      where TypeIs t = typeOf :: TypeOf t
-    toConcrete = map toConcrete . toList
-    constExpr c = expr . return . Const c $ ArrayT Nothing sh t
+    typeOf       = TypeIs t where TypeIs t = typeOf :: TypeOf t
+    toConcrete   = map toConcrete . toList
+    constExpr c  = expr . return . Const c $ ArrayT Nothing sh t
       where (lo,hi) = AA.bounds c
             f = flip Const IntT . fromInteger
             sh = map f lo `zip` map f hi
             TypeIs t = typeOf :: TypeOf t
+
+newtype Tags t = Tags [Tag]
+class ScalarType c => Constructor c where
+  tags :: Tags c
+  construct   :: (forall t. ScalarType t => a -> Expr t) -> Tag -> [a] -> c
+  deconstruct :: (forall t. ScalarType t => Expr t -> a) -> c -> (Tag, [a])
+  typeUnion :: c -> Type
+
+toConcreteC :: Constructor t => ConstVal -> t
+toConcreteC (Tagged c args) = construct constExpr c args
+
+fromConcreteC :: Constructor t => t -> Expr t
+fromConcreteC m = expr $ do
+  js <- sequence args
+  return $ Data c js (typeUnion m)
+  where (c, args) = deconstruct fromExpr m
 
 internal :: Level -> Pointer -> State Block NodeRef
 internal level i = do
@@ -309,6 +327,9 @@ extractD e c j = DExpr $ do
     (Data c' args _) | c == c' -> args !! j
                      | otherwise -> error "tag mismatch"
     _ -> Extract i c j
+
+typeExpr :: Expr t -> Type
+typeExpr = typeDExpr . erase
 
 typeDExpr :: DExpr -> Type
 typeDExpr = typeRef . fst . runDExpr
@@ -591,6 +612,13 @@ caseD' k fs = do
         args = [DExpr . return $ Var i t | (i,t) <- zip ids ts]
     return . runLambda ids . fromDExpr $ f args
   hashcons $ Case k cases (unreplicate $ typeRef . fHead <$> cases)
+
+fromCase :: forall t a. Constructor t => (t -> Expr a) -> Expr t -> Expr a
+fromCase f e = Expr $ caseD (erase e) [erase . f . construct Expr c | c <- cs]
+  where Tags cs = tags :: Tags t
+
+caseOf :: Constructor t => (Expr t -> Expr a) -> Expr t -> Expr a
+caseOf f = fromCase (f . fromConcrete)
 
 
 ------------------------------------------------------------------------------

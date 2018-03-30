@@ -181,6 +181,13 @@ caseP' k ps = fmap erase . dist $ do
       return (Lambda dag ret, reverse acts)
   return $ Switch k cases (unreplicate $ typeRef . fHead . fst <$> cases)
 
+fromCaseP :: forall t a. Constructor t => (t -> P (Expr a)) -> Expr t -> P (Expr a)
+fromCaseP p e = Expr <$> caseP (erase e) [fmap erase . p . construct Expr c | c <- cs]
+  where Tags cs = tags :: Tags t
+
+switchOf :: Constructor t => (Expr t -> P (Expr a)) -> Expr t -> P (Expr a)
+switchOf f = fromCaseP (f . fromConcrete)
+
 
 ------------------------------------------------------------------------------
 -- PRIMITIVE DISTRIBUTIONS                                                  --
@@ -492,10 +499,16 @@ pdf prog vals = pdfPBlock False env pb
   where (rets, pb@(PBlock block _ _)) = runProgExprs prog
         env = solveTuple block rets vals emptyEEnv
 
+pdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
+pdfC = caseOf . pdf
+
 lpdf :: (ExprTuple t) => Prog t -> t -> R
 lpdf prog vals = pdfPBlock True env pb
   where (rets, pb@(PBlock block _ _)) = runProgExprs prog
         env = solveTuple block rets vals emptyEEnv
+
+lpdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
+lpdfC = caseOf . lpdf
 
 pdfPBlock :: Bool -> EEnv -> PBlock -> R
 pdfPBlock lg env (PBlock block refs _) = (if lg then sum else product) $ do
@@ -792,6 +805,9 @@ rjmc target proposal x = do
       a = exp $ f y - f x + rjmcTransRatio proposal x y
   accept <- bernoulli $ ifB (a >* 1) 1 a
   return $ ifB accept y x
+
+rjmcC :: Constructor t => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)
+rjmcC p = switchOf . rjmc p . fromCaseP
 
 rjmcTransRatio :: (ScalarType e) => (Expr e -> P (Expr e)) -> Expr e -> Expr e -> R
 rjmcTransRatio q x y = lu' - lu + logDet jacobian

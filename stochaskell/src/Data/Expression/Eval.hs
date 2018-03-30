@@ -44,6 +44,9 @@ eval env e = evalNodeRef env block ret
 eval_ :: Expr t -> Maybe ConstVal
 eval_ = eval emptyEnv
 
+eval' :: (ScalarType t) => Expr t -> Maybe t
+eval' = fmap toConcrete . eval_
+
 evalD :: Env -> DExpr -> Maybe ConstVal
 evalD env e = evalNodeRef env block ret
   where (ret, block) = runDExpr e

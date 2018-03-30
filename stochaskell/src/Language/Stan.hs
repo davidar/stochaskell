@@ -20,7 +20,9 @@ import qualified Data.Set as Set
 import Debug.Trace
 import qualified Crypto.Hash.SHA1 as SHA1
 import System.Directory
+import System.IO
 import System.IO.Temp
+import System.Process
 import Util
 
 -- TODO: better handling for exceptions to 1-based indexing
@@ -127,7 +129,9 @@ stanBuiltinDistributions =
   ,("inv_gamma",       "inv_gamma")
   ,("inv_wishart",     "inv_wishart")
   ,("lkj_corr",        "lkj_corr")
+  ,("neg_binomial",    "neg_binomial")
   ,("normal",          "normal")
+  ,("poisson",         "poisson")
   ,("uniform",         "uniform")
   ,("wishart",         "wishart")
   ] ++ stanVectorisedDistributions
@@ -372,8 +376,8 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
     exeExists <- doesFileExist exename
 
     unless exeExists $ do
-      putStrLn "--- Generating Stan code ---"
-      putStrLn $ stanProgram p
+      putStrLn' "--- Generating Stan code ---"
+      putStrLn' $ stanProgram p
       writeFile (exename ++".stan") $ stanProgram p
       system_ $ "make -C "++ pwd ++"/cmdstan "++ exename
 
@@ -381,22 +385,24 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
       LC.writeFile (basename ++".init") $
         stanDump $ unifyTuple block rets (fromJust init) given
 
-    putStrLn "--- Sampling Stan model ---"
+    putStrLn' "--- Sampling Stan model ---"
     LC.writeFile (basename ++".data") $ stanDump given
-    -- TODO: avoid shell injection
-    system_ $ unwords
-      [exename
-      ,show method
-      ,"data file="++ basename ++".data"
-      ,"init="++ if isJust init then basename ++".init" else "0"
-      ,"output file="++ basename ++".csv"
-      ]
+    let args = words (show method) ++
+               ["data"
+               ,"file="++ basename ++".data"
+               ,"init="++ if isJust init then basename ++".init" else "0"
+               ,"output"
+               ,"file="++ basename ++".csv"
+               ]
+    putStrLn' $ unwords (exename:args)
+    (_,_,_,pid) <- createProcess_ "stan" (proc exename args){std_out = UseHandle stderr}
+    _ <- waitForProcess pid
     content <- lines <$> readFile (basename ++".csv")
-    putStrLn . unlines $ filter (('#'==) . head) content
+    putStrLn' . unlines $ filter (('#'==) . head) content
     let table = map (splitOn ",") $ filter noComment content
-    putStrLn $ "Extracting: "++ stanNodeRef `commas` rets
+    putStrLn' $ "Extracting: "++ stanNodeRef `commas` rets
 
-    putStrLn "--- Removing temporary files ---"
+    putStrLn' "--- Removing temporary files ---"
     return [fromJust $ evalProg env prog | env <- stanRead table]
   where (rets,p@(PBlock block _ given)) = runProgExprs prog
         noComment row = row /= "" && head row /= '#'
