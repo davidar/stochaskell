@@ -4,3 +4,6 @@
 [submodule "stochaskell/webchurch"]
 	path = stochaskell/webchurch
 	url = https://github.com/probmods/webchurch.git
+[submodule "stochaskell/variant"]
+	path = stochaskell/variant
+	url = https://github.com/mpark/variant.git

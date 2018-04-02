@@ -23,6 +23,7 @@ library
                      , Data.Expression.Eval
                      , Data.Program
                      , Data.Random.Distribution.Abstract
+                     , Language.CC
                      , Language.Church
                      , Language.Edward
                      , Language.PyMC3

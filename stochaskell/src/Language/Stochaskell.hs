@@ -11,6 +11,7 @@ module Language.Stochaskell
   , module Data.Program
   , module Data.Random.Distribution.Abstract
   , module GHC.Exts
+  , module Language.CC
   , module Language.Church
   , module Language.Edward
   , module Language.PyMC3
@@ -32,6 +33,7 @@ import Data.Number.Transfinite hiding (log,isNaN,isInfinite)
 import Data.Program
 import Data.Random.Distribution.Abstract
 import GHC.Exts (IsList(..))
+import Language.CC
 import Language.Church
 import Language.Edward
 import Language.PyMC3
