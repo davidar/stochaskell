@@ -93,6 +93,10 @@ ccNode _ name (Apply "negate" [i] _) =
 ccNode _ name (Apply op [i,j] _) | isJust s =
   name ++" = "++ ccNodeRef i ++" "++ fromJust s ++" "++ ccNodeRef j ++";"
   where s = lookup op ccOperators
+ccNode _ name (Apply "gamma_lpdf" [i,a,b] _) =
+  name ++" = log(boost::math::pdf(boost::math::gamma_distribution<>("++
+    ccNodeRef a ++", "++ q ++"), "++ ccNodeRef i ++"));"
+  where q = "1./"++ ccNodeRef b
 ccNode _ name (Apply "neg_binomial_lpdf" [i,a,b] _) =
   name ++" = log(boost::math::pdf(boost::math::negative_binomial_distribution<>("++
     ccNodeRef a ++", "++ p ++"), "++ ccNodeRef i ++"));"
@@ -135,8 +139,11 @@ ccNode _ name (FoldScan fs lr (Lambda dag ret) seed
 ccNode _ _ node = error $ "unable to codegen node "++ show node
 
 ccPNode :: Label -> PNode -> String
-ccPNode name (Dist "bernoulli" args _) =
-  name ++" = std::bernoulli_distribution("++ ccNodeRef `commas` args ++")(gen);"
+ccPNode name (Dist "bernoulli" [p] _) =
+  name ++" = std::bernoulli_distribution("++ ccNodeRef p ++")(gen);"
+ccPNode name (Dist "gamma" [a,b] _) =
+  name ++" = std::gamma_distribution<>("++ ccNodeRef a ++", "++ q ++")(gen);"
+  where q = "1./"++ ccNodeRef b
 ccPNode name (Dist f args _) =
   name ++" = std::"++ f ++"_distribution<>("++ ccNodeRef `commas` args ++")(gen);"
 ccPNode name (Loop sh (Lambda ldag body) _) =
