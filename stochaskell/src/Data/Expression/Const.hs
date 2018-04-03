@@ -7,6 +7,7 @@ import Prelude hiding ((<*),(*>),isInfinite)
 import Data.Array.Abstract hiding (elems)
 import Data.Array.Unboxed hiding ((!),bounds)
 import Data.Boolean
+import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.Char
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
@@ -240,8 +241,8 @@ listArray' sh xs = if any isApprox xs
   else Exact  $ listArray (unzip sh) (integer <$> xs)
 
 -- TODO: Exact when possible
-arrayStrings :: [([Integer], String)] -> ConstVal
-arrayStrings l = Approx $ array (minimum ks, maximum ks) [(k, read v) | (k,v) <- l]
+arrayStrings :: [([Integer], LC.ByteString)] -> ConstVal
+arrayStrings l = Approx $ array (minimum ks, maximum ks) [(k, read $ LC.unpack v) | (k,v) <- l]
   where ks = map fst l
 
 elems' :: ConstVal -> [ConstVal]

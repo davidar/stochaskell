@@ -292,11 +292,11 @@ stanDump :: Env -> LC.ByteString
 stanDump = LC.unlines . map f . Map.toList
   where f (n,x) = LC.pack (stanId n) <> " <- " <> stanConstVal x
 
-stanRead :: [[String]] -> [Env]
+stanRead :: [[LC.ByteString]] -> [Env]
 stanRead (header:rs) =
   [Map.fromList [(k, arrayStrings v) | (Right k, v) <- parseRow r] | r <- rs]
-  where header' = [(stanId' x, map read xs :: [Integer])
-                  | (x:xs) <- splitOn "." <$> header]
+  where header' = [(stanId' (LC.unpack x), map (fst . fromJust . LC.readInteger) xs)
+                  | (x:xs) <- LC.split '.' <$> header]
         parseRow = groupSort . zipWith (\(a,b) c -> (a,(b,c))) header'
 stanRead _ = error "CSV file contains no data"
 
@@ -397,15 +397,14 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
     putStrLn' $ unwords (exename:args)
     (_,_,_,pid) <- createProcess_ "stan" (proc exename args){std_out = UseHandle stderr}
     _ <- waitForProcess pid
-    content <- lines <$> readFile (basename ++".csv")
-    putStrLn' . unlines $ filter (('#'==) . head) content
-    let table = map (splitOn ",") $ filter noComment content
+    content <- LC.lines <$> LC.readFile (basename ++".csv")
+    let table = map (LC.split ',') $ filter noComment content
     putStrLn' $ "Extracting: "++ stanNodeRef `commas` rets
 
     putStrLn' "--- Removing temporary files ---"
     return [fromJust $ evalProg env prog | env <- stanRead table]
   where (rets,p@(PBlock block _ given)) = runProgExprs prog
-        noComment row = row /= "" && head row /= '#'
+        noComment row = not (LC.null row) && LC.head row /= '#'
 
 -- TODO: deprecate these
 hmcStan :: (ExprTuple t) => Int -> Prog t -> IO [t]
