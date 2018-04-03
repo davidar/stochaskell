@@ -92,6 +92,7 @@ data ConstVal = Exact  (UArray [Integer] Int)
               | Tagged Tag [ConstVal]
 
 instance Show ConstVal where
+    show (Tagged c cs) = "C"++ show c ++ show cs
     show c | dimension c >= 1 = show (toList c)
     show (Exact  a) | isScalar a = show (toScalar a)
     show (Approx a) | isScalar a = show (toScalar a)

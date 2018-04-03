@@ -1,12 +1,21 @@
+{-# LANGUAGE TupleSections #-}
 module Language.CC where
 
+import Control.Monad
 import Data.Array.Abstract
+import qualified Data.ByteString.Char8 as C
 import Data.Expression hiding (const)
 import Data.Expression.Const hiding (isScalar)
+import qualified Data.Expression.Const as Const
+import Data.Expression.Eval
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
 import Data.Program
+import GHC.Exts
+import qualified Crypto.Hash.SHA1 as SHA1
+import System.Directory
+import System.Process
 import Util
 
 ------------------------------------------------------------------------------
@@ -194,8 +203,8 @@ ccPrint l e | UnionT tss <- typeRef e =
      "  break;",
      "}"]) ++"\n}"
 
-ccProgram :: (ExprTuple t) => Type -> (Expr a -> Prog t) -> String
-ccProgram t prog = unlines
+ccProgram :: (ExprTuple t) => Type -> (Expr a -> Prog t) -> (String, [NodeRef])
+ccProgram t prog = (,rets) $ unlines
   ["#include <cmath>"
   ,"#include <iostream>"
   ,"#include <random>"
@@ -210,9 +219,52 @@ ccProgram t prog = unlines
   ,"  mt19937 gen(rd());"
   ,   indent (ccRead 1 $ Var (Dummy 0 0) t)
   ,   ccDAG (pnodes pb) (topDAG block)
-  ,   indent (ccPrint 1 ret)
-  ,"  cout << endl;"
+  ,   indent $ unlines [ccPrint 1 ret ++" cout << endl;" | ret <- rets]
   ,"}"
   ]
-  where ([ret], pb@(PBlock block _ _)) =
+  where (rets, pb@(PBlock block _ _)) =
           runProgExprs . prog . expr . return $ Var (Dummy 0 0) t
+
+printCC :: ConstVal -> String
+printCC (Tagged c ks) = unwords $ show c : map printCC ks
+printCC c | Const.isScalar c = show c
+          | otherwise = unwords . map printCC $ toList c
+
+readChain :: [s -> (c, s)] -> s -> ([c], s)
+readChain [] s = ([],s)
+readChain (f:fs) s = (c:cs, s'')
+  where (c,s') = f s
+        (cs,s'') = readChain fs s'
+
+readCC :: Type -> [String] -> (ConstVal, [String])
+readCC IntT (x:s) = (fromInteger $ read x, s)
+readCC RealT (x:s) = (fromDouble $ read x, s)
+readCC (SubrangeT t _ _) s = readCC t s
+readCC (ArrayT _ [(Const 1 _,Const hi _)] t) s = (fromList cs, s')
+  where n = integer hi
+        (cs,s') = readChain (replicate n $ readCC t) s
+readCC (UnionT tss) (x:s) = (Tagged c cs, s')
+  where c = read x
+        ts = tss !! c
+        (cs,s') = readChain (map readCC ts) s
+
+runCC :: (ExprTuple t) => (Expr a -> Prog t) -> Expr a -> IO t
+runCC prog x = do
+  pwd <- getCurrentDirectory
+  let hash = toHex . SHA1.hash $ C.pack code
+      exename = pwd ++"/cache/cc/sampler_"++ hash
+      srcname = exename ++".cc"
+  exeExists <- doesFileExist exename
+
+  unless exeExists $ do
+    putStrLn' code
+    writeFile srcname code
+    let cxx = "g++"
+        args = ["-std=c++11", "-Ivariant/include", "-o", exename, srcname]
+    putStrLn' $ unwords (cxx:args)
+    callProcess cxx args
+
+  output <- readProcess exename [] $ printCC (fromJust $ eval_ x)
+  let (cs,[]) = readChain (readCC . typeRef <$> rets) $ words output
+  return $ fromConstVals cs
+  where (code,rets) = ccProgram (typeExpr x) prog

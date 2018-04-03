@@ -287,6 +287,8 @@ instance ScalarType Double where
 instance forall t. (ScalarType t) => ScalarType [t] where
     typeOf       = TypeIs t where TypeIs t = typeOf :: TypeOf t
     toConcrete   = map toConcrete . toList
+    fromConcrete = constExpr . constVal
+    constVal     = fromList . map constVal
     constExpr c  = expr . return . Const c $ ArrayT Nothing sh t
       where (lo,hi) = AA.bounds c
             f = flip Const IntT . fromInteger
