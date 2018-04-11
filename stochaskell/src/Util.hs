@@ -6,6 +6,7 @@ import Data.Boolean
 import qualified Data.ByteString as B
 import Data.List
 import qualified Data.Number.LogFloat as LF
+import Debug.Trace
 import GHC.Exts
 import Numeric.SpecFunctions
 import System.IO
@@ -21,6 +22,7 @@ fixpt f x | f x == x  = x
 indent :: String -> String
 indent = indent' 2 2
 indent' :: Int -> Int -> String -> String
+indent' _ _ "" = ""
 indent' a b s = replicate a ' ' ++ intercalate "\n" (hd : [replicate b ' ' ++ l | l <- tl])
   where (hd:tl) = lines s
 
@@ -81,7 +83,10 @@ pairWith _ _ = []
 
 unreplicate :: (Eq a, Show a) => [a] -> a
 unreplicate (x:xs) | (x ==) `all` xs = x
-                   | otherwise = error $ show (x:xs) ++" is not replicated"
+unreplicate xs = error $ show xs ++" is not replicated"
+
+traceShow' :: (Show a) => a -> a
+traceShow' x = traceShow x x
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)

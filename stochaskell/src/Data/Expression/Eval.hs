@@ -4,13 +4,13 @@ module Data.Expression.Eval where
 
 import Prelude hiding ((<*),(*>),isInfinite)
 
-import Control.Monad.State
 import Data.Array.IArray (listArray)
 import Data.Array.Abstract
 import Data.Boolean
 import Data.Expression hiding (const)
 import Data.Expression.Const hiding (isScalar)
 import Data.Ix
+import Data.List
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
@@ -20,7 +20,7 @@ import Debug.Trace
 import GHC.Exts
 import Util
 
-type Env = Map Id ConstVal
+type Env = Map LVal ConstVal
 emptyEnv :: Env
 emptyEnv = Map.empty
 
@@ -34,7 +34,7 @@ numelType env block (ArrayT _ sh _) = product $ map f sh'
         f (lo,hi) = hi - lo + 1
 
 evaluable :: EEnv -> Block -> NodeRef -> Bool
-evaluable env block ref = deps `Set.isSubsetOf` Map.keysSet env
+evaluable env block ref = Set.map LVar deps `Set.isSubsetOf` Map.keysSet env
   where deps = Set.filter (not . isInternal) $ dependsNodeRef block ref
 
 eval :: Env -> Expr t -> Maybe ConstVal
@@ -57,9 +57,12 @@ evalD_ = evalD emptyEnv
 evalTuple :: (ExprTuple t) => Env -> t -> Maybe [ConstVal]
 evalTuple env = sequence . map (evalD env) . fromExprTuple
 
+evalEEnv_ :: EEnv -> Env
+evalEEnv_ = Map.mapMaybe evalD_
+
 evalNodeRef :: Env -> Block -> NodeRef -> Maybe ConstVal
 evalNodeRef env _ (Var ident _) | isJust val = val
-  where val = Map.lookup ident env
+  where val = Map.lookup (LVar ident) env
 evalNodeRef env block (Var i@Internal{} _) =
   evalNode env block $ lookupBlock i block
 evalNodeRef _ _ (Var _ _) = Nothing
@@ -112,7 +115,7 @@ evalNode env block (FoldScan fs lr lam seed ls _) = do
 evalFn :: Env -> Block -> Lambda NodeRef -> [ConstVal] -> Maybe ConstVal
 evalFn env block (Lambda body hd) args = evalNodeRef env'' block' hd
   where block' = deriveBlock body block
-        env' = Map.fromList (inputs body `zip` args) `Map.union` env
+        env' = Map.fromList (map LVar (inputs body) `zip` args) `Map.union` env
         env'' = evalDAG block' body env' -- optional caching
 
 evalFn2 :: Env -> Block -> Lambda NodeRef -> ConstVal -> ConstVal -> Maybe ConstVal
@@ -125,7 +128,7 @@ evalBlock block@(Block dags) = compose (evalDAG block <$> reverse dags)
 evalDAG :: Block -> DAG -> Env -> Env
 evalDAG block dag = compose
   [ \env -> case evalNode env block node of
-              Just val -> Map.insert (Internal level ptr) val env
+              Just val -> Map.insert (LVar $ Internal level ptr) val env
               Nothing -> env
   | (ptr,node) <- nodes dag ]
   where level = dagLevel dag
@@ -146,14 +149,14 @@ unifyTuple block rets vals = compose
 unifyNodeRef :: Env -> Block -> NodeRef -> ConstVal -> Env
 unifyNodeRef env block (Var i@Internal{} _) val =
     unifyNode env block (lookupBlock i block) val
-unifyNodeRef _ _ (Var ref _) val = Map.singleton ref val
+unifyNodeRef _ _ (Var ref _) val = Map.singleton (LVar ref) val
 unifyNodeRef _ _ (Const c _) val = if c == val then emptyEnv else error $ show c ++" /= "++ show val
 unifyNodeRef _ _ Index{} _ = trace "WARN not unifying Index" emptyEnv
 
 unifyNode :: Env -> Block -> Node -> ConstVal -> Env
 unifyNode env block (Array sh (Lambda body hd) _) val = Map.unions $ do -- TODO unify sh
     idx <- range (bounds val)
-    let env' = Map.fromList (inputs body `zip` map fromInteger idx) `Map.union` env
+    let env' = Map.fromList (map LVar (inputs body) `zip` map fromInteger idx) `Map.union` env
     return $ unifyNodeRef env' (deriveBlock body block) hd (val ! idx)
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isJust c' =
     unifyNodeRef env block (if toBool (fromJust c') then a else b) val
@@ -210,8 +213,8 @@ unifyNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
         ls' = fromList $ pairWith f' (elems' val)
         block' = deriveBlock dag block
         [i,j] = inputs dag
-        f' x y = let env' = Map.insert j x env
-                 in fromJust . Map.lookup i $ unifyNodeRef env' block' ret y
+        f' x y = let env' = Map.insert (LVar j) x env
+                 in fromJust . Map.lookup (LVar i) $ unifyNodeRef env' block' ret y
 unifyNode _ _ FoldScan{} _ = trace "WARN not unifying fold/scan" emptyEnv
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
@@ -231,22 +234,27 @@ solveTuple block rets = solveTupleD block rets . fromExprTuple
 solveNodeRef :: EEnv -> Block -> NodeRef -> DExpr -> EEnv
 solveNodeRef env block (Var i@Internal{} _) val =
   solveNode env block (lookupBlock i block) val
-solveNodeRef _ _ (Var ref _) val = Map.singleton ref val
+solveNodeRef _ _ (Var ref _) val = Map.singleton (LVar ref) val
 solveNodeRef env block (Data c rs _) val = Map.unions
   [solveNodeRef env block r $ extractD val c j | (r,j) <- zip rs [0..]]
+solveNodeRef env block (Index (Var i@Volatile{} _) js) val =
+  Map.singleton (LSub i $ reDExpr env block <$> js) val
 solveNodeRef _ _ ref val =
   trace ("WARN assuming "++ show ref ++" unifies with "++ show val) emptyEEnv
 
 solveNode :: EEnv -> Block -> Node -> DExpr -> EEnv
-solveNode env block (Array sh (Lambda body hd) _) val
-  | evaluable emptyEEnv block `all` lo, evaluable emptyEEnv block `all` hi =
-  Map.unions $ do
-    idx <- range (fromJust . evalNodeRef emptyEnv block <$> lo
-                 ,fromJust . evalNodeRef emptyEnv block <$> hi) :: [[ConstVal]]
-    let env' = Map.fromList (inputs body `zip` map integer idx) `Map.union` env
-    return $ solveNodeRef env' (deriveBlock body block) hd $
-      Prelude.foldl (!) val (flip constDExpr IntT <$> idx)
+solveNode env block (Array sh (Lambda body hd) t) val = Map.fromList $ do
+  kvs <- groupBy f $ Map.toAscList subs
+  let i = unreplicate $ getId' . fst <$> kvs
+      e = DExpr . return $ PartiallyConstrained (zip lo' hi') (inputs body)
+            [(k,v) | (LSub _ k,v) <- kvs] t
+  return (LVar i, e)
   where (lo,hi) = unzip sh
+        lo' = reDExpr env block <$> lo
+        hi' = reDExpr env block <$> hi
+        elt = Prelude.foldl (!) val $ DExpr . return . flip Var IntT <$> inputs body
+        subs = solveNodeRef env (deriveBlock body block) hd elt
+        f (LSub i _,_) (LSub j _,_) = i == j
 solveNode env block (Apply "exp" [a] _) val =
   solveNodeRef env block a (log val)
 solveNode env block (Apply "+" [a,b] _) val | evaluable env block a =
@@ -271,8 +279,8 @@ solveNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
         ls' = vector [ f' (val!k) (val!(k+1)) | k <- lo'...hi' ]
         block' = deriveBlock dag block
         [i,j] = inputs dag
-        f' x y = let env' = Map.insert j x env
-                 in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
+        f' x y = let env' = Map.insert (LVar j) x env
+                 in fromJust . Map.lookup (LVar i) $ solveNodeRef env' block' ret y
 solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
   | evaluable env block seed = solveNodeRef env block ls ls'
   where (ArrayT _ [(lo,hi)] _) = typeRef ls
@@ -282,9 +290,9 @@ solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
         ls' = vector [ f' (ifB (k ==* lo') seed' (val!(k-1))) (val!k) | k <- lo'...hi' ]
         block' = deriveBlock dag block
         [i,j] = inputs dag
-        f' x y = let env' = Map.insert j x env
-                 in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
-solveNode _ _ n v = error $ "solveNode "++ show n ++" "++ show v
+        f' x y = let env' = Map.insert (LVar j) x env
+                 in fromJust . Map.lookup (LVar i) $ solveNodeRef env' block' ret y
+solveNode env _ n v = error $ "solveNode "++ show env ++" "++ show n ++" "++ show v
 
 diff :: Env -> Expr t -> Id -> Type -> ConstVal
 diff env = diffD env . erase
@@ -309,10 +317,10 @@ diffNodeRef env block (Var i s) var t
 diffNode :: Env -> Block -> Node -> Id -> Type -> ConstVal
 diffNode env block (Apply "+" [a,b] _) var t | isJust a' =
     diffNodeRef env block b var t
-  where a' = evalNodeRef (Map.delete var env) block a
+  where a' = evalNodeRef (Map.delete (LVar var) env) block a
 diffNode env block (Apply "#>" [a,b] _) var t | isJust a' =
     fromJust a' <> diffNodeRef env block b var t
-  where a' = evalNodeRef (Map.delete var env) block a
+  where a' = evalNodeRef (Map.delete (LVar var) env) block a
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
 
@@ -358,7 +366,7 @@ derivNodeRef _ _ ref var = error $ "d "++ show ref ++" / d "++ show var
 
 derivNode :: EEnv -> Block -> Node -> NodeRef -> DExpr
 derivNode env block (Array sh (Lambda body hd) _) var = array' Nothing (length sh)
-  [ let env' = Map.fromList (inputs body `zip` i) `Map.union` env
+  [ let env' = Map.fromList (map LVar (inputs body) `zip` i) `Map.union` env
     in derivNodeRef env' block' hd var | i <- fromShape sh' ]
   where sh' = [(reDExpr env block lo, reDExpr env block hi) | (lo,hi) <- sh]
         block' = deriveBlock body block

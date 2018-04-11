@@ -55,6 +55,7 @@ data NodeRef = Var Id Type
              | Index NodeRef [NodeRef]
              | Extract NodeRef Tag Int
              | Unconstrained Type
+             | PartiallyConstrained [AA.Interval DExpr] [Id] [([DExpr],DExpr)] Type
              deriving (Eq, Ord)
 
 getId :: NodeRef -> Maybe Id
@@ -83,8 +84,10 @@ instance Show NodeRef where
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
   show (Extract v i j) = show v ++"."++ show i ++"_"++ show j
   show (Unconstrained _) = "???"
+  show (PartiallyConstrained sh ids kvs _) =
+    "partially constrained with "++ show kvs ++" for "++ show ids ++" in "++ show sh
 
-data Lambda h = Lambda { fDefs :: DAG, fHead :: h } deriving (Eq, Ord)
+data Lambda h = Lambda { fDefs :: DAG, fHead :: h } deriving (Eq, Ord, Show)
 
 data FoldOrScan = Fold | Scan | ScanRest deriving (Eq, Ord, Show)
 data LeftRight = Left_ | Right_ deriving (Eq, Ord, Show)
@@ -194,7 +197,15 @@ instance Show DExpr where
   show e = showBlock block $ show ret
     where (ret, Block block) = runDExpr e
 
-type EEnv = Map Id DExpr
+data LVal = LVar Id
+          | LSub Id [DExpr]
+          deriving (Eq, Ord, Show)
+
+getId' :: LVal -> Id
+getId' (LVar i) = i
+getId' (LSub i _) = i
+
+type EEnv = Map LVal DExpr
 emptyEEnv :: EEnv
 emptyEEnv = Map.empty
 
@@ -237,6 +248,10 @@ data Type
     deriving (Eq, Ord)
 boolT :: Type
 boolT = SubrangeT IntT (Just $ Const 0 IntT) (Just $ Const 1 IntT)
+
+tupleT :: [Type] -> Type
+tupleT [t] = t
+tupleT ts = TupleT ts
 
 instance Show Type where
   show IntT = "Z"
@@ -372,6 +387,8 @@ coerce a b | a == b = a
 coerce a b | (a == boolT && b == IntT) || (a == IntT && b == boolT) = IntT
 coerce IntT RealT = RealT
 coerce RealT IntT = RealT
+coerce (SubrangeT s _ _) t = coerce s t
+coerce t (SubrangeT s _ _) = coerce s t
 coerce a@(ArrayT _ _ t) t' | t == t' = a
 coerce t a@(ArrayT _ _ t') | t == t' = a
 coerce (ArrayT Nothing sh t) (ArrayT n sh' t') | t == t' =
@@ -382,8 +399,12 @@ coerce (ArrayT n sh t) (ArrayT n' sh' t') | n == n' && t == t' =
   ArrayT n (AA.coerceShape sh sh') t
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
-cast :: Expr a -> Expr b
-cast = expr . fromExpr
+class    Cast a b                          where cast :: a -> b
+instance Cast Z R                          where cast = expr . fromExpr
+instance Cast Int R                        where cast = fromIntegral
+instance Cast (Expr t) (Expr [t])          where cast = expr . fromExpr
+instance Cast (Expr t) (Expr [[t]])        where cast = expr . fromExpr
+instance (ScalarType t) => Cast t (Expr t) where cast = fromConcrete
 
 
 ------------------------------------------------------------------------------
@@ -468,6 +489,8 @@ substD :: EEnv -> DExpr -> DExpr
 substD env e = DExpr $ extractNodeRef env block ret
   where (ret, block) = runDExpr e
 
+reExpr :: EEnv -> Block -> NodeRef -> Expr t
+reExpr env block = Expr . reDExpr env block
 reDExpr :: EEnv -> Block -> NodeRef -> DExpr
 reDExpr env block = DExpr . extractNodeRef env block
 
@@ -489,7 +512,7 @@ extractNodeRef env block (Var i t)
   | otherwise = do
     t' <- extractType env block t
     return $ Var i t'
-  where val = Map.lookup i env
+  where val = Map.lookup (LVar i) env
 extractNodeRef env block (Const c t) = do
   t' <- extractType env block t
   return $ Const c t'
@@ -519,7 +542,7 @@ extractNode env block (Array sh (Lambda body hd) t) = do
   d <- getNextLevel
   let ids = [ Dummy d i | i <- [1..length sh] ]
       ids' = DExpr . return . flip Var IntT <$> ids
-      env' = Map.fromList (inputs body `zip` ids') `Map.union` env
+      env' = Map.fromList (map LVar (inputs body) `zip` ids') `Map.union` env
   lam <- runLambda ids (extractNodeRef env' block' hd)
   return $ Array (zip lo' hi') lam t'
   where block' = deriveBlock body block
@@ -554,7 +577,7 @@ extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block
 extractIndexNode :: EEnv -> Block -> Node -> [DExpr] -> State Block NodeRef
 extractIndexNode env block (Array _ (Lambda body hd) _) idx =
   extractNodeRef env' block' hd
-  where env' = Map.fromList (inputs body `zip` idx) `Map.union` env
+  where env' = Map.fromList (map LVar (inputs body) `zip` idx) `Map.union` env
         block' = deriveBlock body block
 extractIndexNode env block (Apply op [a,b] t) idx
   | op `elem` ["+","-","*","/"] = do
@@ -586,8 +609,8 @@ collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret =
   let sh = zip los his
       v = (e `extractIndex` [DExpr . return $ Var (Dummy (-1) 1) IntT])
              `extractIndex` [DExpr . return $ Var (Dummy (-1) 2) IntT]
-      env' = Map.fromList [(Dummy (-1) 1, DExpr . return $ Var (Dummy d 1) IntT)
-                          ,(Dummy (-1) 2, DExpr . return $ Var (Dummy d 2) IntT)]
+      env' = Map.fromList [(LVar $ Dummy (-1) 1, DExpr . return $ Var (Dummy d 1) IntT)
+                          ,(LVar $ Dummy (-1) 2, DExpr . return $ Var (Dummy d 2) IntT)]
   lam <- runLambda [Dummy d 1,Dummy d 2] (fromDExpr $ substD env' v)
   hashcons $ Array sh lam (ArrayT Nothing sh t')
   where (ret, block) = runDExpr e
@@ -709,9 +732,6 @@ apply' :: String -> Type -> [DExpr] -> DExpr
 apply' f t xs = DExpr $ do
     js <- mapM fromDExpr xs
     simplify $ Apply f js t
-
-apply1 :: String -> Type -> Expr a -> Expr r
-apply1 f t x = apply f t [x]
 
 apply2 :: String -> Type -> Expr a -> Expr b -> Expr r
 apply2 f t x y = Expr $ apply2' f t (erase x) (erase y)
@@ -889,6 +909,11 @@ instance Floating DExpr where
     acosh = applyClosed1' "acosh"
     atanh = applyClosed1' "atanh"
 
+factorial' :: Z -> Z
+factorial' n = apply "factorial" IntT [n]
+logFactorial' :: Z -> R
+logFactorial' n = apply "logFactorial" RealT [n]
+
 instance (ScalarType t, Num t) => Num (Expr t) where
     (+) = applyClosed2 "+"
     (-) = applyClosed2 "-"
@@ -926,14 +951,9 @@ instance (ScalarType t, Floating t) => Floating (Expr t) where
     acosh = applyClosed1 "acosh"
     atanh = applyClosed1 "atanh"
 
-instance AA.Indexable DExpr DExpr DExpr where
-    a ! e = DExpr $ do
-        f <- fromDExpr a
-        j <- fromDExpr e
-        return $ case f of
-            (Index g js) -> Index g (j:js)
-            _            -> Index f [j]
-
+instance (ScalarType e) => AA.Vector (Expr [e]) Z (Expr e) where
+    vector = array (Just "vector") 1
+    blockVector = Expr . AA.blockVector . map erase
 instance AA.Vector DExpr DExpr DExpr where
     vector = array' (Just "vector") 1
     blockVector v = DExpr $ do
@@ -949,7 +969,7 @@ instance AA.Vector DExpr DExpr DExpr where
                    [] -> Nothing
                    xs -> Just $ unreplicate xs
           t = ArrayT kind [(Const 1 IntT,n)] $
-            unreplicate [t' | ArrayT _ _ t' <- typeRef <$> k]
+            unreplicate $ [t' | ArrayT _ _ t' <- typeRef <$> k] ++ filter isScalar (typeRef <$> k)
       return $ if isZero `all` k then Const 0 t else
         BlockArray (A.array bnd [([i], k !! (i-1)) | [i] <- A.range bnd]) t
       where isZero (Const c _) | c == 0 = True
@@ -980,6 +1000,8 @@ blockMatrix' k' = do
             _ | isScalar t -> Const 1 IntT
             ArrayT _ [_,(Const 1 IntT,hi)] _ -> hi
 
+instance (ScalarType e) => AA.Matrix (Expr [[e]]) Z (Expr e) where
+    matrix = array (Just "matrix") 2
 instance AA.Matrix DExpr DExpr DExpr where
     matrix = array' (Just "matrix") 2
     blockMatrix m = DExpr $ do
@@ -994,6 +1016,9 @@ instance AA.Matrix DExpr DExpr DExpr where
       lo' <- fromDExpr lo
       hi' <- fromDExpr hi
       simplify $ Apply "eye" [lo',hi'] (ArrayT (Just "matrix") [(lo',hi'),(lo',hi')] RealT)
+
+instance (ScalarType e) => Monoid (Expr [[e]]) where
+    mappend a b = Expr $ erase a `mappend` erase b
 instance Monoid DExpr where
     mappend a b = DExpr $ do
         i <- fromDExpr a
@@ -1004,27 +1029,31 @@ instance Monoid DExpr where
 
 instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = Expr $ erase a ! erase e
-    deleteIndex a e = expr $ do
-      f <- fromExpr a
-      j <- fromExpr e
+    deleteIndex a e   = Expr $ AA.deleteIndex (erase a) (erase e)
+    insertIndex a e d = Expr $ AA.insertIndex (erase a) (erase e) (erase d)
+instance AA.Indexable DExpr DExpr DExpr where
+    a ! e = DExpr $ do
+        f <- fromDExpr a
+        j <- fromDExpr e
+        return $ case f of
+            (Const v (ArrayT _ [_] t)) | (Const i _) <- j -> Const (v![integer i]) t
+            (Index g js) -> Index g (j:js)
+            _            -> Index f [j]
+    deleteIndex a e = DExpr $ do
+      f <- fromDExpr a
+      j <- fromDExpr e
       let (ArrayT _ [(lo,hi)] t) = typeRef f
       hi' <- simplify $ Apply "-" [hi, Const 1 IntT] (typeRef hi)
       let t' = ArrayT Nothing [(lo,hi')] t
       simplify $ Apply "deleteIndex" [f,j] t'
-    insertIndex a e d = expr $ do
-      f <- fromExpr a
-      i <- fromExpr e
-      j <- fromExpr d
+    insertIndex a e d = DExpr $ do
+      f <- fromDExpr a
+      i <- fromDExpr e
+      j <- fromDExpr d
       let (ArrayT _ [(lo,hi)] t) = typeRef f
       hi' <- simplify $ Apply "+" [hi, Const 1 IntT] (typeRef hi)
       let t' = ArrayT Nothing [(lo,hi')] t
       simplify $ Apply "insertIndex" [f,i,j] t'
-instance (ScalarType e) => AA.Vector (Expr [e]) (Expr Integer) (Expr e) where
-    vector = array (Just "vector") 1
-instance (ScalarType e) => AA.Matrix (Expr [[e]]) (Expr Integer) (Expr e) where
-    matrix = array (Just "matrix") 2
-instance (ScalarType e) => Monoid (Expr [[e]]) where
-    mappend a b = Expr $ erase a `mappend` erase b
 
 instance AA.Scalable R RVec where
     a *> v = expr $ do
@@ -1133,17 +1162,6 @@ qfDiag m v = expr $ do
   let (ArrayT _ sh t) = typeRef i
   simplify $ Apply "quad_form_diag" [i,j] (ArrayT Nothing sh t)
 
-instance AA.Broadcastable (Expr e) (Expr e) (Expr e) where
-    bsxfun op a b = op a b
-instance AA.Broadcastable (Expr e) (Expr [e]) (Expr [e]) where
-    bsxfun op a b = op (cast a) (cast b)
-instance AA.Broadcastable (Expr [e]) (Expr e) (Expr [e]) where
-    bsxfun op a b = op (cast a) (cast b)
-instance AA.Broadcastable (Expr e) (Expr [[e]]) (Expr [[e]]) where
-    bsxfun op a b = op (cast a) (cast b)
-instance AA.Broadcastable (Expr [[e]]) (Expr e) (Expr [[e]]) where
-    bsxfun op a b = op (cast a) (cast b)
-
 instance Boolean DExpr where
     true  = apply' "true" boolT []
     false = apply' "false" boolT []
@@ -1187,7 +1205,9 @@ instance OrdB (Expr t) where
 instance (Ord t, ScalarType t) => Transfinite (Expr t) where
     infinity = constExpr infinity
 
+newtype TupleSize t = TupleSize Int
 class ExprTuple t where
+    tupleSize :: TupleSize t
     fromExprTuple :: t -> [DExpr]
     toExprTuple :: [DExpr] -> t
     fromConstVals :: [ConstVal] -> t
@@ -1202,27 +1222,32 @@ const :: (ScalarType t) => ConstVal -> Expr t
 const = constExpr
 
 instance (ScalarType a) => ExprTuple (Expr a) where
+    tupleSize = TupleSize 1
     fromExprTuple (a) = [erase a]
     toExprTuple [a] = (Expr a)
     fromConstVals [a] = (const a)
 instance (ScalarType a, ScalarType b) =>
          ExprTuple (Expr a, Expr b) where
+    tupleSize = TupleSize 2
     fromExprTuple (a,b) = [erase a, erase b]
     toExprTuple [a,b] = (Expr a, Expr b)
     fromConstVals [a,b] = (const a, const b)
 instance (ScalarType a, ScalarType b, ScalarType c) =>
          ExprTuple (Expr a, Expr b, Expr c) where
+    tupleSize = TupleSize 3
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
     toExprTuple [a,b,c] = (Expr a, Expr b, Expr c)
     fromConstVals [a,b,c] = (const a, const b, const c)
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d) where
+    tupleSize = TupleSize 4
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
     toExprTuple [a,b,c,d] = (Expr a, Expr b, Expr c, Expr d)
     fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
+    tupleSize = TupleSize 5
     fromExprTuple (a,b,c,d,e) =
       [erase a, erase b, erase c, erase d, erase e]
     toExprTuple [a,b,c,d,e] =
@@ -1232,6 +1257,7 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e, ScalarType f) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
+    tupleSize = TupleSize 6
     fromExprTuple (a,b,c,d,e,f) =
       [erase a, erase b, erase c, erase d, erase e, erase f]
     toExprTuple [a,b,c,d,e,f] =
@@ -1241,6 +1267,7 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e, ScalarType f, ScalarType g) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
+    tupleSize = TupleSize 7
     fromExprTuple (a,b,c,d,e,f,g) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g]
     toExprTuple [a,b,c,d,e,f,g] =
@@ -1250,6 +1277,7 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
 instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
           ScalarType e, ScalarType f, ScalarType g, ScalarType h) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
+    tupleSize = TupleSize 8
     fromExprTuple (a,b,c,d,e,f,g,h) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g, erase h]
     toExprTuple [a,b,c,d,e,f,g,h] =

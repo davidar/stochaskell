@@ -149,14 +149,14 @@ edProgram numSamples numSteps stepSize prog init =
   where (rets, pb@(PBlock block _ given)) = runProgExprs prog
         skel = modelSkeleton pb
         pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb
-        latent = "OrderedDict(["++ g `commas` (Map.keys pn \\ Map.keys given) ++"])"
+        latent = "OrderedDict(["++ g `commas` (Map.keys pn \\ [k | LVar k <- Map.keys given]) ++"])"
         g i | isJust init = pre ++"np.load('"++ edId i ++".npy')*tf.ones"++ post
             | otherwise = pre ++"tf.zeros"++ post
           where pre = "("++ edId i ++", ed.models.Empirical(params=tf.Variable("
                 post = "(["++ show numSamples ++"] + dim_"++ edId i ++"))))"
         printedConds = "{"++ intercalate ", "
           [edId k ++": np.load('"++ edId k ++".npy')"
-          | k <- Map.keys given, k `Set.member` skel] ++"}"
+          | LVar k <- Map.keys given, k `Set.member` skel] ++"}"
 
 hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> Prog t -> Maybe t -> IO [t]
 hmcEdward numSamples numSteps stepSize prog init =
@@ -173,9 +173,9 @@ hmcEdward numSamples numSteps stepSize prog init =
     setCurrentDirectory pwd
     let vals = zipWith reshape lShapes <$> read out
     return [fromJust $ evalProg env prog
-           | xs <- vals, let env = Map.fromList $ zip (Map.keys latents) xs]
+           | xs <- vals, let env = Map.fromList $ zip (map LVar $ Map.keys latents) xs]
   where (rets, pb@(PBlock block _ given)) = runProgExprs prog
-        dump env = forM_ (Map.toList env) $ \(i,c) -> do
+        dump env = forM_ (Map.toList env) $ \(LVar i,c) -> do
                      writeNPy (edId i ++".npy") c
-        latents = pnodes pb Map.\\ given
+        latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
         lShapes = evalShape given block . typeDims . typePNode <$> Map.elems latents

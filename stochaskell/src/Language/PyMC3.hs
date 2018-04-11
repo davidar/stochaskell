@@ -90,7 +90,7 @@ pmPrelude = unlines
 pmNode :: (Map Id PNode, Env) -> Label -> Node -> String
 pmNode (r,given) _ (Apply "getExternal" [Var i _] _) =
   case Map.lookup i r of
-    Just n -> pmPNode (pmId i) n (Map.lookup i given)
+    Just n -> pmPNode (pmId i) n (Map.lookup (LVar i) given)
     Nothing -> pmId i ++" = tt.as_tensor_variable(np.load('"++ pmId i ++".npy'))"
 pmNode _ name (Apply "tr'" [a] _) =
   name ++" = "++ pmNodeRef a ++".T"
@@ -173,7 +173,7 @@ pmProgram prog =
 
 pmEnv :: Env -> String
 pmEnv env | Map.null env = "None"
-pmEnv env = "{"++ g `commas` Map.keys env ++"}"
+pmEnv env = "{"++ g `commas` [k | LVar k <- Map.keys env] ++"}"
   where g i = "'"++ pmId i ++"': np.load('"++ pmId i ++".npy')"
 
 data PyMC3Inference
@@ -227,7 +227,7 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   setCurrentDirectory tmpDir
   let initEnv | isJust init = unifyTuple block rets (fromJust init) given
               | otherwise = given
-  forM_ (Map.toList initEnv) $ \(i,c) -> do
+  forM_ (Map.toList initEnv) $ \(LVar i,c) -> do
     writeNPy (pmId i ++".npy") c
   writeFile "main.py" $
     pmProgram prog ++"\n  "++
@@ -238,8 +238,8 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   setCurrentDirectory pwd
   let vals = zipWith reshape lShapes <$> read out
   return [fromJust $ evalProg env prog
-         | xs <- vals, let env = Map.fromList $ zip (Map.keys latents) xs]
+         | xs <- vals, let env = Map.fromList $ zip (map LVar $ Map.keys latents) xs]
   where (rets, pb@(PBlock block _ given)) = runProgExprs prog
         g i = "trace['"++ pmId i ++"'].tolist()"
-        latents = pnodes pb Map.\\ given
+        latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
         lShapes = evalShape given block . typeDims . typePNode <$> Map.elems latents

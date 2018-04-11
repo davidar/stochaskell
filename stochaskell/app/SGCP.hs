@@ -62,8 +62,8 @@ stepUp t k n' (lsv,lls2,cap,n,s,g,phi) = do
 
 stepN :: R -> Z -> State -> P State
 stepN t k state@(lsv,lls2,cap,n,s,g,phi) = do
-  n' <- categorical [(1/2, n + 1)
-                    ,(1/2, if n > k then n - 1 else n)]
+  n' <- mixture [(1/2, return (n + 1))
+                ,(1/2, return (if n > k then n - 1 else n))]
   stateUp   <- stepUp t k n' state
   stateDown <- stepDown k n' state
   return $ if n' == (n + 1) then stateUp

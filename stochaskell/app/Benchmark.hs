@@ -18,7 +18,7 @@ logreg n d = do
   --w <- joint vector [ normal 0 3 | j <- 1...d ]
   w <- normals (vector [ 0 | j <- 1...d ]) (vector [ 3 | j <- 1...d ])
   b <- normal 0 3
-  let z = bsxfun (+) (x #> w) b
+  let z = (x #> w) + cast b
   y <- bernoulliLogits z
   return (x,w,b,y)
 
@@ -55,14 +55,14 @@ nlm' n k x = do
   return (alpha,beta,y)
 
 distEucSq :: RVec -> RVec -> RMat
-distEucSq a b = bsxfun (+) (asColumn $ square a) (asRow $ square b) - (2 *> outer a b)
+distEucSq a b = asColumn (square a) + asRow (square b) - (2 *> outer a b)
 
 kernelSE' :: R -> R -> Z -> RVec -> RVec -> RMat
 kernelSE' lsv lls2 n a b =
   --matrix [ exp (lsv - ((a!i) - (b!j))^2 / (2 * exp lls2))
   --         + if (a!i) == (b!j) then 0.01 else 0
   --       | i <- 1...n, j <- 1...n ]
-  exp (bsxfun (-) lsv (bsxfun (/) (distEucSq a b) (2 * exp lls2)))
+  exp (cast lsv - distEucSq a b / cast (2 * exp lls2))
   + diag (vector [ 0.01 | i <- 1...n ])
 
 gpClassifier :: (Z -> RVec -> RVec -> RMat) -> Z -> RVec -> P (RVec,BVec)
@@ -92,7 +92,7 @@ measerr n tau = do
   alpha <- normal 0 10
   beta <- normal 0 10
   sigma <- truncated 0 infinity (cauchy 0 5)
-  y <- normals (bsxfun (+) alpha (beta *> x)) (vector [ sigma | i <- 1...n ])
+  y <- normals (cast alpha + (beta *> x)) (vector [ sigma | i <- 1...n ])
   return (xMu,xSigma,x,xMeas,alpha,beta,sigma,y)
 
 birats :: Z -> Z -> P (RVec,RVec,RMat,RMat,R,RMat)
@@ -111,7 +111,7 @@ birats n t = do
       beta1 = beta'!1
       beta2 = beta'!2
   --let yMu = matrix [ (beta1!i) + (beta2!i) * (x!j) | i <- 1...n, j <- 1...t ]
-  let yMu = bsxfun (+) (asColumn beta1) (outer beta2 x)
+  let yMu = asColumn beta1 + outer beta2 x
   yVar <- gamma 1 1
   y <- normals yMu (matrix [ sqrt yVar | i <- 1...n, j <- 1...t ])
   return (x,betaMu,betaSigma,beta,yVar,y)

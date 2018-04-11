@@ -156,9 +156,11 @@ ccPNode name (Switch e alts _) =
     ["case "++ show i ++": {",
      "  "++ ccTie (inputs dag) (tss!!i) ++" = get<"++ show i ++">("++ ccNodeRef e ++");",
             ccDAG (pnodes' (dagLevel dag) refs) dag,
-     "  "++ name ++" = "++ ccNodeRef ret ++"; break;",
+     "  "++ name ++" = "++ f ret ++"; break;",
      "}"]) ++"\n}"
   where UnionT tss = typeRef e
+        f [j] = ccNodeRef j
+        f js = "make_tuple("++ ccNodeRef `commas` js ++")"
 
 ccDAG :: Map Id PNode -> DAG -> String
 ccDAG r dag = indent. unlines . flip map (nodes dag) $ \(i,n) ->

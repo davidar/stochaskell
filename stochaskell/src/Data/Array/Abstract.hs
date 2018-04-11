@@ -100,8 +100,15 @@ class Indexable a i e | a -> i e where
     bounds :: a -> Interval i
     deleteIndex :: a -> i -> a
     insertIndex :: a -> i -> e -> a
+    replaceIndex :: a -> i -> e -> a
 shape :: (Indexable a [i] e) => a -> [Interval i]
 shape x = uncurry zip . bounds $ x
+deleteAt :: (Indexable a i e) => a -> i -> a
+deleteAt = deleteIndex
+insertAt :: (Indexable a i e) => a -> (i,e) -> a
+insertAt a (i,e) = insertIndex a i e
+replaceAt :: (Indexable a i e) => a -> (i,e) -> a
+replaceAt a (i,e) = replaceIndex a i e
 
 instance Indexable [e] Int e where
     (!) = (!!)

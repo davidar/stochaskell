@@ -259,10 +259,10 @@ stanDAG whitelist dag = indent $ extract decl ++ extract stanNode
 stanProgram :: PBlock -> String
 stanProgram pb@(PBlock block refs given) =
     "data {\n"++ printRefs (\i n ->
-        if getId i `elem` map Just (Map.keys given)
+        if (LVar <$> getId i) `elem` map Just (Map.keys given)
         then stanDecl True (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
     "parameters {\n"++ printRefs (\i n ->
-        if getId i `elem` map Just (Map.keys given)
+        if (LVar <$> getId i) `elem` map Just (Map.keys given)
         then "" else stanDecl True (stanNodeRef i) (typePNode n)) ++"\n}\n"++
     "model {\n"++
       stanDAG (Just tparams) (topDAG block) ++"\n\n"++
@@ -290,11 +290,11 @@ stanConstVal c = "structure(" <> v <> ", .Dim = " <> stanVector hi <> ")"
 
 stanDump :: Env -> LC.ByteString
 stanDump = LC.unlines . map f . Map.toList
-  where f (n,x) = LC.pack (stanId n) <> " <- " <> stanConstVal x
+  where f (LVar n,x) = LC.pack (stanId n) <> " <- " <> stanConstVal x
 
 stanRead :: [[LC.ByteString]] -> [Env]
 stanRead (header:rs) =
-  [Map.fromList [(k, arrayStrings v) | (Right k, v) <- parseRow r] | r <- rs]
+  [Map.fromList [(LVar k, arrayStrings v) | (Right k, v) <- parseRow r] | r <- rs]
   where header' = [(stanId' (LC.unpack x), map (fst . fromJust . LC.readInteger) xs)
                   | (x:xs) <- LC.split '.' <$> header]
         parseRow = groupSort . zipWith (\(a,b) c -> (a,(b,c))) header'

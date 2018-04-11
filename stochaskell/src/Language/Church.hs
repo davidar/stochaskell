@@ -84,11 +84,11 @@ churchDAG dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = churchId $ Internal (dagLevel dag) i
   in "("++ name ++" "++ churchNode name n ++")"
 
-churchConstraint :: Id -> ConstVal -> String
-churchConstraint k v | dimension v == 1 =
+churchConstraint :: LVal -> ConstVal -> String
+churchConstraint (LVar k) v | dimension v == 1 =
   "(equal? (map "++ churchId k ++" (iota "++ show hi ++" "++ show lo ++")) "++ churchConstVal v ++")"
   where ([lo],[hi]) = bounds v
-churchConstraint k v = "(equal? "++ churchId k ++" "++ churchConstVal v ++")"
+churchConstraint (LVar k) v = "(equal? "++ churchId k ++" "++ churchConstVal v ++")"
 
 churchResult :: Label -> Type -> String
 churchResult name (ArrayT _ [(lo,hi)] _) =

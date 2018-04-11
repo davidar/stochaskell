@@ -41,9 +41,9 @@ instance Distribution Beta (Double,Double) IO Double where
 beta a b = sample $ Beta (a,b)
 
 newtype Categorical a = Categorical a
-instance Distribution Categorical [(Double,t)] IO t where
-    sample (Categorical l) = Rand.sample $ Categorical.fromList l
-categorical l = sample $ Categorical l
+instance Distribution Categorical [Double] IO Integer where
+    sample (Categorical q) = Rand.sample . Categorical.fromList $ zip q [1..]
+categorical q = sample $ Categorical q
 
 newtype Cauchy a = Cauchy a
 instance Distribution Cauchy (Double,Double) IO Double where

@@ -90,8 +90,8 @@ model n = do
 
 jump :: (RVec,Z,R,RVec,RVec) -> P (RVec,Z,R,RVec,RVec)
 jump (x,d,alpha,beta,y) = do
-  d' <- categorical [(1/2, d + 1)
-                    ,(1/2, if d > 1 then d - 1 else d)]
+  d' <- mixture [(1/2, return (d + 1))
+                ,(1/2, return (if d > 1 then d - 1 else d))]
   let beta0 =    vector [ if i <= (d+1) then beta!i else 0 | i <- 1...(d'+1) ] :: RVec
   beta' <- joint vector [ normal (beta0!i) (sqrt 10)       | i <- 1...(d'+1) ]
   return (x,d',alpha,beta',y)

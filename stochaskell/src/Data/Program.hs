@@ -58,7 +58,7 @@ data PNode = Dist { dName :: String
                     , typePNode :: Type
                     }
            | Switch { sHead :: NodeRef
-                    , sAlts :: [(Lambda NodeRef, [PNode])]
+                    , sAlts :: [(Lambda [NodeRef], [PNode])]
                     , typePNode :: Type
                     }
            deriving (Eq)
@@ -78,6 +78,7 @@ instance Show PNode where
     "  [ "++ (drop 4 . indent . indent $ showLet dag hd) ++"\n"++
     "  | "++ intercalate ", " (zipWith g (inputs dag) sh) ++" ] :: "++ show t
     where g i (a,b) = show i ++" <- "++ show a ++"..."++ show b
+  show (HODist d j0 js t) = unwords (d : ("("++ show j0 ++")") : map show js) ++" :: P "++ show t
   show (ITDist defs base rets invf invj t) = "ITDist"++
     show (defs, reverse base, rets, reverse invf, invj, t)
   show (Switch e alts _) = "switch "++ show e ++" of\n"++ indent cases
@@ -136,7 +137,7 @@ runProgExprs p = runState (fromProgExprs p) emptyPBlock
 modelSkeleton :: PBlock -> Set Id
 modelSkeleton pb@(PBlock block _ given) = tparams
   where samples = pnodes pb
-        params = Map.keysSet samples Set.\\ Map.keysSet given
+        params = Map.keysSet samples Set.\\ Set.map getId' (Map.keysSet given)
         dependents xs = Set.union xs . Map.keysSet $
           Map.filter (not . Set.null . Set.intersection xs . dependsPNode block) samples
         dparams = fixpt dependents params
@@ -151,8 +152,8 @@ evalProg env prog = do
   return $ fromConstVals xs
   where (rets, PBlock block _ given) = runProgExprs prog
 
-caseP :: DExpr -> [[DExpr] -> P DExpr] -> P DExpr
-caseP e ps = Prog $ do
+caseP :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
+caseP n e ps = Prog $ do
   k <- liftExprBlock $ fromDExpr e
   case k of
     Data c args _ -> do
@@ -160,12 +161,14 @@ caseP e ps = Prog $ do
       let p = ps !! c
           args' = reDExpr emptyEEnv block <$> args
       fromProg $ p args'
-    _ -> fromProg $ caseP' k ps
+    _ -> fromProg $ caseP' n k ps
 
-caseP' :: NodeRef -> [[DExpr] -> P DExpr] -> P DExpr
-caseP' k ps = fmap erase . dist $ do
+caseP' :: Int -> NodeRef -> [[DExpr] -> P [DExpr]] -> P [DExpr]
+caseP' n k ps = distDs n $ do
   d <- getNextLevel
-  let UnionT tss = typeRef k
+  let tss = case typeRef k of
+        UnionT t -> t
+        IntT -> repeat []
   cases <- sequence $ do
     (ts,p) <- zip tss ps
     let ids = [Dummy d i | i <- [0..(length ts - 1)]]
@@ -174,19 +177,29 @@ caseP' k ps = fmap erase . dist $ do
       block <- get
       let s = do
             r <- fromProg $ p args
-            liftExprBlock $ fromDExpr r
+            liftExprBlock . sequence $ fromDExpr <$> r
           (ret, PBlock (Block (dag:block')) acts _) = runState s $
             PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv
       put $ Block block'
       return (Lambda dag ret, reverse acts)
-  return $ Switch k cases (unreplicate $ typeRef . fHead . fst <$> cases)
+  return $ Switch k cases (tupleT . unreplicate $ map typeRef . fHead . fst <$> cases)
 
-fromCaseP :: forall t a. Constructor t => (t -> P (Expr a)) -> Expr t -> P (Expr a)
-fromCaseP p e = Expr <$> caseP (erase e) [fmap erase . p . construct Expr c | c <- cs]
-  where Tags cs = tags :: Tags t
+fromCaseP :: forall c t. (Constructor c, ExprTuple t) => (c -> P t) -> Expr c -> P t
+fromCaseP p e = toExprTuple <$> caseP n (erase e)
+  [fmap fromExprTuple . p . construct Expr c | c <- cs]
+  where Tags cs = tags :: Tags c
+        TupleSize n = tupleSize :: TupleSize t
 
-switchOf :: Constructor t => (Expr t -> P (Expr a)) -> Expr t -> P (Expr a)
+switchOf :: (Constructor c, ExprTuple t) => (Expr c -> P t) -> Expr c -> P t
 switchOf f = fromCaseP (f . fromConcrete)
+
+mixture :: forall t. (ExprTuple t) => [(R, P t)] -> P t
+mixture qps = do
+  k <- categorical qv :: P Z
+  toExprTuple <$> caseP n (erase k) (const . fmap fromExprTuple <$> progs)
+  where (qs,progs) = unzip qps
+        qv = blockVector [cast q | q <- qs] :: RVec
+        TupleSize n = tupleSize :: TupleSize t
 
 
 ------------------------------------------------------------------------------
@@ -194,7 +207,9 @@ switchOf f = fromCaseP (f . fromConcrete)
 ------------------------------------------------------------------------------
 
 dist :: State Block PNode -> Prog (Expr t)
-dist s = Prog $ do
+dist s = Expr <$> distD s
+distD :: State Block PNode -> Prog DExpr
+distD s = Prog $ do
     d <- liftExprBlock s
     PBlock block rhs given <- get
     put $ PBlock block (d:rhs) given
@@ -204,7 +219,14 @@ dist s = Prog $ do
         t = typePNode d
         v = Var name t
     _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
-    return (expr $ return v)
+    return (DExpr $ return v)
+distDs :: Int -> State Block PNode -> Prog [DExpr]
+distDs n s = Prog $ do
+  e <- fromProg $ distD s
+  v <- liftExprBlock $ fromDExpr e
+  return . map (DExpr . return) $ if n > 1
+    then Extract v 0 <$> [0..(n-1)]
+    else [v]
 
 truncated :: (Expr t) -> (Expr t) -> P (Expr t) -> P (Expr t)
 truncated a b p = Prog $ do
@@ -233,7 +255,7 @@ transform prog = Prog $ do
       ids = Dummy (d-1) <$> [0..(length rets - 1)]
       zs = zipWith Var ids $ map typeRef rets
       eenv = solveTupleD dBlock' rets (DExpr . return <$> zs) emptyEEnv
-      invfs = [fromMaybe (error "not invertible") $ Map.lookup x eenv
+      invfs = [fromMaybe (error "not invertible") $ Map.lookup (LVar x) eenv
               | x <- map (Volatile d) [0..(length acts' - 1)]]
       ts = typeRef <$> rets
       t = if length rets > 1 then TupleT ts else head ts
@@ -272,13 +294,10 @@ instance Distribution Beta (R,R) Prog R where
         j <- fromExpr b
         return $ Dist "beta" [i,j] RealT
 
-instance (ScalarType t) => Distribution Categorical [(R, Expr t)] Prog (Expr t) where
-    sample (Categorical pxs) = dist $ do
-        let (ps,xs) = unzip pxs
-        qs <- mapM fromExpr ps
-        ys <- mapM fromExpr xs
-        let TypeIs t = typeOf :: TypeOf t
-        return $ Dist "categorical" (qs ++ ys) t
+instance Distribution Categorical RVec Prog Z where
+    sample (Categorical q) = dist $ do
+        i <- fromExpr q
+        return $ Dist "categorical" [i] IntT
 
 instance Distribution Cauchy (R,R) Prog R where
     sample (Cauchy (a,b)) = dist $ do
@@ -479,7 +498,7 @@ instance MonadGuard Prog where
         let (Just (Apply "==" [Var j _, Const a _] _)) =
               lookup i $ nodes dag
             dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
-        put $ PBlock (deriveBlock dag' block) dists (Map.insert j a given)
+        put $ PBlock (deriveBlock dag' block) dists (Map.insert (LVar j) a given)
 
 dirac :: (Expr t) -> Prog (Expr t)
 dirac c = do
@@ -514,25 +533,65 @@ pdfPBlock :: Bool -> EEnv -> PBlock -> R
 pdfPBlock lg env (PBlock block refs _) = (if lg then sum else product) $ do
     (i,d) <- zip [0..] $ reverse refs
     let ident = Volatile (dagLevel $ topDAG block) i
-    return $ case Map.lookup ident env of
+    return $ case Map.lookup (LVar ident) env of
       Just val -> pdfPNode lg env block d val
-      Nothing  -> trace (show ident ++" is unconstrained") $ if lg then 0 else 1
+      Nothing  -> trace (show ident ++" is unconstrained in "++ show env) $ if lg then 0 else 1
 
 pdfPNode :: Bool -> EEnv -> Block -> PNode -> DExpr -> R
 pdfPNode lg env block (Dist f args _) x = expr $ do
   i <- fromDExpr x
   case i of
     Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
+    PartiallyConstrained{} -> error "TODO: partially constrained"
     _ -> do
       js <- sequence $ extractNodeRef env block <$> args
       simplify $ Apply (f ++ if lg then "_lpdf" else "_pdf") (i:js) RealT
 pdfPNode lg env block (Loop _ (Lambda ldag body) _) a
   | (Unconstrained _,_) <- runDExpr a = if lg then 0 else 1
+  | (PartiallyConstrained{},_) <- runDExpr a = error "TODO: partially constrained"
   | lg        = E.foldl g 0 (Expr a)
   | otherwise = E.foldl f 1 (Expr a)
   where block' = deriveBlock ldag block
         f p x = p * pdfPNode lg env block' body (erase x) -- TODO only works for iid
         g l x = l + pdfPNode lg env block' body (erase x)
+pdfPNode lg env block (HODist "orderedSample" d [n] _) x = expr $ do
+  i <- fromDExpr x
+  case i of
+    Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
+    PartiallyConstrained [(lo,hi)] [id] [([k],v)] _ -> fromExpr $
+      pdfOrderStats lg env block d n (lo,hi) id (k,v)
+pdfPNode _ _ _ node x = error $ "pdfPNode "++ show node ++" "++ show x
+
+pdfOrderStats :: Bool -> EEnv -> Block -> PNode -> NodeRef
+              -> Interval DExpr -> Id -> (DExpr,DExpr) -> R
+pdfOrderStats lg env block d n (lo,hi) dummy (k,v) = if lg
+  then    logFactorial' n'  + intervalL +     sum' intervals + intervalR +     sum' points
+  else cast (factorial' n') * intervalL * product' intervals * intervalR * product' points
+  where fcdf = cdfPNode env block d
+        n' = reExpr env block n :: Z
+        kv' i = let envi = Map.singleton (LVar dummy) i
+                in (Expr $ substD envi k, substD envi v) :: (Z,DExpr)
+        intervalL = let (i,x) = kv' lo in if lg
+          then log (fcdf x) *  cast (i-1) -    logFactorial' (i-1)
+          else     (fcdf x) ** cast (i-1) / cast (factorial' (i-1))
+        interval (i,x) (j,y) = if lg
+          then log (fcdf y - fcdf x) *  cast (j-i-1) -    logFactorial' (j-i-1)
+          else     (fcdf y - fcdf x) ** cast (j-i-1) / cast (factorial' (j-i-1))
+        intervals = vector [ interval (kv' $ erase i) (kv' . erase $ i+1)
+                           | i::Z <- (Expr lo)...(Expr $ hi-1) ] :: RVec
+        intervalR = let (j,y) = kv' hi in if lg
+          then log (1 - fcdf y) *  cast (n'-j) -    logFactorial' (n'-j)
+          else     (1 - fcdf y) ** cast (n'-j) / cast (factorial' (n'-j))
+        points = vector [ let (_,x) = (kv' $ erase i) in pdfPNode lg env block d x
+                        | i::Z <- (Expr lo)...(Expr hi) ] :: RVec
+        sum' = E.foldl (+) 0
+        product' = E.foldl (*) 1
+
+cdfPNode :: EEnv -> Block -> PNode -> DExpr -> R
+cdfPNode env block (Dist f args _) x = expr $ do
+  i <- fromDExpr x
+  js <- sequence $ extractNodeRef env block <$> args
+  simplify $ Apply (f ++"_cdf") (i:js) RealT
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env' pb / adjust
@@ -558,9 +617,8 @@ densityPBlock :: Env -> PBlock -> LF.LogFloat
 densityPBlock env (PBlock block refs _) = product $ do
     (i,d) <- zip [0..] $ reverse refs
     let ident = Volatile (dagLevel $ topDAG block) i
-    return $ case Map.lookup ident env of
-      Just val -> let p = densityPNode env block d val
-        in {-trace ("density ("++ show d ++") "++ show val ++" = "++ show p)-} p
+    return $ case Map.lookup (LVar ident) env of
+      Just val -> densityPNode env block d val
       Nothing  -> trace (show ident ++" is unconstrained") $ LF.logFloat 1
 
 densityPNode :: Env -> Block -> PNode -> ConstVal -> LF.LogFloat
@@ -574,11 +632,9 @@ densityPNode env block (Dist "bernoulliLogit" [l] _) a
   where x = toRational a
         l' = toDouble . fromJust $ evalNodeRef env block l
         p = 1 / (1 + exp (-l'))
-densityPNode env block (Dist "categorical" cats _) x = LF.logFloat $ toDouble p
-  where n = length cats `div` 2
-        ps = fromJust . evalNodeRef env block <$> take n cats
-        xs = fromJust . evalNodeRef env block <$> drop n cats
-        p = fromMaybe 0 . lookup x $ zip xs ps
+densityPNode env block (Dist "categorical" [q] _) x = LF.logFloat p
+  where q' = map toDouble . toList . fromJust $ evalNodeRef env block q
+        p = fromMaybe 0 . lookup x $ zip [1..] q'
 densityPNode env block (Dist "gamma" [a,b] _) x
     | x' >= 0 = LF.logToLogFloat $ lpdfGamma x' a' b'
     | otherwise = LF.logFloat 0
@@ -624,11 +680,10 @@ densityPNode env block (Dist "discreteUniform" [a,b] _) x =
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
 densityPNode env block (Loop shp (Lambda ldag body) _) a = product
-    [ let p = densityPNode (Map.fromList (zip inps i) `Map.union` env) block' body (fromRational x)
-      in {-trace ("density ("++ show body ++") "++ show (fromRational x :: Double) ++" = "++ show p)-} p
+    [ let env' = Map.fromList (map LVar (inputs ldag) `zip` i) `Map.union` env
+      in densityPNode env' block' body (fromRational x)
     | (i,x) <- evalRange env block shp `zip` entries a ]
-  where inps = inputs ldag
-        block' = deriveBlock ldag block
+  where block' = deriveBlock ldag block
 
 densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
     [ densityPNode env block d (fromRational x) | x <- entries a ]
@@ -647,7 +702,7 @@ sampleP = sampleP' emptyEnv
 sampleP' :: (ExprTuple t) => Env -> Prog t -> IO t
 sampleP' env p = do
     env' <- samplePNodes env block idents
-    let env'' = Map.filterWithKey (const . not . isInternal) env'
+    let env'' = Map.filterWithKey (const . not . isInternal . getId') env'
     return . fromConstVals $ map (fromJust . evalNodeRef env'' block) rets
   where (rets, PBlock block refs _) = runProgExprs p
         idents = [ (Volatile (dagLevel $ topDAG block) i, d)
@@ -657,7 +712,7 @@ samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
 samplePNodes env _ [] = return env
 samplePNodes env block ((ident,node):rest) = do
     val <- samplePNode env block node
-    let env' = evalBlock block $ Map.insert ident val env
+    let env' = evalBlock block $ Map.insert (LVar ident) val env
     samplePNodes env' block rest
 
 samplePNode :: Env -> Block -> PNode -> IO ConstVal
@@ -680,10 +735,8 @@ samplePNode env block (Dist "bernoulliLogits" [l] _) = do
   z <- sequence $ map bernoulliLogit l'
   return $ fromList (map fromBool z)
   where l' = map toDouble . toList . fromJust $ evalNodeRef env block l
-samplePNode env block (Dist "categorical" cats _) = fromRational <$> categorical (zip ps xs)
-  where n = length cats `div` 2
-        ps = toDouble . fromJust . evalNodeRef env block <$> take n cats
-        xs = toRational . fromJust . evalNodeRef env block <$> drop n cats
+samplePNode env block (Dist "categorical" [q] _) = fromInteger <$> categorical q'
+  where q' = map toDouble . toList . fromJust $ evalNodeRef env block q
 samplePNode env block (Dist "cauchy" [m,s] _) = fromDouble <$> cauchy m' s'
   where m' = toDouble . fromJust $ evalNodeRef env block m
         s' = toDouble . fromJust $ evalNodeRef env block s
@@ -742,9 +795,9 @@ samplePNode env block (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
 
 samplePNode env block (Loop shp (Lambda ldag hd) _) =
   listArray' (evalShape env block shp) <$> sequence arr
-  where inps = inputs ldag
-        block' = deriveBlock ldag block
-        arr = [ samplePNode (Map.fromList (zip inps idx) `Map.union` env) block' hd
+  where block' = deriveBlock ldag block
+        arr = [ let env' = Map.fromList (map LVar (inputs ldag) `zip` idx) `Map.union` env
+                in samplePNode env' block' hd
               | idx <- evalRange env block shp ]
 
 samplePNode env block (HODist "orderedSample" d [n] _) =
@@ -752,13 +805,15 @@ samplePNode env block (HODist "orderedSample" d [n] _) =
   where n' = toInteger . fromJust $ evalNodeRef env block n
 
 samplePNode env block (Switch hd alts _) = do
-  env' <- samplePNodes (Map.fromList (inputs ldag `zip` ks) `Map.union` env) block' idents
-  let env'' = Map.filterWithKey (const . not . isInternal) env'
-  return . fromJust $ evalNodeRef env'' block' lhd
+  env' <- samplePNodes (Map.fromList (map LVar (inputs ldag) `zip` ks) `Map.union` env) block' idents
+  let env'' = Map.filterWithKey (const . not . isInternal . getId') env'
+  return . constTuple . fromJust . sequence $ evalNodeRef env'' block' <$> lhd
   where Tagged c ks = fromJust $ evalNodeRef env block hd
         (Lambda ldag lhd, ds) = alts !! c
         block' = deriveBlock ldag block
         idents = [ (Volatile (dagLevel ldag) i, d) | (i,d) <- zip [0..] ds ]
+        constTuple [x] = x
+        constTuple xs = Tagged 0 xs
 
 samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
 
@@ -816,7 +871,7 @@ rjmcTransRatio q x y = lu' - lu + logDet jacobian
         getAux a b =
           let (rets, PBlock block _ _) = runProgExprs (q a)
               env = solveTuple block rets b emptyEEnv
-              p Volatile{} _ = True
+              p (LVar Volatile{}) _ = True
               p _ _ = False
           in Map.filterWithKey p env
         u' = getAux y x
