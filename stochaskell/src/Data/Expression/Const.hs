@@ -125,7 +125,7 @@ broadcast (a',b')
     ,b `slice` [ zipWith clip (shape b) i | i <- fromShape sh ])
   where approx' = if isApprox a' || isApprox b' then approx else id
         (a,b) = (approx' a', approx' b')
-        sh = coerceShape (shape a) (shape b)
+        Just sh = coerceShape (shape a) (shape b)
 
 constUnOp :: (forall a. Num a => a -> a) -> ConstVal -> ConstVal
 constUnOp f (Exact  a) = Exact  (amap f a)
@@ -361,7 +361,8 @@ instance SquareMatrix ConstVal ConstVal where
     inv    = fromMatrix . inv    . toMatrix
     det a | isZeros a = 0
     det a  = fromDouble . det    $ toMatrix a
-    logDet = fromDouble . logDet . toMatrix
+    logDet a | isZeros a = log 0
+    logDet a = fromDouble . logDet $ toMatrix a
 
 instance LA.Transposable ConstVal ConstVal where
     tr  = fromMatrix . tr  . toMatrix

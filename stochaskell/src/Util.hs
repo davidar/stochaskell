@@ -85,8 +85,8 @@ unreplicate :: (Eq a, Show a) => [a] -> a
 unreplicate (x:xs) | (x ==) `all` xs = x
 unreplicate xs = error $ show xs ++" is not replicated"
 
-traceShow' :: (Show a) => a -> a
-traceShow' x = traceShow x x
+traceShow' :: (Show a) => String -> a -> a
+traceShow' s x = trace (s ++ show x) x
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)

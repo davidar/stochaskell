@@ -2,6 +2,7 @@
 module Language.CC where
 
 import Control.Monad
+import Control.Monad.State
 import Data.Array.Abstract
 import qualified Data.ByteString.Char8 as C
 import Data.Expression hiding (const)
@@ -33,9 +34,7 @@ ccForLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
 ------------------------------------------------------------------------------
 
 ccId :: Id -> String
-ccId (Dummy    level i) = "i_"++ show level ++"_"++ show i
-ccId (Volatile level i) = "x_"++ show level ++"_"++ show i
-ccId (Internal level i) = "v_"++ show level ++"_"++ show i
+ccId = show
 
 ccNodeRef :: NodeRef -> String
 ccNodeRef (Var s _) = ccId s
@@ -114,8 +113,8 @@ ccNode _ name (FoldScan fs lr (Lambda dag ret) seed
                (Var ls s@(ArrayT _ ((Const 1 IntT,n):_) _)) t) =
   name ++ sloc ++" = "++ ccNodeRef seed ++";\n"++
   ccForLoop [idx] [(Const 1 IntT,n)] (unlines
-    ["  "++ ccType (typeIndex s) ++" "++ ccId i ++" = "++ ccId ls ++"["++ loc ++"];"
-    ,"  "++ ccType (if fs == Fold then t else typeIndex t) ++" "++
+    ["  "++ ccType (typeIndex 1 s) ++" "++ ccId i ++" = "++ ccId ls ++"["++ loc ++"];"
+    ,"  "++ ccType (if fs == Fold then t else typeIndex 1 t) ++" "++
               ccId j ++" = "++ name ++ ploc ++";"
     ,       ccDAG Map.empty dag
     ,"  "++ name ++ rloc ++" = "++ ccNodeRef ret ++";"
@@ -150,12 +149,12 @@ ccPNode name (Loop sh (Lambda ldag body) _) =
   ccForLoop (inputs ldag) sh $
     let lval = name `ccIndex'` inputs ldag
     in ccDAG Map.empty ldag ++ indent (ccPNode lval body)
-ccPNode name (Switch e alts _) =
+ccPNode name (Switch e alts ns _) =
   "switch("++ ccNodeRef e ++".index()) {\n"++ indent (unlines $ do
     (i, (Lambda dag ret, refs)) <- zip [0..] alts
     ["case "++ show i ++": {",
      "  "++ ccTie (inputs dag) (tss!!i) ++" = get<"++ show i ++">("++ ccNodeRef e ++");",
-            ccDAG (pnodes' (dagLevel dag) refs) dag,
+            ccDAG (pnodes' ns (dagLevel dag) refs) dag,
      "  "++ name ++" = "++ f ret ++"; break;",
      "}"]) ++"\n}"
   where UnionT tss = typeRef e
@@ -212,8 +211,8 @@ ccPrint l e | UnionT tss <- typeRef e =
      "  break;",
      "}"]) ++"\n}"
 
-ccProgram :: (ExprTuple t) => Type -> (Expr a -> Prog t) -> (String, [NodeRef])
-ccProgram t prog = (,rets) $ unlines
+ccProgram :: (ExprTuple t) => State Block Type -> (Expr a -> Prog t) -> (String, [NodeRef])
+ccProgram s prog = (,rets) $ unlines
   ["#include <cmath>"
   ,"#include <iostream>"
   ,"#include <random>"
@@ -231,8 +230,8 @@ ccProgram t prog = (,rets) $ unlines
   ,   indent $ unlines [ccPrint 1 ret ++" cout << endl;" | ret <- rets]
   ,"}"
   ]
-  where (rets, pb@(PBlock block _ _)) =
-          runProgExprs . prog . expr . return $ Var (Dummy 0 0) t
+  where (rets, pb) = runProgExprs "cc" . prog . expr . return $ Var (Dummy 0 0) t
+        (t, block) = runState s $ definitions pb
 
 printCC :: ConstVal -> String
 printCC (Tagged c ks) = unwords $ show c : map printCC ks

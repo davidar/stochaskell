@@ -12,6 +12,7 @@ import Data.Expression.Const
 import Data.Expression.Eval
 import Data.List.Extra
 import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
 import Data.Maybe
 import Data.Monoid
 import Data.Program
@@ -44,16 +45,15 @@ forLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
 
 stanId :: Id -> String
 stanId (Dummy    level i) = "i_"++ show level ++"_"++ show i
-stanId (Volatile level i) = "x_"++ show level ++"_"++ show i
+stanId (Volatile ns level i) = "x_"++ ns ++"_"++ show level ++"_"++ show i
 stanId (Internal level i) = "v_"++ show level ++"_"++ show i
 
 stanId' :: String -> Either String Id
 stanId' i@(t:'_':s) = case t of
-  'i' -> Right (Dummy l p)
-  'x' -> Right (Volatile l p)
-  'v' -> Right (Internal l p)
+  'i' -> let [l,p] =    splitOn "_" s in Right (Dummy       (read l) (read p))
+  'x' -> let [ns,l,p] = splitOn "_" s in Right (Volatile ns (read l) (read p))
+  'v' -> let [l,p] =    splitOn "_" s in Right (Internal    (read l) (read p))
   _ -> Left i
-  where [l,p] = read <$> splitOn "_" s
 stanId' i = Left i
 
 stanNodeRef :: NodeRef -> String
@@ -194,8 +194,8 @@ stanNode name (FoldScan fs lr (Lambda dag ret) seed
                (Var ls s@(ArrayT _ ((Const 1 IntT,n):_) _)) t) =
     name ++ sloc ++" = "++ stanNodeRef seed ++";\n"++
     (forLoop [stanId idx] [(Const 1 IntT,n)] $ "  "++
-      stanDecl False (stanId i) (typeIndex s) ++"\n  "++
-      stanDecl False (stanId j) (if fs == Fold then t else typeIndex t) ++"\n  "++
+      stanDecl False (stanId i) (typeIndex 1 s) ++"\n  "++
+      stanDecl False (stanId j) (if fs == Fold then t else typeIndex 1 t) ++"\n  "++
       stanId i ++" = "++ stanId ls ++"["++ loc ++"];\n  "++
       stanId j ++" = "++ name ++ ploc ++";\n  "++
       "{\n"++ stanDAG Nothing dag ++"\n  "++
@@ -257,12 +257,12 @@ stanDAG whitelist dag = indent $ extract decl ++ extract stanNode
 ------------------------------------------------------------------------------
 
 stanProgram :: PBlock -> String
-stanProgram pb@(PBlock block refs given) =
+stanProgram pb@(PBlock block _ given _) =
     "data {\n"++ printRefs (\i n ->
-        if (LVar <$> getId i) `elem` map Just (Map.keys given)
+        if getId i `elem` map (Just . getId') (Map.keys given)
         then stanDecl True (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
     "parameters {\n"++ printRefs (\i n ->
-        if (LVar <$> getId i) `elem` map Just (Map.keys given)
+        if getId i `elem` map (Just . getId') (Map.keys given)
         then "" else stanDecl True (stanNodeRef i) (typePNode n)) ++"\n}\n"++
     "model {\n"++
       stanDAG (Just tparams) (topDAG block) ++"\n\n"++
@@ -403,7 +403,7 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
 
     putStrLn' "--- Removing temporary files ---"
     return [fromJust $ evalProg env prog | env <- stanRead table]
-  where (rets,p@(PBlock block _ given)) = runProgExprs prog
+  where (rets,p@(PBlock block _ given _)) = runProgExprs "stan" prog
         noComment row = not (LC.null row) && LC.head row /= '#'
 
 -- TODO: deprecate these

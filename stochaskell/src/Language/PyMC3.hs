@@ -19,9 +19,7 @@ import System.Process
 import Util
 
 pmId :: Id -> String
-pmId (Dummy    level i) =  "index_"++ show level ++"_"++ show i
-pmId (Volatile level i) = "sample_"++ show level ++"_"++ show i
-pmId (Internal level i) =  "value_"++ show level ++"_"++ show i
+pmId = show
 
 pmNodeRef :: NodeRef -> String
 pmNodeRef (Var s _) = pmId s
@@ -88,7 +86,7 @@ pmPrelude = unlines
   ]
 
 pmNode :: (Map Id PNode, Env) -> Label -> Node -> String
-pmNode (r,given) _ (Apply "getExternal" [Var i _] _) =
+pmNode (r,given) _ (Apply "getExternal" [Var i t] _) =
   case Map.lookup i r of
     Just n -> pmPNode (pmId i) n (Map.lookup (LVar i) given)
     Nothing -> pmId i ++" = tt.as_tensor_variable(np.load('"++ pmId i ++".npy'))"
@@ -167,7 +165,7 @@ pmProgram prog =
   "def main():\n"++
   " with pm.Model() as model:\n"++
     pmDAG (pn, given) (topDAG block)
-  where pb@(PBlock block _ given) = snd $ runProgExprs prog
+  where pb@(PBlock block _ given _) = snd $ runProgExprs "pm" prog
         skel = modelSkeleton pb
         pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb
 
@@ -237,9 +235,11 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   out <- readProcess (pwd ++"/pymc3/env/bin/python") ["main.py"] ""
   setCurrentDirectory pwd
   let vals = zipWith reshape lShapes <$> read out
-  return [fromJust $ evalProg env prog
-         | xs <- vals, let env = Map.fromList $ zip (map LVar $ Map.keys latents) xs]
-  where (rets, pb@(PBlock block _ given)) = runProgExprs prog
+  return [let env = Map.fromList [(LVar i, x)
+                                 | ((i,d),x) <- Map.toAscList latents `zip` xs]
+          in fromJust $ evalProg env prog
+         | xs <- vals]
+  where (rets, pb@(PBlock block _ given _)) = runProgExprs "pm" prog
         g i = "trace['"++ pmId i ++"'].tolist()"
         latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
         lShapes = evalShape given block . typeDims . typePNode <$> Map.elems latents

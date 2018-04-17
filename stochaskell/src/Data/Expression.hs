@@ -13,6 +13,7 @@ import Data.Boolean
 import Data.Char
 import Data.Expression.Const hiding (isScalar)
 import Data.List hiding (foldl,foldr,scanl,scanr)
+import Data.List.Extra hiding (foldl,foldr,scanl,scanr)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
@@ -33,9 +34,10 @@ import Util
 
 type Pointer = Int
 type Level = Int
+type NS = String
 
 data Id = Dummy    { idLevel :: Level, idPointer :: Pointer }
-        | Volatile { idLevel :: Level, idPointer :: Pointer }
+        | Volatile { idNS :: NS, idLevel :: Level, idPointer :: Pointer }
         | Internal { idLevel :: Level, idPointer :: Pointer }
         deriving (Eq, Ord)
 
@@ -45,7 +47,7 @@ isInternal _ = False
 
 instance Show Id where
   show (Dummy l p)    = "i_"++ show l ++"_"++ show p
-  show (Volatile l p) = "x_"++ show l ++"_"++ show p
+  show (Volatile ns l p) = "x_"++ ns ++"_"++ show l ++"_"++ show p
   show (Internal l p) = "v_"++ show l ++"_"++ show p
 
 data NodeRef = Var Id Type
@@ -55,7 +57,7 @@ data NodeRef = Var Id Type
              | Index NodeRef [NodeRef]
              | Extract NodeRef Tag Int
              | Unconstrained Type
-             | PartiallyConstrained [AA.Interval DExpr] [Id] [([DExpr],DExpr)] Type
+             | PartiallyConstrained [AA.Interval DExpr] [(Id,Type)] [([DExpr],DExpr)] Type
              deriving (Eq, Ord)
 
 getId :: NodeRef -> Maybe Id
@@ -74,12 +76,19 @@ fromBlockMatrix :: NodeRef -> [[NodeRef]]
 fromBlockMatrix (BlockArray a _) = [[a![i,j] | j <- [1..n]] | i <- [1..m]]
   where [(1,m),(1,n)] = AA.shape a
 
+isUnconstrained :: NodeRef -> Bool
+isUnconstrained Unconstrained{} = True
+isUnconstrained _ = False
+
 instance Show NodeRef where
-  show (Var   i t) = "("++ show i ++" :: "++ show t ++")"
+  --show (Var   i t) = "("++ show i ++" :: "++ show t ++")"
+  show (Var   i t) = show i
   show (Const c IntT) = show (integer c)
   show (Const c RealT) = show (real c)
-  show (Const c t) = "("++ show c ++" :: "++ show t ++")"
+  --show (Const c t) = "("++ show c ++" :: "++ show t ++")"
+  show (Const c t) = show c
   show (Data c rs t) = "(C"++ show c ++ show rs ++" :: "++ show t ++")"
+  show i@(BlockArray a t) | [_,_] <- AA.shape a = "block"++ show (fromBlockMatrix i)
   show (BlockArray a t) = "(block "++ show a ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
   show (Extract v i j) = show v ++"."++ show i ++"_"++ show j
@@ -149,13 +158,17 @@ instance Show Node where
             | (i, Lambda dag ret) <- zip [0..] alts]
 
 data DAG = DAG { dagLevel :: Level
-               , inputs :: [Id]
+               , inputsT :: [(Id,Type)]
                , bimap  :: Bimap.Bimap Node Pointer
                } deriving (Eq, Ord)
 emptyDAG :: DAG
 emptyDAG = DAG 0 [] Bimap.empty
 nodes :: DAG -> [(Pointer, Node)]
 nodes dag = Bimap.toAscListR $ bimap dag
+inputs :: DAG -> [Id]
+inputs = map fst . inputsT
+inputsL :: DAG -> [LVal]
+inputsL dag = LVar . fst <$> inputsT dag
 instance Show DAG where
   show dag = unlines $ map f (nodes dag)
     where f (i,n) = show (Internal (dagLevel dag) i) ++" = "++ show n
@@ -199,11 +212,13 @@ instance Show DExpr where
 
 data LVal = LVar Id
           | LSub Id [DExpr]
+          | LField Id Tag Int
           deriving (Eq, Ord, Show)
 
 getId' :: LVal -> Id
-getId' (LVar i) = i
+getId' (LVar i ) = i
 getId' (LSub i _) = i
+getId' (LField i _ _) = i
 
 type EEnv = Map LVal DExpr
 emptyEEnv :: EEnv
@@ -269,6 +284,10 @@ isScalar RealT = True
 isScalar (SubrangeT t _ _) = isScalar t
 isScalar _ = False
 
+isScalarD :: DExpr -> Bool
+isScalarD e = isScalar $ typeRef ret
+  where (ret,_) = runDExpr e
+
 isArrayT :: Type -> Bool
 isArrayT ArrayT{} = True
 isArrayT _ = False
@@ -315,7 +334,7 @@ class ScalarType c => Constructor c where
   tags :: Tags c
   construct   :: (forall t. ScalarType t => a -> Expr t) -> Tag -> [a] -> c
   deconstruct :: (forall t. ScalarType t => Expr t -> a) -> c -> (Tag, [a])
-  typeUnion :: c -> Type
+  typeUnion :: c -> State Block Type
 
 toConcreteC :: Constructor t => ConstVal -> t
 toConcreteC (Tagged c args) = construct constExpr c args
@@ -323,7 +342,8 @@ toConcreteC (Tagged c args) = construct constExpr c args
 fromConcreteC :: Constructor t => t -> Expr t
 fromConcreteC m = expr $ do
   js <- sequence args
-  return $ Data c js (typeUnion m)
+  t <- typeUnion m
+  return $ Data c js t
   where (c, args) = deconstruct fromExpr m
 
 internal :: Level -> Pointer -> State Block NodeRef
@@ -345,11 +365,13 @@ extractD e c j = DExpr $ do
                      | otherwise -> error "tag mismatch"
     _ -> Extract i c j
 
-typeExpr :: Expr t -> Type
+typeExpr :: Expr t -> State Block Type
 typeExpr = typeDExpr . erase
 
-typeDExpr :: DExpr -> Type
-typeDExpr = typeRef . fst . runDExpr
+typeDExpr :: DExpr -> State Block Type
+typeDExpr e = do
+  i <- fromDExpr e
+  return $ typeRef i
 
 typeRef :: NodeRef -> Type
 typeRef (Var _ t) = t
@@ -376,11 +398,12 @@ typeDims RealT = []
 typeDims (SubrangeT t _ _) = typeDims t
 typeDims (ArrayT _ d _) = d
 
-typeIndex :: Type -> Type
-typeIndex (ArrayT _ [_] t) = t
-typeIndex (ArrayT (Just "matrix") (_:sh) t) = ArrayT (Just "row_vector") sh t
-typeIndex (ArrayT _ (_:sh) t) = ArrayT Nothing sh t
-typeIndex t = error $ "cannot index objects of type "++ show t
+typeIndex :: Int -> Type -> Type
+typeIndex 1 (ArrayT _ [_] t) = t
+typeIndex 1 (ArrayT (Just "matrix") (_:sh) t) = ArrayT (Just "row_vector") sh t
+typeIndex 1 (ArrayT _ (_:sh) t) = ArrayT Nothing sh t
+typeIndex 1 t = error $ "cannot index objects of type "++ show t
+typeIndex n t = typeIndex 1 $ typeIndex (n-1) t
 
 coerce :: Type -> Type -> Type
 coerce a b | a == b = a
@@ -391,12 +414,18 @@ coerce (SubrangeT s _ _) t = coerce s t
 coerce t (SubrangeT s _ _) = coerce s t
 coerce a@(ArrayT _ _ t) t' | t == t' = a
 coerce t a@(ArrayT _ _ t') | t == t' = a
-coerce (ArrayT Nothing sh t) (ArrayT n sh' t') | t == t' =
-  ArrayT n (AA.coerceShape sh sh') t
-coerce (ArrayT n sh t) (ArrayT Nothing sh' t') | t == t' =
-  ArrayT n (AA.coerceShape sh sh') t
-coerce (ArrayT n sh t) (ArrayT n' sh' t') | n == n' && t == t' =
-  ArrayT n (AA.coerceShape sh sh') t
+coerce (ArrayT Nothing sh t) (ArrayT n sh' t')
+  | t == t', Just sh'' <- AA.coerceShape sh sh' = ArrayT n sh'' t
+coerce (ArrayT n sh t) (ArrayT Nothing sh' t')
+  | t == t', Just sh'' <- AA.coerceShape sh sh' = ArrayT n sh'' t
+coerce (ArrayT n sh t) (ArrayT n' sh' t')
+  | n == n', t == t', Just sh'' <- AA.coerceShape sh sh' = ArrayT n sh'' t
+coerce (ArrayT nm1 ((Const 1 IntT,m):sh1) s)
+       (ArrayT nm2 ((Const 1 IntT,n):sh2) t) | nm1 == nm2, s == t =
+  ArrayT nm1 ((Const 1 IntT,n'):sh) t
+  where ArrayT _ sh _ = coerce (ArrayT nm1 sh1 s) (ArrayT nm2 sh2 t)
+        n' = if m == n then n else
+          trace "WARN coercing dynamic array" (Unconstrained IntT)
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
 class    Cast a b                          where cast :: a -> b
@@ -431,7 +460,7 @@ liftBlock s = do
     put $ deriveBlock dag parent'
     return ref
 
-runLambda :: [Id] -> State Block r -> State Block (Lambda r)
+runLambda :: [(Id,Type)] -> State Block r -> State Block (Lambda r)
 runLambda ids s = do
   block <- get
   let d = nextLevel block
@@ -443,9 +472,9 @@ runLambda ids s = do
 -- does a list of expressions depend on the inputs to this block?
 varies :: DAG -> [NodeRef] -> Bool
 varies (DAG level inp _) xs = level == 0 || any p xs
-  where p (Var (Internal l _) _) = l == level
-        p (Var (Volatile l _) _) = l == level
-        p (Var s _) = s `elem` inp
+  where p (Var i@Internal{} _) = idLevel i == level
+        p (Var i@Volatile{} _) = idLevel i == level
+        p (Var i@Dummy{} _) = i `elem` map fst inp
         p (Const _ _) = False
         p (Data _ is _) = any p is
         p (BlockArray a _) = any p (A.elems a)
@@ -475,6 +504,8 @@ dependsNodeRef _ (Var i _) = Set.singleton i
 dependsNodeRef _ (Const _ _) = Set.empty
 dependsNodeRef block (Index a i) =
   Set.unions $ map (dependsNodeRef block) (a:i)
+dependsNodeRef block (Extract r _ _) = dependsNodeRef block r
+dependsNodeRef _ r = error $ "dependsNodeRef "++ show r
 
 dependsNode :: Block -> Node -> Set Id
 dependsNode block (Apply _ args _) =
@@ -484,6 +515,12 @@ dependsNode block (Array sh (Lambda body hd) _) =
   where d = dependsNodeRef block
         hdeps = Set.filter ((dagLevel body >) . idLevel) $
           dependsNodeRef (deriveBlock body block) hd
+dependsNode block (FoldScan _ _ (Lambda body hd) seed ls _) =
+  d seed `Set.union` d ls `Set.union` hdeps
+  where d = dependsNodeRef block
+        hdeps = Set.filter ((dagLevel body >) . idLevel) $
+          dependsNodeRef (deriveBlock body block) hd
+dependsNode _ n = error $ "dependsNode "++ show n
 
 substD :: EEnv -> DExpr -> DExpr
 substD env e = DExpr $ extractNodeRef env block ret
@@ -528,6 +565,12 @@ extractNodeRef env block (Index v i) = do
   v' <- extractNodeRef env block v
   i' <- sequence $ extractNodeRef env block <$> i
   return $ Index v' i'
+extractNodeRef env block (Extract d c i) = do
+  d' <- extractNodeRef env block d
+  return $ Extract d' c i
+extractNodeRef env block (Unconstrained t) = do
+  t' <- extractType env block t
+  return $ Unconstrained t'
 extractNodeRef _ _ r = error $ "extractNodeRef "++ show r
 
 extractNode :: EEnv -> Block -> Node -> State Block Node
@@ -535,19 +578,30 @@ extractNode env block (Apply f args t) = do
   js <- sequence $ extractNodeRef env block <$> args
   t' <- extractType env block t
   return $ Apply f js t'
-extractNode env block (Array sh (Lambda body hd) t) = do
+extractNode env block (Array sh lam t) = do
   lo' <- sequence $ extractNodeRef env block <$> lo
   hi' <- sequence $ extractNodeRef env block <$> hi
-  t' <- extractType env block t
   d <- getNextLevel
-  let ids = [ Dummy d i | i <- [1..length sh] ]
-      ids' = DExpr . return . flip Var IntT <$> ids
-      env' = Map.fromList (map LVar (inputs body) `zip` ids') `Map.union` env
-  lam <- runLambda ids (extractNodeRef env' block' hd)
-  return $ Array (zip lo' hi') lam t'
-  where block' = deriveBlock body block
-        (lo,hi) = unzip sh
-extractNode _ _ n = error $ show n
+  lam' <- extractLambda env block lam
+  t' <- extractType env block t
+  return $ Array (zip lo' hi') lam' t'
+  where (lo,hi) = unzip sh
+extractNode env block (FoldScan fs lr lam sd ls t) = do
+  d <- getNextLevel
+  lam' <- extractLambda env block lam
+  sd' <- extractNodeRef env block sd
+  ls' <- extractNodeRef env block ls
+  t' <- extractType env block t
+  return $ FoldScan fs lr lam' sd' ls' t'
+extractNode _ _ n = error $ "extractNode "++ show n
+
+extractLambda :: EEnv -> Block -> Lambda NodeRef -> State Block (Lambda NodeRef)
+extractLambda env block (Lambda body hd) =
+  runLambda (inputsT body) (extractNodeRef env' block' hd)
+  where f (i,t) = DExpr . return $ Var i t
+        ids' = f <$> inputsT body
+        env' = Map.fromList (inputsL body `zip` ids') `Map.union` env
+        block' = deriveBlock body block
 
 extractType :: EEnv -> Block -> Type -> State Block Type
 extractType _ _ IntT = return IntT
@@ -577,19 +631,19 @@ extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block
 extractIndexNode :: EEnv -> Block -> Node -> [DExpr] -> State Block NodeRef
 extractIndexNode env block (Array _ (Lambda body hd) _) idx =
   extractNodeRef env' block' hd
-  where env' = Map.fromList (map LVar (inputs body) `zip` idx) `Map.union` env
+  where env' = Map.fromList (inputsL body `zip` idx) `Map.union` env
         block' = deriveBlock body block
 extractIndexNode env block (Apply op [a,b] t) idx
   | op `elem` ["+","-","*","/"] = do
   a' <- extractIndexNodeRef env block a idx
   b' <- extractIndexNodeRef env block b idx
-  t' <- extractType env block $ typeIndex t -- TODO: broken for length sh > 1
+  t' <- extractType env block $ typeIndex (length idx) t
   simplify $ Apply op [a',b'] t'
 extractIndexNode env block (Apply "ifThenElse" [c,a,b] t) idx = do
   c' <- extractNodeRef env block c
   a' <- extractIndexNodeRef env block a idx
   b' <- extractIndexNodeRef env block b idx
-  t' <- extractType env block $ typeIndex t
+  t' <- extractType env block $ typeIndex (length idx) t
   simplify $ Apply "ifThenElse" [c',a',b'] t'
 extractIndexNode _ _ n idx = error $ "extractIndexNode "++ show n ++" "++ show idx
 
@@ -609,9 +663,9 @@ collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret =
   let sh = zip los his
       v = (e `extractIndex` [DExpr . return $ Var (Dummy (-1) 1) IntT])
              `extractIndex` [DExpr . return $ Var (Dummy (-1) 2) IntT]
-      env' = Map.fromList [(LVar $ Dummy (-1) 1, DExpr . return $ Var (Dummy d 1) IntT)
-                          ,(LVar $ Dummy (-1) 2, DExpr . return $ Var (Dummy d 2) IntT)]
-  lam <- runLambda [Dummy d 1,Dummy d 2] (fromDExpr $ substD env' v)
+      env' = Map.fromList [(LVar (Dummy (-1) 1), DExpr . return $ Var (Dummy d 1) IntT)
+                          ,(LVar (Dummy (-1) 2), DExpr . return $ Var (Dummy d 2) IntT)]
+  lam <- runLambda [(Dummy d 1,IntT),(Dummy d 2,IntT)] (fromDExpr $ substD env' v)
   hashcons $ Array sh lam (ArrayT Nothing sh t')
   where (ret, block) = runDExpr e
 collapseArray e = substD emptyEEnv e
@@ -633,8 +687,8 @@ caseD' k fs = do
   let UnionT tss = typeRef k
   cases <- sequence $ do
     (ts,f) <- zip tss fs
-    let ids = [Dummy d i | i <- [0..(length ts - 1)]]
-        args = [DExpr . return $ Var i t | (i,t) <- zip ids ts]
+    let ids = [(Dummy d i, t) | (i,t) <- zip [0..] ts]
+        args = [DExpr . return $ Var i t | (i,t) <- ids]
     return . runLambda ids . fromDExpr $ f args
   hashcons $ Case k cases (unreplicate $ typeRef . fHead <$> cases)
 
@@ -669,11 +723,16 @@ simplify (Apply "*" [Const c _,x] t)
 simplify (Apply "*" [x,Const c _] t)
   | c == -1 = simplify (Apply "negate" [x] t)
 simplify (Apply "-" [Const c _,x] t) | c == 0 = simplify (Apply "negate" [x] t)
+simplify (Apply f js t) | elem f ["+","+s","-","*","/"]
+                        , isUnconstrained `any` js = return $ Unconstrained t
 simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
 simplify (Apply "#>" [_,Const c _] t) | c == 0 = return $ Const 0 t
 simplify (Apply "<#" [Const c _,_] t) | c == 0 = return $ Const 0 t
 simplify (Apply "det"     [i@BlockArray{}] t) | Just s <- simplifyDet False i t = s
 simplify (Apply "log_det" [i@BlockArray{}] t) | Just s <- simplifyDet True  i t = s
+simplify (Apply "replaceIndex" [Const c _,_,Const k _] t)
+  | c == 0, k == 0 = return $ Const 0 t
+simplify (Apply "+s" [a,b] t) = simplify (Apply "+" [a,b] t)
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
@@ -710,18 +769,22 @@ simplify' _ n = Left n
 
 simplifyDet :: Bool -> NodeRef -> Type -> Maybe (State Block NodeRef)
 simplifyDet lg i t
+  | isZ . sequence $ getConstVal <$> concat a =
+    Just . return $ Const (if lg then log 0 else 0) t
   | isZ . sequence $ getConstVal <$> th = Just $ do
       x <- det' [[hh]]
       y <- det' tt
       simplify $ Apply (if lg then "+" else "*") [x,y] t
   -- TODO: negate if matrix has even number of total rows
-  | getConstVal hh == Just 0 = Just . det' $ tail a ++ [head a]
+  -- TODO: avoid infinite loop when first column is zero
+  -- | getConstVal hh == Just 0 = Just . det' $ tail a ++ [head a]
+  | otherwise = Nothing
   where a = fromBlockMatrix i
         hh = head $ head a
         th = tail $ head a
         tt = tail <$> tail a
         isZ = maybe False $ all isZeros
-        det x | isScalar (typeDExpr x) = if lg then log x else x
+        det x | isScalarD x = if lg then log x else x
               | lg        = AA.logDet x
               | otherwise = AA.det x
         det' = fromDExpr . det . DExpr . blockMatrix'
@@ -773,10 +836,10 @@ makeArray :: Maybe String -> AA.AbstractArray DExpr DExpr
           -> [AA.Interval NodeRef] -> State Block NodeRef
 makeArray l ar sh = do
     d <- getNextLevel
-    let ids = [ Dummy d i | i <- [1..length sh] ]
-        e = ar ! [ DExpr . return $ Var i IntT | i <- ids ]
-        t = typeDExpr e
+    let ids = [(Dummy d i, IntT) | i <- [1..length sh]]
+        e = ar ! [DExpr . return $ Var i t | (i,t) <- ids]
     lam <- runLambda ids (fromDExpr e)
+    t <- typeDExpr e
     hashcons $ Array sh lam (ArrayT l sh t)
 
 -- constant floating
@@ -854,13 +917,13 @@ foldscan fs dir f r xs = do
     block <- get
     let d = nextLevel block
         (ArrayT _ [(Const 1 IntT,n)] _) = typeRef l
-        s = typeIndex $ typeRef l
+        s = typeIndex 1 $ typeRef l
         TypeIs t = typeOf :: TypeOf b
         i = expr . return $ Var (Dummy d 1) s
         j = expr . return $ Var (Dummy d 2) t
         -- TODO: runLambda
         (ret, Block (dag:block')) = runState (fromExpr $ f i j) $
-          deriveBlock (DAG d [Dummy d 1, Dummy d 2] Bimap.empty) block
+          deriveBlock (DAG d [(Dummy d 1,s), (Dummy d 2,t)] Bimap.empty) block
     if varies (topDAG block) [seed,l] ||
        (not . null $ inputs (topDAG block) `intersect` externRefs dag)
       then do
@@ -876,6 +939,10 @@ foldscan fs dir f r xs = do
             let t' = (ArrayT Nothing [(Const 1 IntT, n)] t)
             hashcons $ FoldScan fs dir (Lambda dag ret) seed l t'
       else liftBlock $ foldscan fs dir f r xs
+
+-- find leftmost element of v satisfying p, else def if no elements satisfy p
+find' :: (ScalarType e) => (Expr e -> B) -> Expr e -> Expr [e] -> Expr e
+find' p def v = foldr f def v where f i j = ifB (p i) i j
 
 
 ------------------------------------------------------------------------------
@@ -954,6 +1021,7 @@ instance (ScalarType t, Floating t) => Floating (Expr t) where
 instance (ScalarType e) => AA.Vector (Expr [e]) Z (Expr e) where
     vector = array (Just "vector") 1
     blockVector = Expr . AA.blockVector . map erase
+    vectorSize  = Expr . AA.vectorSize . erase
 instance AA.Vector DExpr DExpr DExpr where
     vector = array' (Just "vector") 1
     blockVector v = DExpr $ do
@@ -974,10 +1042,13 @@ instance AA.Vector DExpr DExpr DExpr where
         BlockArray (A.array bnd [([i], k !! (i-1)) | [i] <- A.range bnd]) t
       where isZero (Const c _) | c == 0 = True
             isZero _ = False
+    vectorSize v = apply' "vectorSize" IntT [v]
 
 blockMatrix' :: [[NodeRef]] -> State Block NodeRef
+blockMatrix' [] = error "blockMatrix' []"
 blockMatrix' [[r]] = return r
-blockMatrix' k' = do
+blockMatrix' k' | not sane = error $ "mis-shaped blocks: "++ show k
+                | otherwise = do
   r <- simplify $ Apply "+s" rs IntT
   c <- simplify $ Apply "+s" cs IntT
   let t = ArrayT (Just "matrix") [(Const 1 IntT,r),(Const 1 IntT,c)] $
@@ -985,7 +1056,7 @@ blockMatrix' k' = do
   return . flip BlockArray t $ A.array bnd
     [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
   where flattenRow = foldr1 (zipWith (++))
-        flattenMatrix = concat . map flattenRow
+        flattenMatrix = concat . map flattenRow :: [[[[a]]]] -> [[a]]
         k | isBlockArray `all` concat k' = flattenMatrix $ map fromBlockMatrix <$> k'
           | otherwise = k'
         bnd = ([1,1],[length k, length $ head k])
@@ -994,24 +1065,40 @@ blockMatrix' k' = do
           return $ case t of
             _ | isScalar t -> Const 1 IntT
             ArrayT _ [(Const 1 IntT,hi),_] _ -> hi
+            _ -> error $ "blockMatrix'.rs "++ show t
         cs = do
           t <- typeRef <$> head k
           return $ case t of
             _ | isScalar t -> Const 1 IntT
             ArrayT _ [_,(Const 1 IntT,hi)] _ -> hi
+            _ -> error $ "blockMatrix'.cs "++ show t
+        sane = allSame (map length k) && saneRow `all` k && saneCol `all` transpose k
+        saneRow row = allSame' $ do
+          t <- typeRef <$> row
+          return $ case t of
+            _ | isScalar t -> Const 1 IntT
+            ArrayT _ [(Const 1 IntT,hi),_] _ -> hi
+        saneCol col = allSame' $ do
+          t <- typeRef <$> col
+          return $ case t of
+            _ | isScalar t -> Const 1 IntT
+            ArrayT _ [_,(Const 1 IntT,hi)] _ -> hi
+        allSame' xs = allSame xs || isUnconstrained `any` xs
 
 instance (ScalarType e) => AA.Matrix (Expr [[e]]) Z (Expr e) where
     matrix = array (Just "matrix") 2
 instance AA.Matrix DExpr DExpr DExpr where
     matrix = array' (Just "matrix") 2
     blockMatrix m = DExpr $ do
-      k' <- sequence $ sequence . map (fromDExpr . asMatrixD) <$> m
+      k' <- sequence $ sequence . map asMatrixD <$> m
       blockMatrix' k'
-      where asMatrixD a = case typeDExpr a of
-              (ArrayT (Just "row_vector") [_] _) -> AA.asRow a
-              (ArrayT _ [_] _) -> AA.asColumn a
-              (ArrayT _ [_,_] _) -> a
-              t | isScalar t -> a
+      where asMatrixD a = do
+              t <- typeDExpr a
+              fromDExpr $ case t of
+                (ArrayT (Just "row_vector") [_] _) -> AA.asRow a
+                (ArrayT _ [_] _) -> AA.asColumn a
+                (ArrayT _ [_,_] _) -> a
+                _ | isScalar t -> a
     eye (lo,hi) = DExpr $ do
       lo' <- fromDExpr lo
       hi' <- fromDExpr hi
@@ -1029,8 +1116,9 @@ instance Monoid DExpr where
 
 instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = Expr $ erase a ! erase e
-    deleteIndex a e   = Expr $ AA.deleteIndex (erase a) (erase e)
-    insertIndex a e d = Expr $ AA.insertIndex (erase a) (erase e) (erase d)
+    deleteIndex  a e   = Expr $ AA.deleteIndex  (erase a) (erase e)
+    insertIndex  a e d = Expr $ AA.insertIndex  (erase a) (erase e) (erase d)
+    replaceIndex a e d = Expr $ AA.replaceIndex (erase a) (erase e) (erase d)
 instance AA.Indexable DExpr DExpr DExpr where
     a ! e = DExpr $ do
         f <- fromDExpr a
@@ -1054,6 +1142,11 @@ instance AA.Indexable DExpr DExpr DExpr where
       hi' <- simplify $ Apply "+" [hi, Const 1 IntT] (typeRef hi)
       let t' = ArrayT Nothing [(lo,hi')] t
       simplify $ Apply "insertIndex" [f,i,j] t'
+    replaceIndex a e d = DExpr $ do
+      f <- fromDExpr a
+      i <- fromDExpr e
+      j <- fromDExpr d
+      simplify $ Apply "replaceIndex" [f,i,j] (typeRef f)
 
 instance AA.Scalable R RVec where
     a *> v = expr $ do
@@ -1204,6 +1297,20 @@ instance OrdB (Expr t) where
 
 instance (Ord t, ScalarType t) => Transfinite (Expr t) where
     infinity = constExpr infinity
+
+detuple :: (ExprTuple t) => t -> Expr t
+detuple t = expr $ do
+  js <- sequence $ fromDExpr <$> fromExprTuple t
+  return $ case js of
+    [j] -> j
+    _ -> Data 0 js . TupleT $ typeRef <$> js
+
+entuple :: forall t. (ExprTuple t) => Expr t -> t
+entuple = toExprTuple . entupleD n . erase
+  where TupleSize n = tupleSize :: TupleSize t
+entupleD :: Int -> DExpr -> [DExpr]
+entupleD 1 e = [e]
+entupleD n e = extractD e 0 <$> [0..(n-1)]
 
 newtype TupleSize t = TupleSize Int
 class ExprTuple t where

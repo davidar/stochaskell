@@ -17,9 +17,7 @@ spaced :: (a -> String) -> [a] -> String
 spaced f = unwords . map f
 
 churchId :: Id -> String
-churchId (Dummy    level i) = "i_"++ show level ++"_"++ show i
-churchId (Volatile level i) = "x_"++ show level ++"_"++ show i
-churchId (Internal level i) = "v_"++ show level ++"_"++ show i
+churchId = show
 
 churchConstVal :: ConstVal -> String
 churchConstVal val = case dimension val of
@@ -111,9 +109,9 @@ churchProgram prog
     "(pair "++ printedRets ++" (and\n"++
     indent (unlines printedConds) ++"))))\n  "++
     "(car p) (cdr p))"
-  where (rets, (PBlock block refs given)) = runProgExprs prog
+  where (rets, (PBlock block refs given ns)) = runProgExprs "church" prog
         printedRefs = indent . unlines $ zipWith g [0..] (reverse refs)
-        g i n = "("++ churchId (Volatile 0 i) ++" "++ churchPNode n ++")"
+        g i n = "("++ churchId (Volatile ns 0 i) ++" "++ churchPNode n ++")"
         printedRets | length rets == 1 = churchNodeRef (head rets)
                     | otherwise = "(list "++ churchNodeRef `spaced` rets ++")"
         finalLine | length rets == 1 = churchResult "(model)" $ typeRef (head rets)

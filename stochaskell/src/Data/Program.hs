@@ -6,6 +6,7 @@ module Data.Program where
 import Prelude hiding (isInfinite)
 
 import Control.Exception
+import qualified Control.Monad as Monad
 import Control.Monad.Guard
 import Control.Monad.State hiding (guard)
 import Data.Array.Abstract
@@ -59,6 +60,7 @@ data PNode = Dist { dName :: String
                     }
            | Switch { sHead :: NodeRef
                     , sAlts :: [(Lambda [NodeRef], [PNode])]
+                    , sNS :: NS
                     , typePNode :: Type
                     }
            deriving (Eq)
@@ -81,61 +83,63 @@ instance Show PNode where
   show (HODist d j0 js t) = unwords (d : ("("++ show j0 ++")") : map show js) ++" :: P "++ show t
   show (ITDist defs base rets invf invj t) = "ITDist"++
     show (defs, reverse base, rets, reverse invf, invj, t)
-  show (Switch e alts _) = "switch "++ show e ++" of\n"++ indent cases
+  show (Switch e alts ns _) = "switch "++ show e ++" of\n"++ indent cases
     where cases = unlines
-            ["C"++ show i ++" "++ intercalate " " (map show $ inputs dag) ++" ->\n"++
-              indent (showLet' dag . showPNodes (dagLevel dag) refs $ show ret)
+            [(if typeRef e == IntT then show (i+1) else "C"++ show i ++" "++
+             intercalate " " (map show $ inputs dag)) ++" ->\n"++
+              indent (showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret)
             | (i, (Lambda dag ret, refs)) <- zip [0..] alts]
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
                      , constraints :: Env
+                     , namespace   :: String
                      }
             deriving (Eq)
-emptyPBlock :: PBlock
+emptyPBlock :: NS -> PBlock
 emptyPBlock = PBlock emptyBlock [] emptyEnv
 
 pnodes :: PBlock -> Map Id PNode
-pnodes (PBlock _ refs _) = pnodes' 0 $ reverse refs
-pnodes' :: Int -> [PNode] -> Map Id PNode
-pnodes' d = Map.fromList . zip (Volatile d <$> [0..])
+pnodes (PBlock _ refs _ ns) = pnodes' ns 0 $ reverse refs
+pnodes' :: NS -> Level -> [PNode] -> Map Id PNode
+pnodes' ns d = Map.fromList . zip (Volatile ns d <$> [0..])
 
-showPNodes :: Int -> [PNode] -> String -> String
-showPNodes d refs ret = "do "++ indent' 0 3 s ++"\n"++
-                        "   return "++ ret
-  where s = unlines [show i ++" <- "++ show r | (i,r) <- Map.toList $ pnodes' d refs]
+showPNodes :: NS -> Level -> [PNode] -> String -> String
+showPNodes ns d refs ret = "do "++ indent' 0 3 s ++"\n"++
+                           "   return "++ ret
+  where s = unlines [show i ++" <- "++ show r | (i,r) <- Map.toList $ pnodes' ns d refs]
 
 -- lift into Block
 liftExprBlock :: MonadState PBlock m => State Block b -> m b
 liftExprBlock s = do
-    PBlock block rhs given <- get
+    PBlock block rhs given ns <- get
     let (ret, block') = runState s block
-    put $ PBlock block' rhs given
+    put $ PBlock block' rhs given ns
     return ret
 
 newtype Prog t = Prog { fromProg :: State PBlock t }
   deriving (Functor,Applicative,Monad)
 type P t = Prog t
-instance (Eq t) => Eq (Prog t) where p == q = runProg p == runProg q
-runProg :: Prog a -> (a, PBlock)
-runProg p = runState (fromProg p) emptyPBlock
+instance (Eq t) => Eq (Prog t) where p == q = runProg "eq" p == runProg "eq" q
+runProg :: NS -> Prog a -> (a, PBlock)
+runProg ns p = runState (fromProg p) $ emptyPBlock ns
 
 instance (ExprTuple t) => Show (Prog t) where
-  show p = showBlock block . showPNodes 0 (reverse refs) $ show rets
-    where (rets, PBlock (Block block) refs _) = runProgExprs p
+  show p = showBlock block . showPNodes ns 0 (reverse refs) $ show rets
+    where (rets, PBlock (Block block) refs _ ns) = runProgExprs "show" p
 
 fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NodeRef]
 fromProgExprs p = do
   es <- fromExprTuple <$> fromProg p
   mapM (liftExprBlock . fromDExpr) es
 
-runProgExprs :: (ExprTuple t) => Prog t -> ([NodeRef], PBlock)
-runProgExprs p = runState (fromProgExprs p) emptyPBlock
+runProgExprs :: (ExprTuple t) => NS -> Prog t -> ([NodeRef], PBlock)
+runProgExprs ns p = runState (fromProgExprs p) $ emptyPBlock ns
 
 -- all samples whose density depends on the value of non-fixed parameters
 -- ie. not constant wrt the given data
 modelSkeleton :: PBlock -> Set Id
-modelSkeleton pb@(PBlock block _ given) = tparams
+modelSkeleton pb@(PBlock block _ given _) = tparams
   where samples = pnodes pb
         params = Map.keysSet samples Set.\\ Set.map getId' (Map.keysSet given)
         dependents xs = Set.union xs . Map.keysSet $
@@ -150,7 +154,7 @@ evalProg :: (ExprTuple t) => Env -> Prog t -> Maybe t
 evalProg env prog = do
   xs <- sequence (evalNodeRef (Map.union given env) block <$> rets)
   return $ fromConstVals xs
-  where (rets, PBlock block _ given) = runProgExprs prog
+  where (rets, PBlock block _ given _) = runProgExprs "eval" prog
 
 caseP :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
 caseP n e ps = Prog $ do
@@ -164,25 +168,25 @@ caseP n e ps = Prog $ do
     _ -> fromProg $ caseP' n k ps
 
 caseP' :: Int -> NodeRef -> [[DExpr] -> P [DExpr]] -> P [DExpr]
-caseP' n k ps = distDs n $ do
+caseP' n k ps = distDs n $ \ns -> do
   d <- getNextLevel
   let tss = case typeRef k of
         UnionT t -> t
         IntT -> repeat []
   cases <- sequence $ do
     (ts,p) <- zip tss ps
-    let ids = [Dummy d i | i <- [0..(length ts - 1)]]
-        args = [DExpr . return $ Var i t | (i,t) <- zip ids ts]
+    let ids = [(Dummy d i, t) | (i,t) <- zip [0..] ts]
+        args = [DExpr . return $ Var i t | (i,t) <- ids]
     return $ do
       block <- get
       let s = do
             r <- fromProg $ p args
             liftExprBlock . sequence $ fromDExpr <$> r
-          (ret, PBlock (Block (dag:block')) acts _) = runState s $
-            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv
+          (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
+            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv ns
       put $ Block block'
       return (Lambda dag ret, reverse acts)
-  return $ Switch k cases (tupleT . unreplicate $ map typeRef . fHead . fst <$> cases)
+  return $ Switch k cases ns (tupleT . foldr1 (zipWith E.coerce) $ map typeRef . fHead . fst <$> cases)
 
 fromCaseP :: forall c t. (Constructor c, ExprTuple t) => (c -> P t) -> Expr c -> P t
 fromCaseP p e = toExprTuple <$> caseP n (erase e)
@@ -207,26 +211,26 @@ mixture qps = do
 ------------------------------------------------------------------------------
 
 dist :: State Block PNode -> Prog (Expr t)
-dist s = Expr <$> distD s
-distD :: State Block PNode -> Prog DExpr
+dist = dist' . const
+dist' :: (NS -> State Block PNode) -> Prog (Expr t)
+dist' s = Expr <$> distD s
+distD :: (NS -> State Block PNode) -> Prog DExpr
 distD s = Prog $ do
-    d <- liftExprBlock s
-    PBlock block rhs given <- get
-    put $ PBlock block (d:rhs) given
+    PBlock _ _ _ ns <- get
+    d <- liftExprBlock $ s ns
+    PBlock block rhs given _ <- get
+    put $ PBlock block (d:rhs) given ns
     let depth = dagLevel $ topDAG block
         k = length rhs
-        name = Volatile depth k
+        name = Volatile ns depth k
         t = typePNode d
         v = Var name t
     _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
     return (DExpr $ return v)
-distDs :: Int -> State Block PNode -> Prog [DExpr]
+distDs :: Int -> (NS -> State Block PNode) -> Prog [DExpr]
 distDs n s = Prog $ do
   e <- fromProg $ distD s
-  v <- liftExprBlock $ fromDExpr e
-  return . map (DExpr . return) $ if n > 1
-    then Extract v 0 <$> [0..(n-1)]
-    else [v]
+  return $ if n == 1 then [e] else extractD e 0 <$> [0..(n-1)]
 
 truncated :: (Expr t) -> (Expr t) -> P (Expr t) -> P (Expr t)
 truncated a b p = Prog $ do
@@ -234,41 +238,39 @@ truncated a b p = Prog $ do
   j <- liftExprBlock $ fromExpr b
   x <- fromProg p
   (Var name t) <- liftExprBlock $ fromExpr x
-  PBlock block (d:rhs) given <- get
-  when (name /= Volatile (dagLevel $ topDAG block) (length rhs)) $
+  PBlock block (d:rhs) given ns <- get
+  when (name /= Volatile ns (dagLevel $ topDAG block) (length rhs)) $
     error "truncated: program does not appear to be primitive"
   let g k | (Const c _) <- k, isInfinite c = Nothing
           | otherwise = Just k
       t' = SubrangeT t (g i) (g j)
       d' = d { typePNode = t' }
-  put $ PBlock block (d':rhs) given
+  put $ PBlock block (d':rhs) given ns
   return (expr $ return (Var name t'))
 
 transform :: (ExprTuple t) => Prog t -> Prog t
 transform prog = Prog $ do
-  (PBlock block acts given) <- get
+  PBlock block acts given ns <- get
   assert (given == emptyEnv) $ return ()
   let d = nextLevel block
       dBlock = deriveBlock (DAG d [] Bimap.empty) block
-      (rets, PBlock dBlock'@(Block (dag:block')) acts' _) =
-        runState (fromProgExprs prog) $ PBlock dBlock [] emptyEnv
+      (rets, PBlock dBlock'@(Block (dag:block')) acts' _ _) =
+        runState (fromProgExprs prog) $ PBlock dBlock [] emptyEnv ns
       ids = Dummy (d-1) <$> [0..(length rets - 1)]
       zs = zipWith Var ids $ map typeRef rets
       eenv = solveTupleD dBlock' rets (DExpr . return <$> zs) emptyEEnv
       invfs = [fromMaybe (error "not invertible") $ Map.lookup (LVar x) eenv
-              | x <- map (Volatile d) [0..(length acts' - 1)]]
+              | (x,t) <- map (Volatile ns d) [0..] `zip` map typePNode (reverse acts')]
       ts = typeRef <$> rets
       t = if length rets > 1 then TupleT ts else head ts
       jacobian = [[collapseArray $ derivD emptyEEnv u (Var (Dummy 0 j) (ts!!j))
                   | u <- invfs] | j <- [0..(length rets - 1)]]
       pnode = ITDist dag acts' rets (reverse invfs) jacobian t
-  put $ PBlock (Block block') (pnode:acts) emptyEnv
+  put $ PBlock (Block block') (pnode:acts) emptyEnv ns
   let k = length acts
-      name = Volatile (d-1) k
+      name = Volatile ns (d-1) k
       v = Var name t
-  return . toExprTuple . map (DExpr . return) $ if length rets > 1
-    then Extract v 0 <$> [0..(length rets - 1)] -- TODO extractD
-    else [v]
+  return $ entuple (expr $ return v)
 
 instance Distribution Bernoulli R Prog B where
     sample (Bernoulli p) = dist $ do
@@ -368,14 +370,14 @@ instance Distribution Normal (RVec,RMat) Prog RVec where
 instance (ScalarType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (Expr [t]) where
     sample (OrderedSample (n,prog)) = Prog $ do
         i <- liftExprBlock $ fromExpr n
-        PBlock block rhs given <- get
-        let (_, PBlock block' [act] _) =
-              runState (head <$> fromProgExprs prog) $ PBlock block [] emptyEnv
+        PBlock block rhs given ns <- get
+        let (_, PBlock block' [act] _ _) =
+              runState (head <$> fromProgExprs prog) $ PBlock block [] emptyEnv ns
             d = HODist "orderedSample" act [i] (ArrayT Nothing [(Const 1 IntT,i)] (typePNode act))
-        put $ PBlock block' (d:rhs) given
+        put $ PBlock block' (d:rhs) given ns
         let depth = dagLevel $ topDAG block
             k = length rhs
-            name = Volatile depth k
+            name = Volatile ns depth k
             t = typePNode d
             v = Var name t
         _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
@@ -461,26 +463,26 @@ instance forall r f. ScalarType r =>
       i <- fromExpr a
       j <- fromExpr b
       return (i,j)
-    PBlock block dists given <- get
+    PBlock block dists given ns <- get
     let d = nextLevel block
-        ids = [ Dummy d i | i <- [1..length sh] ]
-        p = ar ! [expr . return $ Var i IntT | i <- ids]
-        (ret, PBlock (Block (dag:block')) [act] _) =
+        ids = [(Dummy d i, IntT) | i <- [1..length sh]]
+        p = ar ! [expr . return $ Var i t | (i,t) <- ids]
+        (ret, PBlock (Block (dag:block')) [act] _ _) =
           runState (head <$> fromProgExprs p) $
-            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv
+            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv ns
         TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
         loopType = ArrayT Nothing sh t
         loop = Loop sh (Lambda dag act) loopType
-    put $ PBlock (Block block') (loop:dists) given
-    let name = Volatile (d-1) (length dists)
+    put $ PBlock (Block block') (loop:dists) given ns
+    let name = Volatile ns (d-1) (length dists)
         v = Var name loopType
     _ <- liftExprBlock . simplify $ Apply "getExternal" [v] loopType
     return $ case ret of
-      Var (Volatile depth 0) _ | depth == d ->
+      Var (Volatile ns depth 0) _ | depth == d ->
         expr $ return v :: Expr f
-      Index vec [Var (Volatile depth 0) _] | depth == d ->
+      Index vec [Var (Volatile ns depth 0) _] | depth == d ->
         expr . floatArray' $ Array sh (Lambda dag (Index vec [ref])) loopType
-          where ref = Index v (reverse [Var i IntT | i <- ids])
+          where ref = Index v (reverse [Var i t | (i,t) <- ids])
       _ -> error $ "non-trivial transform in joint: "++ show ret
 
 
@@ -492,13 +494,13 @@ type instance ConditionOf (Prog ()) = Expr Bool
 instance MonadGuard Prog where
     guard cond = Prog $ do -- TODO: weaker assumptions
         (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
-        (PBlock block dists given) <- get
+        PBlock block dists given ns <- get
         let dag = topDAG block
         assert (i == length (nodes dag) - 1) $ return ()
         let (Just (Apply "==" [Var j _, Const a _] _)) =
               lookup i $ nodes dag
             dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
-        put $ PBlock (deriveBlock dag' block) dists (Map.insert (LVar j) a given)
+        put $ PBlock (deriveBlock dag' block) dists (Map.insert (LVar j) a given) ns
 
 dirac :: (Expr t) -> Prog (Expr t)
 dirac c = do
@@ -515,30 +517,33 @@ dirac c = do
 
 pdf :: (ExprTuple t) => Prog t -> t -> R
 pdf prog vals = pdfPBlock False env pb
-  where (rets, pb@(PBlock block _ _)) = runProgExprs prog
-        env = solveTuple block rets vals emptyEEnv
+  where (rets, pb) = runProgExprs "pdf" prog
+        env = solveTuple (definitions pb) rets vals emptyEEnv
 
 pdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
 pdfC = caseOf . pdf
 
 lpdf :: (ExprTuple t) => Prog t -> t -> R
 lpdf prog vals = pdfPBlock True env pb
-  where (rets, pb@(PBlock block _ _)) = runProgExprs prog
-        env = solveTuple block rets vals emptyEEnv
+  where (rets, pb) = runProgExprs "lpdf" prog
+        env = solveTuple (definitions pb) rets vals emptyEEnv
 
 lpdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
 lpdfC = caseOf . lpdf
 
 pdfPBlock :: Bool -> EEnv -> PBlock -> R
-pdfPBlock lg env (PBlock block refs _) = (if lg then sum else product) $ do
-    (i,d) <- zip [0..] $ reverse refs
-    let ident = Volatile (dagLevel $ topDAG block) i
-    return $ case Map.lookup (LVar ident) env of
-      Just val -> pdfPNode lg env block d val
-      Nothing  -> trace (show ident ++" is unconstrained in "++ show env) $ if lg then 0 else 1
+pdfPBlock lg env pb@(PBlock block refs _ ns) = pdfPNodes (pnodes pb) ns lg env block refs
 
-pdfPNode :: Bool -> EEnv -> Block -> PNode -> DExpr -> R
-pdfPNode lg env block (Dist f args _) x = expr $ do
+pdfPNodes :: Map Id PNode -> NS -> Bool -> EEnv -> Block -> [PNode] -> R
+pdfPNodes r ns lg env block refs = (if lg then sum else product) $ do
+    (i,d) <- zip [0..] $ reverse refs
+    let ident = Volatile ns (dagLevel $ topDAG block) i
+    return $ case Map.lookup (LVar ident) env of
+      Just val -> pdfPNode r lg env block d val
+      Nothing  -> trace (show ident ++" is unconstrained") $ if lg then 0 else 1
+
+pdfPNode :: Map Id PNode -> Bool -> EEnv -> Block -> PNode -> DExpr -> R
+pdfPNode _ lg env block (Dist f args _) x = expr $ do
   i <- fromDExpr x
   case i of
     Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
@@ -546,25 +551,26 @@ pdfPNode lg env block (Dist f args _) x = expr $ do
     _ -> do
       js <- sequence $ extractNodeRef env block <$> args
       simplify $ Apply (f ++ if lg then "_lpdf" else "_pdf") (i:js) RealT
-pdfPNode lg env block (Loop _ (Lambda ldag body) _) a
+pdfPNode r lg env block (Loop _ (Lambda ldag body) _) a
   | (Unconstrained _,_) <- runDExpr a = if lg then 0 else 1
   | (PartiallyConstrained{},_) <- runDExpr a = error "TODO: partially constrained"
   | lg        = E.foldl g 0 (Expr a)
   | otherwise = E.foldl f 1 (Expr a)
   where block' = deriveBlock ldag block
-        f p x = p * pdfPNode lg env block' body (erase x) -- TODO only works for iid
-        g l x = l + pdfPNode lg env block' body (erase x)
-pdfPNode lg env block (HODist "orderedSample" d [n] _) x = expr $ do
+        f p x = p * pdfPNode r lg env block' body (erase x) -- TODO only works for iid
+        g l x = l + pdfPNode r lg env block' body (erase x)
+pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
   i <- fromDExpr x
   case i of
     Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
-    PartiallyConstrained [(lo,hi)] [id] [([k],v)] _ -> fromExpr $
-      pdfOrderStats lg env block d n (lo,hi) id (k,v)
-pdfPNode _ _ _ node x = error $ "pdfPNode "++ show node ++" "++ show x
+    PartiallyConstrained [(lo,hi)] [(id,t)] [([k],v)] _ -> fromExpr $
+      pdfOrderStats r lg env block d n (lo,hi) (id,t) (k,v)
+    _ -> error $ "pdfPNode orderedSample "++ show x
+pdfPNode _ _ _ _ node x = error $ "pdfPNode "++ show node ++" "++ show x
 
-pdfOrderStats :: Bool -> EEnv -> Block -> PNode -> NodeRef
-              -> Interval DExpr -> Id -> (DExpr,DExpr) -> R
-pdfOrderStats lg env block d n (lo,hi) dummy (k,v) = if lg
+pdfOrderStats :: Map Id PNode -> Bool -> EEnv -> Block -> PNode -> NodeRef
+              -> Interval DExpr -> (Id,Type) -> (DExpr,DExpr) -> R
+pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) = if lg
   then    logFactorial' n'  + intervalL +     sum' intervals + intervalR +     sum' points
   else cast (factorial' n') * intervalL * product' intervals * intervalR * product' points
   where fcdf = cdfPNode env block d
@@ -582,7 +588,7 @@ pdfOrderStats lg env block d n (lo,hi) dummy (k,v) = if lg
         intervalR = let (j,y) = kv' hi in if lg
           then log (1 - fcdf y) *  cast (n'-j) -    logFactorial' (n'-j)
           else     (1 - fcdf y) ** cast (n'-j) / cast (factorial' (n'-j))
-        points = vector [ let (_,x) = (kv' $ erase i) in pdfPNode lg env block d x
+        points = vector [ let (_,x) = (kv' $ erase i) in pdfPNode r lg env block d x
                         | i::Z <- (Expr lo)...(Expr hi) ] :: RVec
         sum' = E.foldl (+) 0
         product' = E.foldl (*) 1
@@ -595,10 +601,10 @@ cdfPNode env block (Dist f args _) x = expr $ do
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env' pb / adjust
-  where (rets, pb@(PBlock block acts _)) = runProgExprs prog
+  where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "density" prog
         env = unifyTuple block rets vals emptyEnv
         env' = evalBlock block env
-        jacobian = [ [ diffNodeRef env' block r (Volatile 0 i) (typePNode d)
+        jacobian = [ [ diffNodeRef env' block r (Volatile ns 0 i) (typePNode d)
                      | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
                    | r <- rets, typeRef r /= IntT ]
         isLowerTri = and [ isZeros `all` drop i row | (i,row) <- zip [1..] jacobian ]
@@ -609,14 +615,14 @@ density prog vals = densityPBlock env' pb / adjust
 
 density' :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density' prog vals = densityPBlock env' pb
-  where (rets, pb@(PBlock block _ _)) = runProgExprs prog
-        env = unifyTuple block rets vals emptyEnv
-        env' = evalBlock block env
+  where (rets, pb) = runProgExprs "density'" prog
+        env = unifyTuple (definitions pb) rets vals emptyEnv
+        env' = evalBlock (definitions pb) env
 
 densityPBlock :: Env -> PBlock -> LF.LogFloat
-densityPBlock env (PBlock block refs _) = product $ do
+densityPBlock env (PBlock block refs _ ns) = product $ do
     (i,d) <- zip [0..] $ reverse refs
-    let ident = Volatile (dagLevel $ topDAG block) i
+    let ident = Volatile ns (dagLevel $ topDAG block) i
     return $ case Map.lookup (LVar ident) env of
       Just val -> densityPNode env block d val
       Nothing  -> trace (show ident ++" is unconstrained") $ LF.logFloat 1
@@ -680,7 +686,7 @@ densityPNode env block (Dist "discreteUniform" [a,b] _) x =
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
 densityPNode env block (Loop shp (Lambda ldag body) _) a = product
-    [ let env' = Map.fromList (map LVar (inputs ldag) `zip` i) `Map.union` env
+    [ let env' = Map.fromList (inputsL ldag `zip` i) `Map.union` env
       in densityPNode env' block' body (fromRational x)
     | (i,x) <- evalRange env block shp `zip` entries a ]
   where block' = deriveBlock ldag block
@@ -704,8 +710,8 @@ sampleP' env p = do
     env' <- samplePNodes env block idents
     let env'' = Map.filterWithKey (const . not . isInternal . getId') env'
     return . fromConstVals $ map (fromJust . evalNodeRef env'' block) rets
-  where (rets, PBlock block refs _) = runProgExprs p
-        idents = [ (Volatile (dagLevel $ topDAG block) i, d)
+  where (rets, PBlock block refs _ ns) = runProgExprs "sim" p
+        idents = [ (Volatile ns (dagLevel $ topDAG block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
 
 samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
@@ -796,7 +802,7 @@ samplePNode env block (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
 samplePNode env block (Loop shp (Lambda ldag hd) _) =
   listArray' (evalShape env block shp) <$> sequence arr
   where block' = deriveBlock ldag block
-        arr = [ let env' = Map.fromList (map LVar (inputs ldag) `zip` idx) `Map.union` env
+        arr = [ let env' = Map.fromList (inputsL ldag `zip` idx) `Map.union` env
                 in samplePNode env' block' hd
               | idx <- evalRange env block shp ]
 
@@ -804,14 +810,15 @@ samplePNode env block (HODist "orderedSample" d [n] _) =
   (fromList . sort) <$> sequence [samplePNode env block d | _ <- [1..n']]
   where n' = toInteger . fromJust $ evalNodeRef env block n
 
-samplePNode env block (Switch hd alts _) = do
-  env' <- samplePNodes (Map.fromList (map LVar (inputs ldag) `zip` ks) `Map.union` env) block' idents
-  let env'' = Map.filterWithKey (const . not . isInternal . getId') env'
-  return . constTuple . fromJust . sequence $ evalNodeRef env'' block' <$> lhd
+samplePNode env block (Switch hd alts ns _) = do
+  let env' = Map.fromList (inputsL ldag `zip` ks) `Map.union` env
+  env'' <- samplePNodes env' block' idents
+  let env''' = Map.filterWithKey (const . not . isInternal . getId') env''
+  return . constTuple . fromJust . sequence $ evalNodeRef env''' block' <$> lhd
   where Tagged c ks = fromJust $ evalNodeRef env block hd
         (Lambda ldag lhd, ds) = alts !! c
         block' = deriveBlock ldag block
-        idents = [ (Volatile (dagLevel ldag) i, d) | (i,d) <- zip [0..] ds ]
+        idents = [ (Volatile ns (dagLevel ldag) i, d) | (i,d) <- zip [0..] ds ]
         constTuple [x] = x
         constTuple xs = Tagged 0 xs
 
@@ -853,7 +860,7 @@ mhAdjust adjust target proposal x = do
   accept <- bernoulli $ if a > 1 then 1 else a
   return $ if accept then y else x
 
-rjmc :: (ScalarType e) => P (Expr e) -> (Expr e -> P (Expr e)) -> Expr e -> P (Expr e)
+rjmc :: (ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => P t -> (t -> P t) -> t -> P t
 rjmc target proposal x = do
   y <- proposal x
   let f = lpdf target -- TODO: jacobian adjustment for transformed dist
@@ -861,27 +868,41 @@ rjmc target proposal x = do
   accept <- bernoulli $ ifB (a >* 1) 1 a
   return $ ifB accept y x
 
-rjmcC :: Constructor t => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)
+rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)
 rjmcC p = switchOf . rjmc p . fromCaseP
 
-rjmcTransRatio :: (ScalarType e) => (Expr e -> P (Expr e)) -> Expr e -> Expr e -> R
+-- TODO: subst y_ -> x' after differentiation?
+-- TODO: sub back in original x y at the end
+rjmcTransRatio :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
 rjmcTransRatio q x y = lu' - lu + logDet jacobian
-  where lu  = q x `lpdf` y
-        lu' = q y `lpdf` x
-        getAux a b =
-          let (rets, PBlock block _ _) = runProgExprs (q a)
-              env = solveTuple block rets b emptyEEnv
-              p (LVar Volatile{}) _ = True
+  where lu  = q x_ `lpdf` y_
+        lu' = q y_ `lpdf` x_
+        getAux ns a b =
+          let (rets, pb) = runProgExprs ns (q a)
+              env = solveTuple (definitions pb) rets b emptyEEnv
+              p (LVar i@(Volatile ns' _ _)) _ | ns' == ns =
+                let pn = fromJust . Map.lookup i $ pnodes pb
+                in typePNode pn /= IntT
               p _ _ = False
           in Map.filterWithKey p env
-        u' = getAux y x
-        u = let (_,PBlock _ refs _) = runProgExprs (q x)
-            in [Var (Volatile 0 i) (typePNode r) | (i,r) <- [0..] `zip` reverse refs]
-        x' = let ([ret], PBlock block _ _) = runProgExprs (q x)
-             in reDExpr emptyEEnv block ret
+        u' = getAux "qy" y_ x_
+        u = let (_,PBlock _ refs _ ns) = runProgExprs "qx" (q x_)
+            in [Var (Volatile ns 0 i) (typePNode r)
+               | (i,r) <- [0..] `zip` reverse refs, typePNode r /= IntT]
+        x_::t = entuple . expr $ do
+          t <- extractType emptyEEnv block (typeRef ret)
+          return $ Var (Volatile "rjx" 0 0) t
+          where (ret, block) = runExpr (detuple x)
+        y_::t = entuple . expr $ do
+          t <- extractType emptyEEnv block (typeRef ret)
+          return $ Var (Volatile "rjy" 0 0) t
+          where (ret, block) = runExpr (detuple y)
+        x' = let (rets, pb) = runProgExprs "qx" (q x_)
+                 tup = toExprTuple $ reDExpr emptyEEnv (definitions pb) <$> rets :: t
+             in erase $ detuple tup
         d_ = derivD emptyEEnv
-        d a = d_ a . fst . runExpr
-        top =   d x' x                     : [d_ x' r          | r <- u]
-        bot = [(d v x + (d v y <# d x' x)) : [d v y <> d_ x' r | r <- u]
+        d a = d_ a . fst . runExpr . detuple
+        top =   d x' x_                       : [d_ x' r           | r <- u]
+        bot = [(d v x_ + (d v y_ <> d x' x_)) : [d v y_ <> d_ x' r | r <- u]
               | v <- Map.elems u']
-        jacobian = Expr . substD (getAux x y) $ blockMatrix (top:bot) :: RMat
+        jacobian = Expr . substD (getAux "qx" x_ y_) $ blockMatrix (top:bot) :: RMat

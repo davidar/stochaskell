@@ -5,6 +5,7 @@ module Data.Array.Abstract ( module Data.Array.Abstract, LA.tr, LA.tr' ) where
 
 import qualified Data.Array.Unboxed as A
 import Data.Ix
+import Debug.Trace
 import Foreign.Storable (Storable)
 import GHC.Exts
 import qualified Numeric.LinearAlgebra as LA
@@ -80,13 +81,14 @@ instance Monad (AbstractArray i) where
 fromShape :: [Interval a] -> AbstractArray a [a]
 fromShape = flip AArr id
 
-coerceShape :: (Eq a) => [Interval a] -> [Interval a] -> [Interval a]
-coerceShape sh sh' = zipWith g sh sh'
-  where g (lo,hi) (lo',hi') | lo /= lo' = error "dimension lower bound mismatch"
-                            | hi  == hi' = (lo,hi)
-                            | lo' == hi' = (lo,hi)
-                            | lo  == hi  = (lo,hi')
-                            | otherwise = error "dimensions incompatible"
+coerceShape :: (Eq a, Show a) => [Interval a] -> [Interval a] -> Maybe [Interval a]
+coerceShape sh sh' = sequence $ zipWith g sh sh'
+  where g (lo,hi) (lo',hi') | lo /= lo' = trace "dimension lower bound mismatch" Nothing
+                            | hi  == hi' = Just (lo,hi)
+                            | lo' == hi' = Just (lo,hi)
+                            | lo  == hi  = Just (lo,hi')
+                            | otherwise = flip trace Nothing $
+                              "dimensions incompatible: "++ show (lo,hi) ++" "++ show (lo',hi')
 
 infix 5 ...
 (...) :: a -> a -> AbstractArray a a
@@ -134,6 +136,7 @@ instance (A.IArray A.UArray e, Ix i) => Indexable (A.UArray i e) i e where
 class (Indexable v i e) => Vector v i e | v -> i e, i e -> v where
     vector :: AbstractArray i e -> v
     blockVector :: [v] -> v
+    vectorSize :: v -> i
 
 data ShapedVector t = ShVec (Interval Integer) (LAD.Vector t)
 instance (Show t, Storable t) => Show (ShapedVector t) where

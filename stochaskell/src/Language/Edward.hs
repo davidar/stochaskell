@@ -23,9 +23,7 @@ dtype RealT = "tf.float32"
 dtype (ArrayT _ _ t) = dtype t
 
 edId :: Id -> String
-edId (Dummy    level i) =  "index_"++ show level ++"_"++ show i
-edId (Volatile level i) = "sample_"++ show level ++"_"++ show i
-edId (Internal level i) =  "value_"++ show level ++"_"++ show i
+edId = show
 
 edNodeRef :: NodeRef -> String
 edNodeRef (Var s _) = edId s
@@ -146,7 +144,7 @@ edProgram numSamples numSteps stepSize prog init =
                ",n_steps="++ show numSteps ++")\n"++
   "sys.stdout = stdout\n"++
   "print(map(list, zip(*[q.params.eval().tolist() for q in latent.values()])))"
-  where (rets, pb@(PBlock block _ given)) = runProgExprs prog
+  where (_, pb@(PBlock block _ given _)) = runProgExprs "ed" prog
         skel = modelSkeleton pb
         pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb
         latent = "OrderedDict(["++ g `commas` (Map.keys pn \\ [k | LVar k <- Map.keys given]) ++"])"
@@ -172,9 +170,11 @@ hmcEdward numSamples numSteps stepSize prog init =
       edProgram numSamples numSteps stepSize prog init
     setCurrentDirectory pwd
     let vals = zipWith reshape lShapes <$> read out
-    return [fromJust $ evalProg env prog
-           | xs <- vals, let env = Map.fromList $ zip (map LVar $ Map.keys latents) xs]
-  where (rets, pb@(PBlock block _ given)) = runProgExprs prog
+    return [let env = Map.fromList [(LVar i, x)
+                                   | ((i,d),x) <- Map.toAscList latents `zip` xs]
+            in fromJust $ evalProg env prog
+           | xs <- vals]
+  where (rets, pb@(PBlock block _ given _)) = runProgExprs "ed" prog
         dump env = forM_ (Map.toList env) $ \(LVar i,c) -> do
                      writeNPy (edId i ++".npy") c
         latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
