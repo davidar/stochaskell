@@ -13,6 +13,7 @@ import Data.Expression hiding (const)
 import Data.Expression.Const hiding (isScalar)
 import Data.Ix
 import Data.List
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
@@ -225,6 +226,9 @@ unifyNode _ _ FoldScan{} _ = trace "WARN not unifying fold/scan" emptyEnv
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
 
+aggregateLVals :: EEnv -> EEnv
+aggregateLVals = aggregateFields . aggregateConds
+
 aggregateFields :: EEnv -> EEnv
 aggregateFields env = Map.union env' env
   where kvss = groupBy f [(k,v) | (k@LField{},v) <- Map.toAscList env]
@@ -232,19 +236,30 @@ aggregateFields env = Map.union env' env
         env' = Map.fromList $ do
           kvs <- kvss
           let id = unreplicate $ getId' . fst <$> kvs
-          unless (and [c == 0 | (LField _ c _,_) <- kvs]) $ error "not a tuple"
-          unless (and [i == j | ((LField _ _ i,_),j) <- zip kvs [0..]]) $ error "missing fields"
-          let val = DExpr $ do
-                js <- sequence $ fromDExpr . snd <$> kvs
-                return $ Data 0 js (TupleT $ typeRef <$> js)
-          return (LVar id, val)
+          unless (and [c == 0 | (LField _ _ c _,_) <- kvs]) $ error "not a tuple"
+          if (and [i == j | ((LField _ _ _ i,_),j) <- zip kvs [0..]]) then
+            let val = DExpr $ do
+                  js <- sequence $ fromDExpr . snd <$> kvs
+                  return $ Data 0 js (TupleT $ typeRef <$> js)
+            in return (LVar id, val)
+          else trace ("WARN missing fields: only have "++ show (fst <$> kvs)) mzero
+
+aggregateConds :: EEnv -> EEnv
+aggregateConds env = Map.union env' env
+  where kvss = groupBy f [(k,v) | (k@LCond{},v) <- Map.toAscList env]
+        f (LCond a _,_) (LCond b _,_) = a == b
+        env' = Map.fromList $ do
+          kvs <- kvss
+          let lval = unreplicate [l | (LCond l _,_) <- kvs]
+              conds = [(c,val) | (LCond _ c,val) <- kvs]
+          return (lval, condD conds)
 
 solve :: Expr t -> Expr t -> EEnv -> EEnv
-solve e val env = aggregateFields $ env `Map.union` solveNodeRef env block ret (erase val)
+solve e val env = aggregateLVals $ env `Map.union` solveNodeRef env block ret (erase val)
   where (ret, block) = runExpr e
 
 solveTupleD :: Block -> [NodeRef] -> [DExpr] -> EEnv -> EEnv
-solveTupleD block rets vals = aggregateFields . compose
+solveTupleD block rets vals = aggregateLVals . compose
   [ \env -> env `Map.union` solveNodeRef env block r e
   | (r,e) <- zip rets vals ]
 
@@ -260,9 +275,41 @@ solveNodeRef env block (Data c rs _) val = Map.unions
 solveNodeRef env block (Index (Var i@Volatile{} _) js) val =
   Map.singleton (LSub i $ reDExpr env block <$> js) val
 solveNodeRef _ _ (Extract (Var i@Volatile{} t) c j) val =
-  Map.singleton (LField i c j) val
+  Map.singleton (LField i t c j) val
+solveNodeRef env block (Extract (Var i@Internal{} _) 0 j) val
+  | Case hd alts _ <- lookupBlock i block, IntT <- typeRef hd =
+  solveCase env block hd [Lambda dag (rets !! j) | Lambda dag rets <- alts] val
 solveNodeRef _ _ ref val =
   trace ("WARN assuming "++ show ref ++" unifies with "++ "[...]" {-show val-}) emptyEEnv
+
+condEnv :: DExpr -> EEnv -> EEnv
+condEnv = Map.mapKeys . flip LCond
+
+solveCase :: EEnv -> Block -> NodeRef -> [Lambda NodeRef] -> DExpr -> EEnv
+solveCase env block hd alts val = Map.unions $ do
+  (k,env') <- zip [1..] envs
+  let env'' = Map.fromList $ do
+        (l,v) <- Map.toAscList . solveNodeRef env block hd $ integer k
+        return (LCond l $ but (k-1) conds, v)
+  return $ env'' `Map.union` condEnv (reDExpr env block hd ==* integer k) env'
+  where given :: EEnv -> DExpr
+        given env' = List.foldl (&&*) true $ do
+          (k,v) <- Map.toAscList env'
+          case k of
+            --LVar i ->
+            --  let a = DExpr . return $ Var i UnknownType
+            --  in return $ a ==* v
+            LField i t c j ->
+              let a = DExpr . return $ Extract (Var i t) c j
+              in return $ a ==* v
+            _ -> trace ("WARN ignoring "++ show k) mzero
+        but k bs = let bs' = take k bs ++ drop (k+1) bs
+                   in (bs !! k) &&* notB (List.foldl (||*) false bs')
+        (conds,envs) = unzip $ do
+          Lambda dag ret <- alts
+          let block' = deriveBlock dag block
+              env' = solveNodeRef env block' ret val
+          return (given env', env')
 
 unconstrained :: Type -> DExpr
 unconstrained = DExpr . return . Unconstrained
@@ -310,10 +357,10 @@ solveNode env block (Apply "**" [a,b] _) val =
   trace ("WARN assuming "++ show a ++" ** "++ show b ++" = "++ "[...]" {-show val-}) Map.empty
 solveNode env block (Apply "ifThenElse" [c,(Data 0 as _),(Data 1 bs _)] _) val =
   solveNodeRefs env block $ (c,c') : zip as as' ++ zip bs bs'
-  where c' = caseD val [const true, const false]
-        as' = [caseD val [const $ extractD val 0 i, const $ unconstrained t]
+  where c' = caseD val [const [true], const [false]]
+        as' = [caseD val [const [extractD val 0 i], const [unconstrained t]]
               | (i,a) <- zip [0..] as, let t = typeRef a]
-        bs' = [caseD val [const $ unconstrained t, const $ extractD val 1 i]
+        bs' = [caseD val [const [unconstrained t], const [extractD val 1 i]]
               | (i,b) <- zip [0..] bs, let t = typeRef b]
 solveNode env block (Apply "replaceIndex" [a,e,d] _) val =
   trace ("WARN assuming "++ show a ++" = "++ show val ++" except at index "++ show e) $
@@ -375,8 +422,8 @@ diffNodeRef :: Env -> Block -> NodeRef -> Id -> Type -> ConstVal
 diffNodeRef env block (Var i@Internal{} _) var t =
   diffNode env block (lookupBlock i block) var t
 diffNodeRef env block (Var i s) var t
-  | i == var  = eye   (1, numelType env block s)
-  | otherwise = zeros (1, numelType env block s) (1, numelType env block t)
+  | i == var  = eye   (numelType env block s)
+  | otherwise = zeros (numelType env block s) (numelType env block t)
 
 diffNode :: Env -> Block -> Node -> Id -> Type -> ConstVal
 diffNode env block (Apply "+" [a,b] _) var t | isJust a' =
@@ -407,7 +454,16 @@ independent (Index u _) v = independent u v
 independent (Extract u c j) (Extract u' c' j')
   | independent u u' || c /= c' || j /= j' = True
 independent (Extract u _ _) v = independent u v
+independent u (Extract v _ _) = independent u v
+independent Const{} _ = True
 independent _ _ = False
+
+eye' :: EEnv -> Block -> NodeRef -> DExpr
+eye' env block v = eye (vectorSize $ reDExpr env block v)
+
+zeros' :: EEnv -> Block -> NodeRef -> NodeRef -> DExpr
+zeros' env block u v = zeros (vectorSize $ reDExpr env block u)
+                             (vectorSize $ reDExpr env block v)
 
 derivNodeRef :: EEnv -> Block -> NodeRef -> NodeRef -> DExpr
 derivNodeRef _ _ u _ | typeRef u == IntT = error $ "can't differentiate integer "++ show u
@@ -420,33 +476,28 @@ derivNodeRef env block i (Data _ js _) = blockMatrix
   [[derivNodeRef env block i j | j <- js, typeRef j /= IntT]]
 derivNodeRef env block (Var i@Internal{} _) var =
   derivNode env block (lookupBlock i block) var
-derivNodeRef env block u v
-  | independent u v = constDExpr 0 t
-  | u == v = case t of
-    _ | isScalar t -> constDExpr 1 t
-    ArrayT{} -> eye (1, vectorSize $ reDExpr env block v)
-  where t = typeRef u `typeMatrix` typeRef v
-derivNodeRef _ _ (Const _ t) v = constDExpr 0 $ t `typeMatrix` typeRef v
-derivNodeRef env block (Index u [x]) (Index v [y]) | u == v =
+derivNodeRef env block u v | independent u v = zeros' env block u v
+derivNodeRef env block u@Var{} v@Var{} | getId u == getId v = eye' env block v
+derivNodeRef env block u@Extract{} v | u == v = eye' env block v
+derivNodeRef env block (Index i [x]) (Index j [y]) | i == j =
   ifB (x' ==* y') (constDExpr 1 t) (constDExpr 0 t)
   where x' = reDExpr env block x
         y' = reDExpr env block y
-        t = typeIndex 1 (typeRef u) `typeMatrix` typeIndex 1 (typeRef v)
+        t = typeIndex 1 $ typeRef i
 derivNodeRef env block (Index u [x]) v | u == v = asRow $
   vector [ ifB (x' ==* j) (constDExpr 1 t) (constDExpr 0 t) | j <- 1...n' ]
   where t = typeIndex 1 $ typeRef u
         n' = vectorSize $ reDExpr env block u
         x' = reDExpr env block x
-derivNodeRef _ _ (Index u js) v | independent u v =
-  constDExpr 0 $ typeIndex (length js) (typeRef u) `typeMatrix` typeRef v
-derivNodeRef env block i@(Extract u 0 k) v
-  | TupleT ts <- typeRef u, u == v = blockMatrix
-    [[derivNodeRef env block i (Extract v 0 j) | (j,t) <- zip [0..] ts, t /= IntT]]
-  | TupleT ts <- typeRef u, independent u v =
-    constDExpr 0 $ (ts !! k) `typeMatrix` typeRef v
-derivNodeRef env block u j@(Extract v 0 k)
-  | TupleT ts <- typeRef v, independent u v =
-    constDExpr 0 $ typeRef u `typeMatrix` (ts !! k)
+derivNodeRef env block u@(Extract i 0 _) v
+  | TupleT ts <- typeRef i, i == v = blockMatrix
+    [[derivNodeRef env block u (Extract v 0 j) | (j,t) <- zip [0..] ts, t /= IntT]]
+derivNodeRef env block (Extract (Var i@Internal{} _) 0 k) v
+  | Case hd alts t <- lookupBlock i block =
+    derivNode env block (Case hd [Lambda dag [rets !! k] | Lambda dag rets <- alts] t) v
+derivNodeRef env block (Cond cvs _) var = condD
+  [(reDExpr env block c, derivNodeRef env block x var) | (c,x) <- cvs]
+derivNodeRef _ _ Unconstrained{} _ = unconstrained UnknownType
 derivNodeRef _ block ref var = error . showLet' (topDAG block) $
   "d "++ show ref ++" / d "++ show var
 
@@ -470,14 +521,27 @@ derivNode env block (Apply "-" [a,b] _) var =
 derivNode env block (Apply op [a,b] _) var
   | op == "*" = (f' * g + f * g')
   | op == "/" = (f' * g - f * g') / (g ** 2)
+  | op == "**" = f**g * (g * f' / f + g' * log f)
   where f = reDExpr env block a
         f' = derivNodeRef env block a var
         g = reDExpr env block b
         g' = derivNodeRef env block b var
+derivNode env block (Apply "deleteIndex" [a,j] _) var =
+  deleteIndex (derivNodeRef env block a var) (reDExpr env block j)
+derivNode env block (Apply "insertIndex" [a,j,e] _) var =
+  insertIndex (derivNodeRef env block a var) (reDExpr env block j)
+              (derivNodeRef env block e var)
 derivNode env block (Apply "replaceIndex" [a,j,e] _) var =
   replaceIndex (derivNodeRef env block a var) (reDExpr env block j)
                (derivNodeRef env block e var)
-derivNode _ _ node var = error $ "d "++ show node ++" / d "++ show var
+derivNode env block (Case hd alts _) var = caseD hd' alts'
+  where hd' = reDExpr env block hd
+        alts' = do
+          Lambda dag rets <- alts
+          let block' = deriveBlock dag block
+          return $ const [derivNodeRef env block' ret var | ret <- rets]
+derivNode _ block node var = error . showLet' (topDAG block) $
+  "d "++ show node ++" / d "++ show var
 
 instance (ScalarType t, Enum t) => Enum (Expr t)
 

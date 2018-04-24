@@ -86,7 +86,10 @@ unreplicate (x:xs) | (x ==) `all` xs = x
 unreplicate xs = error $ show xs ++" is not replicated"
 
 traceShow' :: (Show a) => String -> a -> a
-traceShow' s x = trace (s ++ show x) x
+traceShow' s x = trace ("["++ s ++"] "++ show x) x
+
+notNull :: (Foldable t) => t a -> Bool
+notNull = not . null
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)

@@ -48,7 +48,7 @@ constFuns = Map.fromList
   ,("diag", diag . head)
   ,("asColumn", asColumn . head)
   ,("asRow", asRow . head)
-  ,("eye", \[lo,hi] -> eye (integer lo, integer hi))
+  ,("eye", eye . integer . head)
   ,("chol", chol . head)
   ,("inv", inv . head)
   ,("det", det . head)
@@ -62,11 +62,15 @@ constFuns = Map.fromList
   ,(">=", \[a,b] -> a >=* b)
   ,("<",  \[a,b] -> a <*  b)
   ,(">",  \[a,b] -> a >*  b)
+  ,("&&", \[a,b] -> a &&* b)
+  ,("||", \[a,b] -> a ||* b)
+  ,("not", notB . head)
   ,("deleteIndex", \[a,i]   -> deleteIndex a [integer i])
   ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
   ,("quad_form_diag", \[m,v] -> diag v <> m <> diag v)
   ,("bernoulli_pdf",     \[b,p]   -> if toBool b then p else 1-p)
   ,("bernoulli_lpdf",    \[b,p]   -> log $ if toBool b then p else 1-p)
+  ,("categorical_lpdf",  \[k,ps]  -> log $ toList ps !! (integer k - 1))
   ,("gamma_lpdf",        \[g,a,b] -> real $ lpdfGamma (real g) (real a) (real b))
   ,("neg_binomial_lpdf", \[k,a,b] -> real $ lpdfNegBinomial (integer k) (real a) (real b))
   ,("poisson_lpdf",      \[k,l]   -> real $ lpdfPoisson (integer k) (real l))
@@ -227,10 +231,6 @@ scanlConst' f r = fmap fromList . sequence . scanl f' (Just r) . toList
   where f' Nothing _ = Nothing
         f' (Just y) x = f y x
 
-zeros :: Interval Integer -> Interval Integer -> ConstVal
-zeros (lo,hi) (lo',hi') = Exact $ array ([lo,lo'],[hi,hi'])
-  [ ([i,j], 0) | i <- [lo..hi], j <- [lo'..hi'] ]
-
 isZeros :: ConstVal -> Bool
 isZeros (Exact  a) = (0 ==) `all` elems a
 isZeros (Approx a) = (0 ==) `all` elems a
@@ -353,8 +353,10 @@ instance LinearOperator ConstVal ConstVal where
     asRow    a = fromMatrix . asRow    $ toVector a
 
 instance Matrix ConstVal Integer ConstVal where
-    eye (lo,hi) = Exact $ array ([lo,lo],[hi,hi])
-      [ ([i,j], if i == j then 1 else 0) | i <- [lo..hi], j <- [lo..hi] ]
+    eye n = Exact $ array ([1,1],[n,n])
+      [ ([i,j], if i == j then 1 else 0) | i <- [1..n], j <- [1..n] ]
+    zeros n n' = Exact $ array ([1,1],[n,n'])
+      [ ([i,j], 0) | i <- [1..n], j <- [1..n'] ]
 
 instance SquareMatrix ConstVal ConstVal where
     chol   = fromMatrix . chol   . toMatrix

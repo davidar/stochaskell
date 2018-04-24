@@ -178,7 +178,8 @@ instance (LA.Numeric t) => InnerProduct (ShapedVector t) t where
 class Matrix m i e | m -> i e where
     matrix :: AbstractArray i e -> m
     blockMatrix :: [[m]] -> m
-    eye :: Interval i -> m
+    eye :: i -> m
+    zeros :: i -> i -> m
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
 instance (Show t, LA.Element t) => Show (ShapedMatrix t) where

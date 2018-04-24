@@ -56,6 +56,7 @@ data NodeRef = Var Id Type
              | BlockArray (A.Array [Int] NodeRef) Type
              | Index NodeRef [NodeRef]
              | Extract NodeRef Tag Int
+             | Cond [(NodeRef,NodeRef)] Type
              | Unconstrained Type
              | PartiallyConstrained [AA.Interval DExpr] [(Id,Type)] [([DExpr],DExpr)] Type
              deriving (Eq, Ord)
@@ -81,17 +82,19 @@ isUnconstrained Unconstrained{} = True
 isUnconstrained _ = False
 
 instance Show NodeRef where
-  --show (Var   i t) = "("++ show i ++" :: "++ show t ++")"
-  show (Var   i t) = show i
+  --show (Var i t) = "("++ show i ++" :: "++ show t ++")"
+  show (Var i _) = show i
   show (Const c IntT) = show (integer c)
   show (Const c RealT) = show (real c)
   --show (Const c t) = "("++ show c ++" :: "++ show t ++")"
-  show (Const c t) = show c
+  show (Const c _) = show c
   show (Data c rs t) = "(C"++ show c ++ show rs ++" :: "++ show t ++")"
   show i@(BlockArray a t) | [_,_] <- AA.shape a = "block"++ show (fromBlockMatrix i)
   show (BlockArray a t) = "(block "++ show a ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
   show (Extract v i j) = show v ++"."++ show i ++"_"++ show j
+  show (Cond cvs _) = "{ "++ f `commas` cvs ++" }"
+    where f (c,v) = show c ++" => "++ show v
   show (Unconstrained _) = "???"
   show (PartiallyConstrained sh ids kvs _) =
     "partially constrained with "++ show kvs ++" for "++ show ids ++" in "++ show sh
@@ -118,7 +121,7 @@ data Node = Apply { fName :: String
                   , typeNode :: Type
                   }
           | Case  { cHead :: NodeRef
-                  , cAlts :: [Lambda NodeRef]
+                  , cAlts :: [Lambda [NodeRef]]
                   , typeNode :: Type
                   }
           deriving (Eq, Ord)
@@ -149,13 +152,15 @@ instance Show Node where
             (Scan, Left_)  -> "scanl"
             (ScanRest, Left_) -> "scan"
           [i,j] = case lr of
-            Right_ -> inputs dag
-            Left_ -> reverse $ inputs dag
+            Right_ -> inputs' dag
+            Left_ -> reverse $ inputs' dag
   show (Case e alts _) = "case "++ show e ++" of\n"++ indent cases
-    where cases = unlines
-            ["C"++ show i ++" "++ intercalate " " (map show $ inputs dag) ++" ->\n"++
-              indent (showLet dag ret)
-            | (i, Lambda dag ret) <- zip [0..] alts]
+    where cases = unlines $ do
+            (i, Lambda dag ret) <- zip [0..] alts
+            let lhs | typeRef e == IntT = show (i+1)
+                    | otherwise = "C"++ show i ++" "++ intercalate " " (map show $ inputs dag)
+                rhs = indent (showLet dag ret)
+            return $ lhs ++" ->\n"++ rhs
 
 data DAG = DAG { dagLevel :: Level
                , inputsT :: [(Id,Type)]
@@ -169,6 +174,8 @@ inputs :: DAG -> [Id]
 inputs = map fst . inputsT
 inputsL :: DAG -> [LVal]
 inputsL dag = LVar . fst <$> inputsT dag
+inputs' :: DAG -> [NodeRef]
+inputs' = map (uncurry Var) . inputsT
 instance Show DAG where
   show dag = unlines $ map f (nodes dag)
     where f (i,n) = show (Internal (dagLevel dag) i) ++" = "++ show n
@@ -210,15 +217,19 @@ instance Show DExpr where
   show e = showBlock block $ show ret
     where (ret, Block block) = runDExpr e
 
+fromDExprs :: [DExpr] -> State Block [NodeRef]
+fromDExprs = sequence . map fromDExpr
+
 data LVal = LVar Id
           | LSub Id [DExpr]
-          | LField Id Tag Int
+          | LField Id Type Tag Int
+          | LCond LVal DExpr
           deriving (Eq, Ord, Show)
 
 getId' :: LVal -> Id
 getId' (LVar i ) = i
 getId' (LSub i _) = i
-getId' (LField i _ _) = i
+getId' (LField i _ _ _) = i
 
 type EEnv = Map LVal DExpr
 emptyEEnv :: EEnv
@@ -252,6 +263,8 @@ type ZMat = Expr [[Integer]]
 -- TYPES                                                                    --
 ------------------------------------------------------------------------------
 
+-- TODO: remove NodeRef's from Type, make subranges static and
+--       query array sizes elsewhere
 data Type
     = IntT
     | RealT
@@ -260,6 +273,7 @@ data Type
     | ArrayT (Maybe String) [AA.Interval NodeRef] Type
     | TupleT [Type]
     | UnionT [[Type]]
+    | UnknownType
     deriving (Eq, Ord)
 boolT :: Type
 boolT = SubrangeT IntT (Just $ Const 0 IntT) (Just $ Const 1 IntT)
@@ -277,6 +291,7 @@ instance Show Type where
   show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
   show (TupleT ts) = show ts
   show (UnionT ts) = "Union"++ show ts
+  show UnknownType = "???"
 
 isScalar :: Type -> Bool
 isScalar IntT = True
@@ -384,7 +399,9 @@ typeRef (Index a js) = case typeRef a of
   t -> error $ "cannot index non-array type "++ show t
 typeRef (Extract v c k) | UnionT ts <- typeRef v = ts!!c!!k
 typeRef (Extract v 0 k) | TupleT ts <- typeRef v = ts!!k
-typeRef Extract{} = error "cannot extract invalid tag"
+typeRef (Extract v c k) | UnknownType <- typeRef v = UnknownType
+typeRef i@Extract{} = error $ "cannot extract invalid tag "++ show i
+typeRef (Cond _ t) = t
 typeRef (Unconstrained t) = t
 
 typeArray :: ([Integer],[Integer]) -> Type -> Type
@@ -406,6 +423,8 @@ typeIndex 1 t = error $ "cannot index objects of type "++ show t
 typeIndex n t = typeIndex 1 $ typeIndex (n-1) t
 
 coerce :: Type -> Type -> Type
+coerce t UnknownType = t
+coerce UnknownType t = t
 coerce a b | a == b = a
 coerce a b | (a == boolT && b == IntT) || (a == IntT && b == boolT) = IntT
 coerce IntT RealT = RealT
@@ -421,11 +440,13 @@ coerce (ArrayT n sh t) (ArrayT Nothing sh' t')
 coerce (ArrayT n sh t) (ArrayT n' sh' t')
   | n == n', t == t', Just sh'' <- AA.coerceShape sh sh' = ArrayT n sh'' t
 coerce (ArrayT nm1 ((Const 1 IntT,m):sh1) s)
-       (ArrayT nm2 ((Const 1 IntT,n):sh2) t) | nm1 == nm2, s == t =
-  ArrayT nm1 ((Const 1 IntT,n'):sh) t
+       (ArrayT nm2 ((Const 1 IntT,n):sh2) t)
+  | nm1 == nm2 || isNothing nm1 || isNothing nm2, s == t =
+  ArrayT nm ((Const 1 IntT,n'):sh) t
   where ArrayT _ sh _ = coerce (ArrayT nm1 sh1 s) (ArrayT nm2 sh2 t)
         n' = if m == n then n else
           trace "WARN coercing dynamic array" (Unconstrained IntT)
+        nm = if isNothing nm1 then nm2 else nm1
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
 class    Cast a b                          where cast :: a -> b
@@ -482,14 +503,13 @@ varies (DAG level inp _) xs = level == 0 || any p xs
         p (Extract v _ _) = p v
         p (Unconstrained _) = False
 
--- collect External references
+-- collect external references
 externRefs :: DAG -> [Id]
-externRefs (DAG _ _ d) = go d
-  where go defs = concatMap (f . snd) $ Bimap.toAscListR defs
-        f (Apply _ args _) = mapMaybe extern args
-        f (Array sh (Lambda (DAG _ _ defs') r) _) =
+externRefs dag = concatMap (f . snd) (nodes dag) \\ inputs dag
+  where f (Apply _ args _) = mapMaybe extern args
+        f (Array sh (Lambda dag' r) _) =
             mapMaybe extern [r] ++ mapMaybe (extern . fst) sh
-                                ++ mapMaybe (extern . snd) sh ++ go defs'
+                                ++ mapMaybe (extern . snd) sh ++ externRefs dag'
         f FoldScan{} = [] -- TODO
         extern (Var (Internal _ _) _) = Nothing
         extern (Var i _) = Just i
@@ -568,10 +588,27 @@ extractNodeRef env block (Index v i) = do
 extractNodeRef env block (Extract d c i) = do
   d' <- extractNodeRef env block d
   return $ Extract d' c i
+extractNodeRef env block (Cond cvs t) = do
+  cs' <- sequence $ extractNodeRef env block <$> cs
+  vs' <- sequence $ extractNodeRef env block <$> vs
+  t' <- extractType env block t
+  simplifyCond (zip cs' vs') t'
+  where (cs,vs) = unzip cvs
 extractNodeRef env block (Unconstrained t) = do
   t' <- extractType env block t
   return $ Unconstrained t'
 extractNodeRef _ _ r = error $ "extractNodeRef "++ show r
+
+simplifyCond :: [(NodeRef,NodeRef)] -> Type -> State Block NodeRef
+simplifyCond cvs t | [(Cond cas _,Cond cbs _)] <- cvs = do
+  let cvs' = [(simplify $ Apply "&&" [c,c'] boolT, b)
+             | (c,a) <- cas, getConstVal a == Just 1, (c',b) <- cbs]
+  cs' <- sequence $ fst <$> cvs'
+  let vs' = snd <$> cvs'
+  simplifyCond (zip cs' vs') t
+simplifyCond cvs t = return $ Cond (filter p cvs) t
+  where p (Const 0 _,_) = False
+        p _ = True
 
 extractNode :: EEnv -> Block -> Node -> State Block Node
 extractNode env block (Apply f args t) = do
@@ -581,23 +618,31 @@ extractNode env block (Apply f args t) = do
 extractNode env block (Array sh lam t) = do
   lo' <- sequence $ extractNodeRef env block <$> lo
   hi' <- sequence $ extractNodeRef env block <$> hi
-  d <- getNextLevel
   lam' <- extractLambda env block lam
   t' <- extractType env block t
   return $ Array (zip lo' hi') lam' t'
   where (lo,hi) = unzip sh
 extractNode env block (FoldScan fs lr lam sd ls t) = do
-  d <- getNextLevel
   lam' <- extractLambda env block lam
   sd' <- extractNodeRef env block sd
   ls' <- extractNodeRef env block ls
   t' <- extractType env block t
   return $ FoldScan fs lr lam' sd' ls' t'
+extractNode env block (Case hd lams t) = do
+  hd' <- extractNodeRef env block hd
+  lams' <- sequence $ extractLambda' env block <$> lams
+  t' <- extractType env block t
+  return $ Case hd' lams' t'
 extractNode _ _ n = error $ "extractNode "++ show n
 
 extractLambda :: EEnv -> Block -> Lambda NodeRef -> State Block (Lambda NodeRef)
-extractLambda env block (Lambda body hd) =
-  runLambda (inputsT body) (extractNodeRef env' block' hd)
+extractLambda env block (Lambda body hd) = do
+  Lambda dag [ret] <- extractLambda' env block $ Lambda body [hd]
+  return $ Lambda dag ret
+
+extractLambda' :: EEnv -> Block -> Lambda [NodeRef] -> State Block (Lambda [NodeRef])
+extractLambda' env block (Lambda body hds) =
+  runLambda (inputsT body) (sequence $ extractNodeRef env' block' <$> hds)
   where f (i,t) = DExpr . return $ Var i t
         ids' = f <$> inputsT body
         env' = Map.fromList (inputsL body `zip` ids') `Map.union` env
@@ -623,6 +668,7 @@ extractType env block (TupleT ts) = do
 extractType env block (UnionT tss) = do
   tss' <- sequence $ sequence . (extractType env block <$>) <$> tss
   return $ UnionT tss'
+extractType _ _ UnknownType = return UnknownType
 
 extractIndex :: DExpr -> [DExpr] -> DExpr
 extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block)
@@ -670,7 +716,7 @@ collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret =
   where (ret, block) = runDExpr e
 collapseArray e = substD emptyEEnv e
 
-caseD :: DExpr -> [[DExpr] -> DExpr] -> DExpr
+caseD :: DExpr -> [[DExpr] -> [DExpr]] -> DExpr
 caseD e fs = DExpr $ do
   k <- fromDExpr e
   case k of
@@ -678,26 +724,40 @@ caseD e fs = DExpr $ do
       block <- get
       let f = fs !! c
           args' = reDExpr emptyEEnv block <$> args
-      fromDExpr (f args')
+      js <- sequence $ fromDExpr <$> f args'
+      return $ case js of
+        [j] -> j
+        _ -> Data 0 js . TupleT $ typeRef <$> js
     _ -> caseD' k fs
 
-caseD' :: NodeRef -> [[DExpr] -> DExpr] -> State Block NodeRef
+caseD' :: NodeRef -> [[DExpr] -> [DExpr]] -> State Block NodeRef
 caseD' k fs = do
   d <- getNextLevel
-  let UnionT tss = typeRef k
+  let tss = case typeRef k of
+        UnionT t -> t
+        IntT -> repeat []
   cases <- sequence $ do
     (ts,f) <- zip tss fs
     let ids = [(Dummy d i, t) | (i,t) <- zip [0..] ts]
         args = [DExpr . return $ Var i t | (i,t) <- ids]
-    return . runLambda ids . fromDExpr $ f args
-  hashcons $ Case k cases (unreplicate $ typeRef . fHead <$> cases)
+    return . runLambda ids . sequence $ fromDExpr <$> f args
+  simplify $ Case k cases (tupleT . foldr1 (zipWith coerce) $ map typeRef . fHead <$> cases)
 
-fromCase :: forall t a. Constructor t => (t -> Expr a) -> Expr t -> Expr a
-fromCase f e = Expr $ caseD (erase e) [erase . f . construct Expr c | c <- cs]
-  where Tags cs = tags :: Tags t
+fromCase :: forall c t. (Constructor c, ExprTuple t) => (c -> t) -> Expr c -> t
+fromCase f e = toExprTuple . entupleD n $ caseD (erase e)
+  [fromExprTuple . f . construct Expr c | c <- cs]
+  where Tags cs = tags :: Tags c
+        TupleSize n = tupleSize :: TupleSize t
 
-caseOf :: Constructor t => (Expr t -> Expr a) -> Expr t -> Expr a
+caseOf :: (Constructor c, ExprTuple t) => (Expr c -> t) -> Expr c -> t
 caseOf f = fromCase (f . fromConcrete)
+
+condD cvs = DExpr $ do
+  is <- fromDExprs cs
+  js <- fromDExprs vs
+  return $ Cond [(i,j) | (i,j) <- zip is js, getConstVal i /= Just 0] $
+    unreplicate $ typeRef <$> js
+  where (cs,vs) = unzip cvs
 
 
 ------------------------------------------------------------------------------
@@ -709,38 +769,66 @@ simplify :: Node -> State Block NodeRef
 simplify (Apply "ifThenElse" [_,a,b] _) | a == b = return a
 simplify (Apply "ifThenElse" [_,Const a _,Const b _] t)
   | a == b = return $ Const a t
-simplify (Apply "*" [Const c _,_] t) | c == 0 = return $ Const 0 t
-simplify (Apply "*" [_,Const c _] t) | c == 0 = return $ Const 0 t
-simplify (Apply "/" [Const c _,_] t) | c == 0 = return $ Const 0 t
-simplify (Apply "*" [Const c _,x] _) | c == 1 = return x
-simplify (Apply "*" [x,Const c _] _) | c == 1 = return x
-simplify (Apply "/" [x,Const c _] _) | c == 1 = return x
-simplify (Apply "+" [Const c _,x] _) | c == 0 = return x
-simplify (Apply "+" [x,Const c _] _) | c == 0 = return x
-simplify (Apply "-" [x,Const c _] _) | c == 0 = return x
-simplify (Apply "*" [Const c _,x] t)
-  | c == -1 = simplify (Apply "negate" [x] t)
-simplify (Apply "*" [x,Const c _] t)
-  | c == -1 = simplify (Apply "negate" [x] t)
-simplify (Apply "-" [Const c _,x] t) | c == 0 = simplify (Apply "negate" [x] t)
+simplify (Apply "ifThenElse" [Const 1 _,a,_] _) = return a
+simplify (Apply "ifThenElse" [Const 0 _,_,b] _) = return b
+simplify (Apply f js t) | not (null `any` cs), f /= "ifThenElse" = do
+  cs' <- sequence [simplify $ Apply "&&s" c boolT | c <- cs]
+  vs' <- sequence [simplify $ Apply f v t | v <- vs]
+  return $ Cond (zip cs' vs') t
+  where (cs,vs) = unzip $ liftCond js
+        liftCond ((Cond cvs _):rest) =
+            [(c:cs, v:vs) | (c,v) <- cvs, (cs,vs) <- liftCond rest]
+        liftCond (a:rest) = [(cs, a:vs) | (cs,vs) <- liftCond rest]
+        liftCond [] = [([],[])]
+simplify (Apply "*" [Const 0 _,_] t) = return $ Const 0 t
+simplify (Apply "*" [_,Const 0 _] t) = return $ Const 0 t
+simplify (Apply "/" [Const 0 _,_] t) = return $ Const 0 t
+simplify (Apply "*" [Const 1 _,x] _) = return x
+simplify (Apply "*" [x,Const 1 _] _) = return x
+simplify (Apply "/" [x,Const 1 _] _) = return x
+simplify (Apply "+" [Const 0 _,x] _) = return x
+simplify (Apply "+" [x,Const 0 _] _) = return x
+simplify (Apply "-" [x,Const 0 _] _) = return x
+simplify (Apply "*" [Const (-1) _,x] t) = simplify (Apply "negate" [x] t)
+simplify (Apply "*" [x,Const (-1) _] t) = simplify (Apply "negate" [x] t)
+simplify (Apply "-" [Const 0 _,x] t) = simplify (Apply "negate" [x] t)
 simplify (Apply f js t) | elem f ["+","+s","-","*","/"]
                         , isUnconstrained `any` js = return $ Unconstrained t
 simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
-simplify (Apply "#>" [_,Const c _] t) | c == 0 = return $ Const 0 t
-simplify (Apply "<#" [Const c _,_] t) | c == 0 = return $ Const 0 t
+simplify (Apply "&&" [Const 1 _,x] _) = return x
+simplify (Apply "&&" [x,Const 1 _] _) = return x
+simplify (Apply "&&" [Const 0 _,_] t) = return $ Const 0 t
+simplify (Apply "&&" [_,Const 0 _] t) = return $ Const 0 t
+simplify (Apply "&&" [a,b] _) | a == b = return a
+simplify (Apply "||" [Const 0 _,x] _) = return x
+simplify (Apply "||" [x,Const 0 _] _) = return x
+simplify (Apply "||" [Const 1 _,_] t) = return $ Const 1 t
+simplify (Apply "||" [_,Const 1 _] t) = return $ Const 1 t
+simplify (Apply "#>" [_,Const 0 _] t) = return $ Const 0 t
+simplify (Apply "<#" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "det"     [i@BlockArray{}] t) | Just s <- simplifyDet False i t = s
 simplify (Apply "log_det" [i@BlockArray{}] t) | Just s <- simplifyDet True  i t = s
-simplify (Apply "replaceIndex" [Const c _,_,Const k _] t)
-  | c == 0, k == 0 = return $ Const 0 t
+simplify (Apply "replaceIndex" [Const 0 _,_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "+s" [a,b] t) = simplify (Apply "+" [a,b] t)
+simplify (Apply "&&s" [a] _) = return a
+simplify (Apply "&&s" [a,b] t) = simplify (Apply "&&" [a,b] t)
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
   = return $ Const (f' args') t
+simplify (Case (Const c IntT) alts _)
+  | Lambda dag [ret] <- alts !! (integer c - 1), null (nodes dag) = return ret
+simplify (Case (Cond cvs _) alts t) = do
+  let (cs,vs) = unzip cvs
+  vs' <- sequence [simplify $ Case v alts t | v <- vs]
+  return $ Cond (zip cs vs') t
+simplify n@Array{}    = floatNode n
+simplify n@FoldScan{} = floatNode n
+simplify n@Case{}     = floatNode n
 simplify f = do
   block <- get
   case simplify' block f of
-    Right r -> return r
+    Right r -> r
     Left e@(Apply _ args _) ->
       if varies (topDAG block) args
       then hashcons e
@@ -748,23 +836,56 @@ simplify f = do
     Left e -> hashcons e
 
 -- TODO: generalise to something less hacky
-simplify' :: Block -> Node -> Either Node NodeRef
+simplify' :: Block -> Node -> Either Node (State Block NodeRef)
 simplify' block (Apply "==" [Var i@Internal{} _,x] t)
   | (Apply "-" [y,Const c _] _) <- lookupBlock i block, x == y, c /= 0
-  = Right $ Const 0 t
+  = Right . return $ Const 0 t
 simplify' block (Apply "*" [x,Var i@Internal{} _] _)
-  | (Apply "/" [j,y] _) <- lookupBlock i block, x == y = Right j
+  | (Apply "/" [j,y] _) <- lookupBlock i block, x == y = Right $ return j
 simplify' block (Apply "/" [Var i@Internal{} _,x] _)
-  | (Apply "*" [y,j] _) <- lookupBlock i block, x == y = Right j
+  | (Apply "*" [y,j] _) <- lookupBlock i block, x == y = Right $ return j
 simplify' block (Apply "/" [Const c s,Var i@Internal{} _] t)
   | (Apply "/" [j,Const d s'] _) <- lookupBlock i block
   = Left $ Apply "/" [Const (c*d) (coerce s s'),j] t
+simplify' block (Apply "&&" [Var i@Internal{} _,Var j@Internal{} _] t)
+  | (Apply "&&" is _) <- lookupBlock i block
+  , (Apply "&&" js _) <- lookupBlock j block
+  = Right . simplify $ Apply "&&s" (nub $ is ++ js) t
+simplify' block (Apply "&&s" refs t) | notNull (refs `intersect` nots) =
+  Right . return $ Const 0 t
+  where nots = do
+          Var i@Internal{} _ <- refs
+          case lookupBlock i block of
+            Apply "not" [r] _ -> return r
+            _ -> mzero
+simplify' block (Apply "&&s" refs t) | refs /= conj =
+  Left $ Apply "&&s" conj t
+  where conj = nub . sort $ do
+          ref <- refs
+          case ref of
+            Var i@Internal{} _ ->
+              case lookupBlock i block of
+                Apply "&&" js _ -> js
+                _ -> return ref
+            _ -> return ref
+simplify' block (Apply "-" [Var i@Internal{} _,Var j@Internal{} _] t)
+  | (Apply "+" [a,b] _) <- lookupBlock i block
+  , (Apply "+" [c,d] _) <- lookupBlock j block
+  , a == c
+  = Left $ Apply "-" [b,d] t
+simplify' block (Apply "==" [x,Var i@Internal{} _] t)
+  | (Apply "+" [y,c@Const{}] _) <- lookupBlock i block = Right $ do
+      j <- simplify $ Apply "-" [x,y] (coerce (typeRef x) (typeRef y))
+      simplify $ Apply "==" [j,c] t
+  | (Apply "-" [y,c@Const{}] _) <- lookupBlock i block = Right $ do
+      j <- simplify $ Apply "-" [y,x] (coerce (typeRef y) (typeRef x))
+      simplify $ Apply "==" [j,c] t
 simplify' block (Apply "exp" [Var i@Internal{} _] _)
-  | (Apply "log" [j] _) <- lookupBlock i block = Right j
+  | (Apply "log" [j] _) <- lookupBlock i block = Right $ return j
 simplify' block (Apply "log" [Var i@Internal{} _] _)
-  | (Apply "exp" [j] _) <- lookupBlock i block = Right j
+  | (Apply "exp" [j] _) <- lookupBlock i block = Right $ return j
 simplify' block (Apply "det" [Var i@Internal{} _] t)
-  | (Apply "eye" [] _) <- lookupBlock i block = Right $ Const 1 t
+  | (Apply "eye" [] _) <- lookupBlock i block = Right . return $ Const 1 t
 simplify' _ n = Left n
 
 simplifyDet :: Bool -> NodeRef -> Type -> Maybe (State Block NodeRef)
@@ -830,7 +951,7 @@ applyClosed2' f x y = DExpr $ do
 capture :: AA.AbstractArray DExpr DExpr -> [Id]
 capture ar = externRefs $ topDAG block
   where (_,block) = runDExpr $ ar ! replicate (length $ AA.shape ar) x
-        x = DExpr . return $ Const (error "capture dummy") IntT
+        x = DExpr . return $ Unconstrained IntT
 
 makeArray :: Maybe String -> AA.AbstractArray DExpr DExpr
           -> [AA.Interval NodeRef] -> State Block NodeRef
@@ -852,22 +973,27 @@ floatArray l ar = do
         i <- fromDExpr $ fst interval
         j <- fromDExpr $ snd interval
         return (i,j)
-    if varies dag (map fst sh) ||
-       varies dag (map snd sh) ||
+    if varies dag (map fst sh ++ map snd sh) ||
        (not . null $ inputs dag `intersect` capture ar)
       then makeArray l ar sh
       else liftBlock $ floatArray l ar
 
 -- TODO: reduce code duplication
-floatArray' :: Node -> State Block NodeRef
-floatArray' a@(Array sh (Lambda adag _) _) = do
+floatNode :: Node -> State Block NodeRef
+floatNode a = do
     block <- get
-    let dag = topDAG block
-    if varies dag (map fst sh) ||
-       varies dag (map snd sh) ||
-       (not . null $ inputs dag `intersect` externRefs adag)
+    if stick (topDAG block)
       then hashcons a
-      else liftBlock $ floatArray' a
+      else liftBlock $ floatNode a
+  where varies' dag adag = not . null $ inputs dag `intersect` externRefs adag
+        stick dag = case a of
+          Array sh (Lambda adag ret) _ ->
+            varies dag (map fst sh ++ map snd sh ++ ([ret] \\ inputs' adag)) || varies' dag adag
+          FoldScan _ _ (Lambda adag ret) sd ls _ ->
+            varies dag ([ret,sd,ls] \\ inputs' adag) || varies' dag adag
+          Case hd alts _ ->
+            varies dag [hd] || or [varies dag (rets \\ inputs' adag) || varies' dag adag
+                                  | Lambda adag rets <- alts]
 
 array' :: Maybe String -> Int -> AA.AbstractArray DExpr DExpr -> DExpr
 array' l n a = if length sh == n
@@ -1038,10 +1164,13 @@ instance AA.Vector DExpr DExpr DExpr where
                    xs -> Just $ unreplicate xs
           t = ArrayT kind [(Const 1 IntT,n)] $
             unreplicate $ [t' | ArrayT _ _ t' <- typeRef <$> k] ++ filter isScalar (typeRef <$> k)
+          k' = sequence $ getConstVal <$> k
       return $ if isZero `all` k then Const 0 t else
+               if isJust k' then Const (fromList $ fromJust k') t else
         BlockArray (A.array bnd [([i], k !! (i-1)) | [i] <- A.range bnd]) t
       where isZero (Const c _) | c == 0 = True
             isZero _ = False
+    vectorSize e | isScalarD e = 1
     vectorSize v = apply' "vectorSize" IntT [v]
 
 blockMatrix' :: [[NodeRef]] -> State Block NodeRef
@@ -1099,10 +1228,17 @@ instance AA.Matrix DExpr DExpr DExpr where
                 (ArrayT _ [_] _) -> AA.asColumn a
                 (ArrayT _ [_,_] _) -> a
                 _ | isScalar t -> a
-    eye (lo,hi) = DExpr $ do
-      lo' <- fromDExpr lo
-      hi' <- fromDExpr hi
-      simplify $ Apply "eye" [lo',hi'] (ArrayT (Just "matrix") [(lo',hi'),(lo',hi')] RealT)
+    eye n = DExpr $ do
+      n' <- fromDExpr n
+      let t = ArrayT (Just "matrix") [(Const 1 IntT,Unconstrained IntT)
+                                     ,(Const 1 IntT,Unconstrained IntT)] RealT
+      simplify $ Apply "eye" [n'] t
+    zeros m n = DExpr $ do
+      m' <- fromDExpr m
+      n' <- fromDExpr n
+      let t = ArrayT (Just "matrix") [(Const 1 IntT,Unconstrained IntT)
+                                     ,(Const 1 IntT,Unconstrained IntT)] RealT
+      simplify $ Apply "zeros" [m',n'] t
 
 instance (ScalarType e) => Monoid (Expr [[e]]) where
     mappend a b = Expr $ erase a `mappend` erase b
@@ -1130,17 +1266,17 @@ instance AA.Indexable DExpr DExpr DExpr where
     deleteIndex a e = DExpr $ do
       f <- fromDExpr a
       j <- fromDExpr e
-      let (ArrayT _ [(lo,hi)] t) = typeRef f
+      let (ArrayT _ ((lo,hi):sh) t) = typeRef f
       hi' <- simplify $ Apply "-" [hi, Const 1 IntT] (typeRef hi)
-      let t' = ArrayT Nothing [(lo,hi')] t
+      let t' = ArrayT Nothing ((lo,hi'):sh) t
       simplify $ Apply "deleteIndex" [f,j] t'
     insertIndex a e d = DExpr $ do
       f <- fromDExpr a
       i <- fromDExpr e
       j <- fromDExpr d
-      let (ArrayT _ [(lo,hi)] t) = typeRef f
+      let (ArrayT _ ((lo,hi):sh) t) = typeRef f
       hi' <- simplify $ Apply "+" [hi, Const 1 IntT] (typeRef hi)
-      let t' = ArrayT Nothing [(lo,hi')] t
+      let t' = ArrayT Nothing ((lo,hi'):sh) t
       simplify $ Apply "insertIndex" [f,i,j] t'
     replaceIndex a e d = DExpr $ do
       f <- fromDExpr a

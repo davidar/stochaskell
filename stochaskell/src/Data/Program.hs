@@ -84,11 +84,12 @@ instance Show PNode where
   show (ITDist defs base rets invf invj t) = "ITDist"++
     show (defs, reverse base, rets, reverse invf, invj, t)
   show (Switch e alts ns _) = "switch "++ show e ++" of\n"++ indent cases
-    where cases = unlines
-            [(if typeRef e == IntT then show (i+1) else "C"++ show i ++" "++
-             intercalate " " (map show $ inputs dag)) ++" ->\n"++
-              indent (showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret)
-            | (i, (Lambda dag ret, refs)) <- zip [0..] alts]
+    where cases = unlines $ do
+            (i, (Lambda dag ret, refs)) <- zip [0..] alts
+            let lhs | typeRef e == IntT = show (i+1)
+                    | otherwise = "C"++ show i ++" "++ intercalate " " (map show $ inputs dag)
+                rhs = indent . showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret
+            return $ lhs ++" ->\n"++ rhs
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
@@ -201,6 +202,16 @@ mixture :: forall t. (ExprTuple t) => [(R, P t)] -> P t
 mixture qps = do
   k <- categorical qv :: P Z
   toExprTuple <$> caseP n (erase k) (const . fmap fromExprTuple <$> progs)
+  where (qs,progs) = unzip qps
+        qv = blockVector [cast q | q <- qs] :: RVec
+        TupleSize n = tupleSize :: TupleSize t
+
+-- flatten and select with case rather than switch
+mixture' :: forall t. (ExprTuple t) => [(R, P t)] -> P t
+mixture' qps = do
+  k <- categorical qv :: P Z
+  rs <- sequence progs
+  return . toExprTuple . entupleD n $ caseD (erase k) (const . fromExprTuple <$> rs)
   where (qs,progs) = unzip qps
         qv = blockVector [cast q | q <- qs] :: RVec
         TupleSize n = tupleSize :: TupleSize t
@@ -481,7 +492,7 @@ instance forall r f. ScalarType r =>
       Var (Volatile ns depth 0) _ | depth == d ->
         expr $ return v :: Expr f
       Index vec [Var (Volatile ns depth 0) _] | depth == d ->
-        expr . floatArray' $ Array sh (Lambda dag (Index vec [ref])) loopType
+        expr . floatNode $ Array sh (Lambda dag (Index vec [ref])) loopType
           where ref = Index v (reverse [Var i t | (i,t) <- ids])
       _ -> error $ "non-trivial transform in joint: "++ show ret
 
@@ -497,7 +508,7 @@ instance MonadGuard Prog where
         PBlock block dists given ns <- get
         let dag = topDAG block
         assert (i == length (nodes dag) - 1) $ return ()
-        let (Just (Apply "==" [Var j _, Const a _] _)) =
+        let (Just (Apply "==" [Var j t, Const a _] _)) =
               lookup i $ nodes dag
             dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
         put $ PBlock (deriveBlock dag' block) dists (Map.insert (LVar j) a given) ns
@@ -523,12 +534,12 @@ pdf prog vals = pdfPBlock False env pb
 pdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
 pdfC = caseOf . pdf
 
-lpdf :: (ExprTuple t) => Prog t -> t -> R
+lpdf :: (ExprTuple t, Show t) => Prog t -> t -> R
 lpdf prog vals = pdfPBlock True env pb
   where (rets, pb) = runProgExprs "lpdf" prog
         env = solveTuple (definitions pb) rets vals emptyEEnv
 
-lpdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
+lpdfC :: (Constructor t, Show t) => Prog (Expr t) -> Expr t -> R
 lpdfC = caseOf . lpdf
 
 pdfPBlock :: Bool -> EEnv -> PBlock -> R
@@ -877,18 +888,22 @@ rjmcTransRatio :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
 rjmcTransRatio q x y = lu' - lu + logDet jacobian
   where lu  = q x_ `lpdf` y_
         lu' = q y_ `lpdf` x_
-        getAux ns a b =
+        getAux ns a b allowInt =
           let (rets, pb) = runProgExprs ns (q a)
               env = solveTuple (definitions pb) rets b emptyEEnv
-              p (LVar i@(Volatile ns' _ _)) _ | ns' == ns =
-                let pn = fromJust . Map.lookup i $ pnodes pb
-                in typePNode pn /= IntT
+              p (LVar i@(Volatile ns' _ _)) _
+                | ns' == ns, Just pn' <- pn = allowInt || typePNode pn' /= IntT
+                where pn = Map.lookup i $ pnodes pb
               p _ _ = False
           in Map.filterWithKey p env
-        u' = getAux "qy" y_ x_
-        u = let (_,PBlock _ refs _ ns) = runProgExprs "qx" (q x_)
-            in [Var (Volatile ns 0 i) (typePNode r)
-               | (i,r) <- [0..] `zip` reverse refs, typePNode r /= IntT]
+        u' = getAux "qy" y_ x_ False
+        uDef = getAux "qx" x_ y_ False
+        u = do
+          let (_,PBlock _ refs _ ns) = runProgExprs "qx" (q x_)
+          (i,r) <- [0..] `zip` reverse refs
+          let t = typePNode r
+          Monad.guard $ t /= IntT
+          return $ Var (Volatile ns 0 i) t
         x_::t = entuple . expr $ do
           t <- extractType emptyEEnv block (typeRef ret)
           return $ Var (Volatile "rjx" 0 0) t
@@ -900,9 +915,18 @@ rjmcTransRatio q x y = lu' - lu + logDet jacobian
         x' = let (rets, pb) = runProgExprs "qx" (q x_)
                  tup = toExprTuple $ reDExpr emptyEEnv (definitions pb) <$> rets :: t
              in erase $ detuple tup
+        qualify r val = DExpr $ do
+          let Just id = getId r
+              Just e = Map.lookup (LVar id) uDef
+          i <- fromDExpr e
+          j <- fromDExpr val
+          case i of
+            Cond cvs _ -> return $ Cond [(c,j) | (c,_) <- cvs] (typeRef j)
+            _ -> return j
         d_ = derivD emptyEEnv
         d a = d_ a . fst . runExpr . detuple
-        top =   d x' x_                       : [d_ x' r           | r <- u]
-        bot = [(d v x_ + (d v y_ <> d x' x_)) : [d v y_ <> d_ x' r | r <- u]
+        top =   d x' x_                       : [qualify r $ d_ x' r           | r <- u]
+        bot = [(d v x_ + (d v y_ <> d x' x_)) : [qualify r $ d v y_ <> d_ x' r | r <- u]
               | v <- Map.elems u']
-        jacobian = Expr . substD (getAux "qx" x_ y_) $ blockMatrix (top:bot) :: RMat
+        substEnv = getAux "qx" x_ y_ True `Map.union` getAux "qy" y_ x_ True
+        jacobian = Expr . substD substEnv $ blockMatrix (top:bot) :: RMat
