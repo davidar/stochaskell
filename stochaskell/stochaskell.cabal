@@ -45,6 +45,7 @@ library
                      , lazy-csv
                      , logfloat
                      , math-functions
+                     , MissingH
                      , mtl
                      , process
                      , random

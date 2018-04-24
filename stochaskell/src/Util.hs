@@ -2,6 +2,7 @@
 
 module Util where
 
+import Control.Monad
 import Data.Boolean
 import qualified Data.ByteString as B
 import Data.List
@@ -90,6 +91,9 @@ traceShow' s x = trace ("["++ s ++"] "++ show x) x
 
 notNull :: (Foldable t) => t a -> Bool
 notNull = not . null
+
+liftMaybe :: MonadPlus m => Maybe a -> m a
+liftMaybe = maybe mzero return
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)

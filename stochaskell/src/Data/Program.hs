@@ -527,17 +527,23 @@ dirac c = do
 ------------------------------------------------------------------------------
 
 pdf :: (ExprTuple t) => Prog t -> t -> R
-pdf prog vals = pdfPBlock False env pb
+pdf prog vals = subst env' $ pdfPBlock False env pb
   where (rets, pb) = runProgExprs "pdf" prog
         env = solveTuple (definitions pb) rets vals emptyEEnv
+        env' = Map.filterWithKey p env
+        p (LVar (Volatile "pdf" _ _)) _ = True
+        p _ _ = False
 
 pdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
 pdfC = caseOf . pdf
 
 lpdf :: (ExprTuple t, Show t) => Prog t -> t -> R
-lpdf prog vals = pdfPBlock True env pb
+lpdf prog vals = subst env' $ pdfPBlock True env pb
   where (rets, pb) = runProgExprs "lpdf" prog
         env = solveTuple (definitions pb) rets vals emptyEEnv
+        env' = Map.filterWithKey p env
+        p (LVar (Volatile "lpdf" _ _)) _ = True
+        p _ _ = False
 
 lpdfC :: (Constructor t, Show t) => Prog (Expr t) -> Expr t -> R
 lpdfC = caseOf . lpdf
@@ -917,12 +923,16 @@ rjmcTransRatio q x y = lu' - lu + logDet jacobian
              in erase $ detuple tup
         qualify r val = DExpr $ do
           let Just id = getId r
-              Just e = Map.lookup (LVar id) uDef
-          i <- fromDExpr e
-          j <- fromDExpr val
-          case i of
-            Cond cvs _ -> return $ Cond [(c,j) | (c,_) <- cvs] (typeRef j)
-            _ -> return j
+          case Map.lookup (LVar id) uDef of
+            Just e -> do
+              i <- fromDExpr e
+              j <- fromDExpr val
+              case i of
+                Cond cvs _ -> return $ Cond [(c,j) | (c,_) <- cvs] (typeRef j)
+                _ -> return j
+            Nothing -> trace (show id ++" not in "++ show uDef) $ do
+              t <- typeDExpr val
+              return $ Unconstrained t
         d_ = derivD emptyEEnv
         d a = d_ a . fst . runExpr . detuple
         top =   d x' x_                       : [qualify r $ d_ x' r           | r <- u]

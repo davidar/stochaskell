@@ -1,6 +1,6 @@
 {-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables, TypeFamilies,
              TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,
-             FlexibleContexts, ConstraintKinds, RankNTypes #-}
+             FlexibleContexts, ConstraintKinds, RankNTypes, TupleSections #-}
 module Data.Expression where
 
 import Prelude hiding (const,foldl,foldr,scanl,scanr)
@@ -20,6 +20,7 @@ import Data.Maybe
 import Data.Number.Transfinite hiding (log)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.String.Utils
 import Debug.Trace
 import Control.Applicative ()
 import Control.Monad.State
@@ -73,9 +74,21 @@ isBlockArray :: NodeRef -> Bool
 isBlockArray BlockArray{} = True
 isBlockArray _ = False
 
+isBlockMatrix :: NodeRef -> Bool
+isBlockMatrix (BlockArray a _) = length (AA.shape a) == 2
+isBlockMatrix _ = False
 fromBlockMatrix :: NodeRef -> [[NodeRef]]
 fromBlockMatrix (BlockArray a _) = [[a![i,j] | j <- [1..n]] | i <- [1..m]]
   where [(1,m),(1,n)] = AA.shape a
+toBlockMatrix :: Type -> [[NodeRef]] -> NodeRef
+toBlockMatrix t a = BlockArray a' t
+  where m = length a
+        n = unreplicate $ length <$> a
+        a' = A.array ([1,1],[m,n]) [([i,j], a !! (i-1) !! (j-1)) | i <- [1..m], j <- [1..n]]
+
+isCond :: NodeRef -> Bool
+isCond Cond{} = True
+isCond _ = False
 
 isUnconstrained :: NodeRef -> Bool
 isUnconstrained Unconstrained{} = True
@@ -89,7 +102,7 @@ instance Show NodeRef where
   --show (Const c t) = "("++ show c ++" :: "++ show t ++")"
   show (Const c _) = show c
   show (Data c rs t) = "(C"++ show c ++ show rs ++" :: "++ show t ++")"
-  show i@(BlockArray a t) | [_,_] <- AA.shape a = "block"++ show (fromBlockMatrix i)
+  show i | isBlockMatrix i = "block"++ show (fromBlockMatrix i)
   show (BlockArray a t) = "(block "++ show a ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
   show (Extract v i j) = show v ++"."++ show i ++"_"++ show j
@@ -230,6 +243,7 @@ getId' :: LVal -> Id
 getId' (LVar i ) = i
 getId' (LSub i _) = i
 getId' (LField i _ _ _) = i
+getId' (LCond l _) = getId' l
 
 type EEnv = Map LVal DExpr
 emptyEEnv :: EEnv
@@ -501,6 +515,7 @@ varies (DAG level inp _) xs = level == 0 || any p xs
         p (BlockArray a _) = any p (A.elems a)
         p (Index a is) = p a || any p is
         p (Extract v _ _) = p v
+        p (Cond cvs _) = any p (map fst cvs) || any p (map snd cvs)
         p (Unconstrained _) = False
 
 -- collect external references
@@ -542,6 +557,9 @@ dependsNode block (FoldScan _ _ (Lambda body hd) seed ls _) =
           dependsNodeRef (deriveBlock body block) hd
 dependsNode _ n = error $ "dependsNode "++ show n
 
+subst :: EEnv -> Expr e -> Expr e
+subst env = Expr . substD env . erase
+
 substD :: EEnv -> DExpr -> DExpr
 substD env e = DExpr $ extractNodeRef env block ret
   where (ret, block) = runDExpr e
@@ -580,7 +598,7 @@ extractNodeRef env block (Data c i t) = do
 extractNodeRef env block (BlockArray a t) = do
   a' <- sequence $ extractNodeRef env block <$> a
   t' <- extractType env block t
-  return $ BlockArray a' t'
+  return $ simplifyBlockArray a' t'
 extractNodeRef env block (Index v i) = do
   v' <- extractNodeRef env block v
   i' <- sequence $ extractNodeRef env block <$> i
@@ -599,13 +617,44 @@ extractNodeRef env block (Unconstrained t) = do
   return $ Unconstrained t'
 extractNodeRef _ _ r = error $ "extractNodeRef "++ show r
 
+concatCond :: [NodeRef] -> [(NodeRef,[NodeRef])]
+concatCond xs = do
+  c <- nub . sort $ concat [map fst cvs | Cond cvs _ <- xs]
+  return . (c,) $ do
+    x <- xs
+    case x of
+      Cond cvs _ -> case lookup c cvs of
+        Just v -> return v
+        Nothing -> mzero
+      _ -> return x
+
+simplifyBlockArray :: A.Array [Int] NodeRef -> Type -> NodeRef
+simplifyBlockArray a t | isBlockMatrix (BlockArray a t) = flip Cond t $ do
+  c <- nub . sort $ concat (map fst . concatCond <$> m)
+  return . (c,) . toBlockMatrix t $ do
+    row <- m
+    liftMaybe $ lookup c (concatCond row)
+  where m = fromBlockMatrix (BlockArray a t)
+simplifyBlockArray a t = BlockArray a t
+
+flattenCond :: (NodeRef,NodeRef) -> State Block [(NodeRef,NodeRef)]
+flattenCond (Cond cas _, Cond cbs _) = do
+  let (cs,vs) = unzip [(simplify $ Apply "&&" [c,c'] boolT, b)
+                      | (c,a) <- cas, getConstVal a == Just 1, (c',b) <- cbs]
+  cs' <- sequence cs
+  return (zip cs' vs)
+flattenCond (Cond cas _, b) =
+  return [(c,b) | (c,a) <- cas, getConstVal a == Just 1]
+flattenCond (c, Cond cbs _) = do
+  let (cs,vs) = unzip [(simplify $ Apply "&&" [c,c'] boolT, b) | (c',b) <- cbs]
+  cs' <- sequence cs
+  return (zip cs' vs)
+flattenCond cv = return [cv]
+
 simplifyCond :: [(NodeRef,NodeRef)] -> Type -> State Block NodeRef
-simplifyCond cvs t | [(Cond cas _,Cond cbs _)] <- cvs = do
-  let cvs' = [(simplify $ Apply "&&" [c,c'] boolT, b)
-             | (c,a) <- cas, getConstVal a == Just 1, (c',b) <- cbs]
-  cs' <- sequence $ fst <$> cvs'
-  let vs' = snd <$> cvs'
-  simplifyCond (zip cs' vs') t
+simplifyCond cvs t | isCond `any` (map fst cvs ++ map snd cvs) = do
+  cvs' <- sequence $ flattenCond <$> cvs
+  simplifyCond (concat cvs') t
 simplifyCond cvs t = return $ Cond (filter p cvs) t
   where p (Const 0 _,_) = False
         p _ = True
@@ -771,7 +820,8 @@ simplify (Apply "ifThenElse" [_,Const a _,Const b _] t)
   | a == b = return $ Const a t
 simplify (Apply "ifThenElse" [Const 1 _,a,_] _) = return a
 simplify (Apply "ifThenElse" [Const 0 _,_,b] _) = return b
-simplify (Apply f js t) | not (null `any` cs), f /= "ifThenElse" = do
+simplify (Apply f js t)
+  | not (null `any` cs), f /= "ifThenElse", not (endswith "pdf" f) = do
   cs' <- sequence [simplify $ Apply "&&s" c boolT | c <- cs]
   vs' <- sequence [simplify $ Apply f v t | v <- vs]
   return $ Cond (zip cs' vs') t
@@ -892,7 +942,7 @@ simplifyDet :: Bool -> NodeRef -> Type -> Maybe (State Block NodeRef)
 simplifyDet lg i t
   | isZ . sequence $ getConstVal <$> concat a =
     Just . return $ Const (if lg then log 0 else 0) t
-  | isZ . sequence $ getConstVal <$> th = Just $ do
+  | isZ . sequence $ getConstVal <$> th, tt /= [[]] = Just $ do
       x <- det' [[hh]]
       y <- det' tt
       simplify $ Apply (if lg then "+" else "*") [x,y] t
@@ -1175,6 +1225,7 @@ instance AA.Vector DExpr DExpr DExpr where
 
 blockMatrix' :: [[NodeRef]] -> State Block NodeRef
 blockMatrix' [] = error "blockMatrix' []"
+blockMatrix' [[]] = error "blockMatrix' [[]]"
 blockMatrix' [[r]] = return r
 blockMatrix' k' | not sane = error $ "mis-shaped blocks: "++ show k
                 | otherwise = do

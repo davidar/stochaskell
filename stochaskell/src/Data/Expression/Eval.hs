@@ -282,9 +282,6 @@ solveNodeRef env block (Extract (Var i@Internal{} _) 0 j) val
 solveNodeRef _ _ ref val =
   trace ("WARN assuming "++ show ref ++" unifies with "++ "[...]" {-show val-}) emptyEEnv
 
-condEnv :: DExpr -> EEnv -> EEnv
-condEnv = Map.mapKeys . flip LCond
-
 solveCase :: EEnv -> Block -> NodeRef -> [Lambda NodeRef] -> DExpr -> EEnv
 solveCase env block hd alts val = Map.unions $ do
   (k,env') <- zip [1..] envs
@@ -310,6 +307,7 @@ solveCase env block hd alts val = Map.unions $ do
           let block' = deriveBlock dag block
               env' = solveNodeRef env block' ret val
           return (given env', env')
+        condEnv = Map.mapKeys . flip LCond
 
 unconstrained :: Type -> DExpr
 unconstrained = DExpr . return . Unconstrained
@@ -438,14 +436,6 @@ diffNode _ _ node var _ = error $
 derivD :: EEnv -> DExpr -> NodeRef -> DExpr
 derivD env e = derivNodeRef env block ret
   where (ret, block) = runDExpr e
-
-typeMatrix :: Type -> Type -> Type
-typeMatrix s t
-  | (ArrayT _ [m] _) <- s, (ArrayT _ [n] _) <- t = ArrayT (Just "matrix") [m,n] RealT
-  | (ArrayT _ [m] _) <- s, isScalar t            = ArrayT (Just "matrix") [m,i] RealT
-  | isScalar s, (ArrayT _ [n] _) <- t            = ArrayT (Just "matrix") [i,n] RealT
-  | isScalar s, isScalar t                       = ArrayT (Just "matrix") [i,i] RealT
-  where i = (Const 1 IntT, Const 1 IntT)
 
 independent :: NodeRef -> NodeRef -> Bool
 independent (Var Internal{} _) _ = False
