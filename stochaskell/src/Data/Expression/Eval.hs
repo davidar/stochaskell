@@ -63,6 +63,9 @@ evalTuple env = sequence . map (evalD env) . fromExprTuple
 evalEEnv_ :: EEnv -> Env
 evalEEnv_ = Map.mapMaybe evalD_
 
+evalNodeRefs :: Env -> Block -> [NodeRef] -> Maybe [ConstVal]
+evalNodeRefs env block = sequence . map (evalNodeRef env block)
+
 evalNodeRef :: Env -> Block -> NodeRef -> Maybe ConstVal
 evalNodeRef env _ (Var ident _) | isJust val = val
   where val = Map.lookup (LVar ident) env
@@ -72,13 +75,13 @@ evalNodeRef _ _ (Var _ _) = Nothing
 evalNodeRef _ _ (Const c _) = Just c
 evalNodeRef env block (Index arr idx) = do
   a <- evalNodeRef env block arr
-  js <- sequence (evalNodeRef env block <$> reverse idx)
+  js <- evalNodeRefs env block $ reverse idx
   return (a!(toInteger <$> js))
 evalNodeRef env block (Extract d c j) = do
   Tagged c' args <- evalNodeRef env block d
   assert (c == c') . return $ args !! j
 evalNodeRef env block (Data c args _) = do
-  js <- sequence $ evalNodeRef env block <$> args
+  js <- evalNodeRefs env block args
   return $ Tagged c js
 evalNodeRef _ _ Unconstrained{} = Nothing
 evalNodeRef _ _ r = error $ "evalNodeRef "++ show r

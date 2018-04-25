@@ -888,10 +888,8 @@ rjmc target proposal x = do
 rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)
 rjmcC p = switchOf . rjmc p . fromCaseP
 
--- TODO: subst y_ -> x' after differentiation?
--- TODO: sub back in original x y at the end
 rjmcTransRatio :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
-rjmcTransRatio q x y = lu' - lu + logDet jacobian
+rjmcTransRatio q x y = subst substEnv $ lu' - lu + logDet jacobian
   where lu  = q x_ `lpdf` y_
         lu' = q y_ `lpdf` x_
         getAux ns a b allowInt =
@@ -938,5 +936,9 @@ rjmcTransRatio q x y = lu' - lu + logDet jacobian
         top =   d x' x_                       : [qualify r $ d_ x' r           | r <- u]
         bot = [(d v x_ + (d v y_ <> d x' x_)) : [qualify r $ d v y_ <> d_ x' r | r <- u]
               | v <- Map.elems u']
-        substEnv = getAux "qx" x_ y_ True `Map.union` getAux "qy" y_ x_ True
-        jacobian = Expr . substD substEnv $ blockMatrix (top:bot) :: RMat
+        substAux = getAux "qx" x_ y_ True `Map.union` getAux "qy" y_ x_ True
+        jacobian = Expr . substD substAux $ blockMatrix (top:bot) :: RMat
+        substEnv = Map.fromList
+          [(LVar $ Volatile "rjx" 0 0, erase $ detuple x)
+          ,(LVar $ Volatile "rjy" 0 0, erase $ detuple y)
+          ]

@@ -209,7 +209,8 @@ lookupBlock i@(Internal level ptr) (Block dags)
   fromMaybe (error $ "internal lookup failure: " ++ show i) $
     ptr `lookup` nodes (reverse dags !! level)
   | otherwise = error $ "trying to access level "++ show level ++
-                        " but block only has "++ show (length dags)
+                        " but block only has "++ show (length dags) ++"\n"++
+                        showBlock dags (show i)
 
 deriveBlock :: DAG -> Block -> Block
 deriveBlock d b@(Block ds) = Block (d:parent)
@@ -584,7 +585,7 @@ extractNodeRef env block (Var i t)
     t' <- extractType env block t
     _ <- simplify $ Apply "getExternal" [Var i t'] t'
     return $ Var i t'
-  | otherwise = do
+  | Dummy{} <- i = do
     t' <- extractType env block t
     return $ Var i t'
   where val = Map.lookup (LVar i) env
@@ -605,7 +606,9 @@ extractNodeRef env block (Index v i) = do
   return $ Index v' i'
 extractNodeRef env block (Extract d c i) = do
   d' <- extractNodeRef env block d
-  return $ Extract d' c i
+  return $ case d' of
+    Data k js _ | c == k -> js !! i
+    _ -> Extract d' c i
 extractNodeRef env block (Cond cvs t) = do
   cs' <- sequence $ extractNodeRef env block <$> cs
   vs' <- sequence $ extractNodeRef env block <$> vs
@@ -618,7 +621,7 @@ extractNodeRef env block (Unconstrained t) = do
 extractNodeRef _ _ r = error $ "extractNodeRef "++ show r
 
 concatCond :: [NodeRef] -> [(NodeRef,[NodeRef])]
-concatCond xs = do
+concatCond xs | isCond `all` xs = do
   c <- nub . sort $ concat [map fst cvs | Cond cvs _ <- xs]
   return . (c,) $ do
     x <- xs
@@ -627,10 +630,12 @@ concatCond xs = do
         Just v -> return v
         Nothing -> mzero
       _ -> return x
+concatCond xs = error $ "concatCond "++ show xs
 
 simplifyBlockArray :: A.Array [Int] NodeRef -> Type -> NodeRef
-simplifyBlockArray a t | isBlockMatrix (BlockArray a t) = flip Cond t $ do
-  c <- nub . sort $ concat (map fst . concatCond <$> m)
+simplifyBlockArray a t | isBlockMatrix (BlockArray a t)
+                       , isCond `all` concat m = flip Cond t $ do
+  c <- nub . sort . concat $ map fst . concatCond <$> m
   return . (c,) . toBlockMatrix t $ do
     row <- m
     liftMaybe $ lookup c (concatCond row)
@@ -1129,7 +1134,7 @@ instance Num DExpr where
     (+) = applyClosed2' "+"
     (-) = applyClosed2' "-"
     (*) = applyClosed2' "*"
-    fromInteger x = trace ("WARN assuming IntT type for DExpr "++ show x) $
+    fromInteger x = --trace ("WARN assuming IntT type for DExpr "++ show x) $
       DExpr . return $ Const (fromInteger x) IntT
 instance Fractional DExpr where
     (/) = applyClosed2' "/"
