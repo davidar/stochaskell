@@ -17,8 +17,11 @@ import Text.Printf (printf)
 type Label = String
 
 fixpt :: (Eq a) => (a -> a) -> a -> a
-fixpt f x | f x == x  = x
-          | otherwise = fixpt f (f x)
+fixpt = fixpt' 0
+fixpt' :: (Eq a) => Int -> (a -> a) -> a -> a
+fixpt' n f x | n > 100 = error "infinite loop"
+             | f x == x  = x
+             | otherwise = fixpt' (n+1) f (f x)
 
 indent :: String -> String
 indent = indent' 2 2

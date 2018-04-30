@@ -527,7 +527,7 @@ dirac c = do
 ------------------------------------------------------------------------------
 
 pdf :: (ExprTuple t) => Prog t -> t -> R
-pdf prog vals = subst env' $ pdfPBlock False env pb
+pdf prog vals = subst (substEEnv env') $ pdfPBlock False env pb
   where (rets, pb) = runProgExprs "pdf" prog
         env = solveTuple (definitions pb) rets vals emptyEEnv
         env' = Map.filterWithKey p env
@@ -538,7 +538,7 @@ pdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
 pdfC = caseOf . pdf
 
 lpdf :: (ExprTuple t, Show t) => Prog t -> t -> R
-lpdf prog vals = subst env' $ pdfPBlock True env pb
+lpdf prog vals = subst (substEEnv env') $ pdfPBlock True env pb
   where (rets, pb) = runProgExprs "lpdf" prog
         env = solveTuple (definitions pb) rets vals emptyEEnv
         env' = Map.filterWithKey p env
@@ -889,7 +889,7 @@ rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t ->
 rjmcC p = switchOf . rjmc p . fromCaseP
 
 rjmcTransRatio :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
-rjmcTransRatio q x y = subst substEnv $ lu' - lu + logDet jacobian
+rjmcTransRatio q x y = subst emptyEEnv . subst (substEEnv substEnv) $ lu' - lu + logDet jacobian
   where lu  = q x_ `lpdf` y_
         lu' = q y_ `lpdf` x_
         getAux ns a b allowInt =
@@ -937,7 +937,7 @@ rjmcTransRatio q x y = subst substEnv $ lu' - lu + logDet jacobian
         bot = [(d v x_ + (d v y_ <> d x' x_)) : [qualify r $ d v y_ <> d_ x' r | r <- u]
               | v <- Map.elems u']
         substAux = getAux "qx" x_ y_ True `Map.union` getAux "qy" y_ x_ True
-        jacobian = Expr . substD substAux $ blockMatrix (top:bot) :: RMat
+        jacobian = Expr . substD (substEEnv substAux) $ blockMatrix (top:bot) :: RMat
         substEnv = Map.fromList
           [(LVar $ Volatile "rjx" 0 0, erase $ detuple x)
           ,(LVar $ Volatile "rjy" 0 0, erase $ detuple y)
