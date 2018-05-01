@@ -80,11 +80,6 @@ isBlockMatrix _ = False
 fromBlockMatrix :: NodeRef -> [[NodeRef]]
 fromBlockMatrix (BlockArray a _) = [[a![i,j] | j <- [1..n]] | i <- [1..m]]
   where [(1,m),(1,n)] = AA.shape a
-toBlockMatrix :: Type -> [[NodeRef]] -> NodeRef
-toBlockMatrix t a = BlockArray a' t
-  where m = length a
-        n = unreplicate $ length <$> a
-        a' = A.array ([1,1],[m,n]) [([i,j], a !! (i-1) !! (j-1)) | i <- [1..m], j <- [1..n]]
 
 isCond :: NodeRef -> Bool
 isCond Cond{} = True
@@ -93,6 +88,13 @@ isCond _ = False
 isUnconstrained :: NodeRef -> Bool
 isUnconstrained Unconstrained{} = True
 isUnconstrained _ = False
+
+unconstrained :: Type -> DExpr
+unconstrained = DExpr . return . Unconstrained
+unconstrainedLike :: [DExpr] -> DExpr
+unconstrainedLike es = DExpr $ do
+  ts <- sequence $ typeDExpr <$> es
+  return . Unconstrained $ coerces ts
 
 instance Show NodeRef where
   --show (Var i t) = "("++ show i ++" :: "++ show t ++")"
@@ -303,7 +305,8 @@ instance Show Type where
   show (SubrangeT IntT (Just (Const 0 IntT)) (Just (Const 1 IntT))) = "B"
   show (SubrangeT t a b) = unwords ["Subrange", show t, show a, show b]
   show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
-  show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
+  --show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
+  show (ArrayT (Just name) _ _) = name
   show (TupleT ts) = show ts
   show (UnionT ts) = "Union"++ show ts
   show UnknownType = "???"
@@ -465,6 +468,9 @@ coerce (ArrayT nm1 ((Const 1 IntT,m):sh1) s)
         nm = if isNothing nm1 then nm2 else nm1
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
+coerces :: [Type] -> Type
+coerces = foldr1 coerce
+
 class    Cast a b                          where cast :: a -> b
 instance Cast Z R                          where cast = expr . fromExpr
 instance Cast Int R                        where cast = fromIntegral
@@ -616,7 +622,7 @@ extractNodeRef env block (BlockArray a t) = do
 extractNodeRef env block (Index v i) = do
   v' <- extractNodeRef env block v
   i' <- sequence $ extractNodeRef env block <$> i
-  return $ Index v' i'
+  simplifyNodeRef $ Index v' i'
 extractNodeRef env block (Extract d c i) = do
   d' <- extractNodeRef env block d
   return $ case d' of
@@ -639,11 +645,12 @@ concatCond :: [NodeRef] -> State Block [(NodeRef,[NodeRef])]
 concatCond xs | isCond `any` xs = do
   xs' <- sequence $ simplifyNodeRef <$> xs
   return $ do
-    c <- nub . sort $ concat [map fst cvs | Cond cvs _ <- xs']
+    c <- nub $ sort [c | Cond cvs _ <- xs', (c,v) <- cvs, not $ isUnconstrained v]
     return . (c,) $ do
       x <- xs'
       case x of
         Cond cvs _ -> case lookup c cvs of
+          Just Unconstrained{} -> mzero
           Just v -> return v
           Nothing -> mzero
         _ -> return x
@@ -666,11 +673,9 @@ flattenCond cv = return [cv]
 simplifyNodeRef :: NodeRef -> State Block NodeRef
 simplifyNodeRef r@BlockArray{} | isBlockMatrix r, isCond `any` concat m = do
   cvs <- sequence $ concatCond <$> m
-  return . flip Cond t $ do
-    c <- nub . sort . map fst $ concat cvs
-    return . (c,) . toBlockMatrix t $ do
-      cv <- cvs
-      liftMaybe $ lookup c cv
+  let cs = nub . sort . map fst $ concat cvs
+  vs <- sequence [blockMatrix' $ mapMaybe (lookup c) cvs | c <- cs]
+  return $ Cond (zip cs vs) t
   where m = fromBlockMatrix r
         t = typeRef r
 simplifyNodeRef (Cond cvs t) | isCond `any` (map fst cvs ++ map snd cvs) = do
@@ -679,6 +684,8 @@ simplifyNodeRef (Cond cvs t) | isCond `any` (map fst cvs ++ map snd cvs) = do
 simplifyNodeRef (Cond cvs t) = return $ Cond (filter p cvs) t
   where p (Const 0 _,_) = False
         p _ = True
+simplifyNodeRef r@(Index i [Cond cvs _]) =
+  simplifyNodeRef $ Cond [(c,Index i [j]) | (c,j) <- cvs] (typeRef r)
 simplifyNodeRef r = return r
 
 extractNode :: EEnv -> Block -> Node -> State Block NodeRef
@@ -836,11 +843,12 @@ fromCase f e = toExprTuple . entupleD n $ caseD (erase e)
 caseOf :: (Constructor c, ExprTuple t) => (Expr c -> t) -> Expr c -> t
 caseOf f = fromCase (f . fromConcrete)
 
+condD :: [(DExpr,DExpr)] -> DExpr
 condD cvs = DExpr $ do
   is <- fromDExprs cs
   js <- fromDExprs vs
   return $ Cond [(i,j) | (i,j) <- zip is js, getConstVal i /= Just 0] $
-    unreplicate $ typeRef <$> js
+    coerces $ typeRef <$> js
   where (cs,vs) = unzip cvs
 
 
@@ -877,9 +885,11 @@ simplify (Apply "-" [x,Const 0 _] _) = return x
 simplify (Apply "*" [Const (-1) _,x] t) = simplify (Apply "negate" [x] t)
 simplify (Apply "*" [x,Const (-1) _] t) = simplify (Apply "negate" [x] t)
 simplify (Apply "-" [Const 0 _,x] t) = simplify (Apply "negate" [x] t)
-simplify (Apply f js t) | elem f ["+","+s","-","*","/"]
+simplify (Apply f js t) | elem f ["+","+s","-","*","/","==","/=","<","<=",">",">="
+                                 ,"exp","log","det","log_det"]
                         , isUnconstrained `any` js = return $ Unconstrained t
 simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
+simplify (Apply "==" [x,y] t) | x > y = simplify (Apply "==" [y,x] t) -- sort by id
 simplify (Apply "&&" js _) = simplifyConj js
 simplify (Apply "&&s" js _) = simplifyConj js
 simplify (Apply "||" [Const 0 _,x] _) = return x
@@ -896,6 +906,7 @@ simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
   = return $ Const (f' args') t
+simplify (Case Unconstrained{} _ t) = return $ Unconstrained t
 simplify (Case (Const c IntT) alts _)
   | Lambda dag [ret] <- alts !! (integer c - 1), null (nodes dag) = return ret
   | Lambda dag rets <- alts !! (integer c - 1), null (nodes dag) =
@@ -950,7 +961,9 @@ simplify' block (Apply "exp" [Var i@Internal{} _] _)
 simplify' block (Apply "log" [Var i@Internal{} _] _)
   | (Apply "exp" [j] _) <- lookupBlock i block = Right $ return j
 simplify' block (Apply "det" [Var i@Internal{} _] t)
-  | (Apply "eye" [] _) <- lookupBlock i block = Right . return $ Const 1 t
+  | (Apply "eye" _ _) <- lookupBlock i block = Right . return $ Const 1 t
+simplify' block (Apply "not" [Var i@Internal{} _] _)
+  | (Apply "not" [j] _) <- lookupBlock i block = Right $ return j
 simplify' _ n = Left n
 
 simplifyDet :: Bool -> NodeRef -> Type -> Maybe (State Block NodeRef)
@@ -1252,7 +1265,7 @@ instance AA.Vector DExpr DExpr DExpr where
                    [] -> Nothing
                    xs -> Just $ unreplicate xs
           t = ArrayT kind [(Const 1 IntT,n)] $
-            unreplicate $ [t' | ArrayT _ _ t' <- typeRef <$> k] ++ filter isScalar (typeRef <$> k)
+            coerces $ [t' | ArrayT _ _ t' <- typeRef <$> k] ++ filter isScalar (typeRef <$> k)
           k' = sequence $ getConstVal <$> k
       return $ if isZero `all` k then Const 0 t else
                if isJust k' then Const (fromList $ fromJust k') t else
@@ -1266,12 +1279,13 @@ blockMatrix' :: [[NodeRef]] -> State Block NodeRef
 blockMatrix' [] = error "blockMatrix' []"
 blockMatrix' rows | null `any` rows = error $ "blockMatrix' "++ show rows
 blockMatrix' [[r]] = return r
-blockMatrix' k' | not sane = error $ "mis-shaped blocks: "++ show k
+blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent: "++ show k) $
+                  return $ Unconstrained UnknownType
                 | otherwise = do
   r <- simplify $ Apply "+s" rs IntT
   c <- simplify $ Apply "+s" cs IntT
   let t = ArrayT (Just "matrix") [(Const 1 IntT,r),(Const 1 IntT,c)] $
-        foldr1 coerce [t' | ArrayT _ _ t' <- typeRef <$> concat k]
+        coerces [t' | ArrayT _ _ t' <- typeRef <$> concat k]
   return . flip BlockArray t $ A.array bnd
     [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
   where flattenRow = foldr1 (zipWith (++))
@@ -1297,11 +1311,13 @@ blockMatrix' k' | not sane = error $ "mis-shaped blocks: "++ show k
           return $ case t of
             _ | isScalar t -> Const 1 IntT
             ArrayT _ [(Const 1 IntT,hi),_] _ -> hi
+            _ -> error $ "saneRow "++ show t
         saneCol col = allSame' $ do
           t <- typeRef <$> col
           return $ case t of
             _ | isScalar t -> Const 1 IntT
             ArrayT _ [_,(Const 1 IntT,hi)] _ -> hi
+            _ -> error $ "saneCol "++ show t
         allSame' xs = allSame xs || isUnconstrained `any` xs
 
 instance (ScalarType e) => AA.Matrix (Expr [[e]]) Z (Expr e) where
@@ -1466,8 +1482,10 @@ instance AA.SquareMatrix DExpr DExpr where
         simplify $ Apply "det" [i] t
     logDet m = DExpr $ do
         i <- fromDExpr m
-        let (ArrayT _ _ t) = typeRef i
-        simplify $ Apply "log_det" [i] t
+        case i of
+          Unconstrained{} -> return $ Unconstrained UnknownType
+          _ -> let (ArrayT _ _ t) = trace ("logDet "++ show i) $ typeRef i
+               in simplify $ Apply "log_det" [i] t
 instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
     chol   = Expr . AA.chol   . erase
     inv    = Expr . AA.inv    . erase

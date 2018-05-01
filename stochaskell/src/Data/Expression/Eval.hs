@@ -255,7 +255,9 @@ aggregateConds env = Map.union env' env
           kvs <- kvss
           let lval = unreplicate [l | (LCond l _,_) <- kvs]
               conds = [(c,val) | (LCond _ c,val) <- kvs]
-          return (lval, condD conds)
+              cond' = (foldr1 (&&*) $ notB . fst <$> conds
+                      ,unconstrainedLike $ snd <$> conds)
+          return (lval, condD $ conds ++ [cond'])
 
 solve :: Expr t -> Expr t -> EEnv -> EEnv
 solve e val env = aggregateLVals $ env `Map.union` solveNodeRef env block ret (erase val)
@@ -311,9 +313,6 @@ solveCase env block hd alts val = Map.unions $ do
               env' = solveNodeRef env block' ret val
           return (given env', env')
         condEnv = Map.mapKeys . flip LCond
-
-unconstrained :: Type -> DExpr
-unconstrained = DExpr . return . Unconstrained
 
 firstDiffD :: Z -> Z -> DExpr -> DExpr -> Z
 firstDiffD n def a b = find' p def $ vector (1...n)
