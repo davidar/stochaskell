@@ -37,8 +37,13 @@ numelType env block (ArrayT _ sh _) = product $ map f sh'
         f (lo,hi) = hi - lo + 1
 
 evaluable :: EEnv -> Block -> NodeRef -> Bool
-evaluable env block ref = deps `Set.isSubsetOf` Set.map getId' (Map.keysSet env)
-  where deps = Set.filter (not . isInternal) $ dependsNodeRef block ref
+evaluable env block ref =
+  deps `Set.isSubsetOf` (Set.fromList . mapMaybe getId' . Set.toList $ Map.keysSet env)
+  where deps = Set.filter p $ dependsNodeRef block ref
+        p Dummy{}    = True
+        p Volatile{} = True
+        p Internal{} = False
+        p Symbol{}   = False
 
 eval :: Env -> Expr t -> Maybe ConstVal
 eval env e = evalNodeRef env block ret
@@ -238,7 +243,7 @@ aggregateFields env = Map.union env' env
         f a b = getId' (fst a) == getId' (fst b)
         env' = Map.fromList $ do
           kvs <- kvss
-          let id = unreplicate $ getId' . fst <$> kvs
+          let id = unreplicate $ mapMaybe (getId' . fst) kvs
           unless (and [c == 0 | (LField _ _ c _,_) <- kvs]) $ error "not a tuple"
           if (and [i == j | ((LField _ _ _ i,_),j) <- zip kvs [0..]]) then
             let val = DExpr $ do
@@ -257,7 +262,7 @@ aggregateConds env = Map.union env' env
               conds = [(c,val) | (LCond _ c,val) <- kvs]
               cond' = (foldr1 (&&*) $ notB . fst <$> conds
                       ,unconstrainedLike $ snd <$> conds)
-          return (lval, condD $ conds ++ [cond'])
+          return (lval, condD $ conds) -- ++ [cond'])
 
 solve :: Expr t -> Expr t -> EEnv -> EEnv
 solve e val env = aggregateLVals $ env `Map.union` solveNodeRef env block ret (erase val)
@@ -277,41 +282,50 @@ solveNodeRef env block (Var i@Internal{} _) val =
 solveNodeRef _ _ (Var ref _) val = Map.singleton (LVar ref) val
 solveNodeRef env block (Data c rs _) val = Map.unions
   [solveNodeRef env block r $ extractD val c j | (r,j) <- zip rs [0..]]
-solveNodeRef env block (Index (Var i@Volatile{} _) js) val =
+solveNodeRef env block (Index (Var i _) js) val | not (isInternal i) =
   Map.singleton (LSub i $ reDExpr env block <$> js) val
-solveNodeRef _ _ (Extract (Var i@Volatile{} t) c j) val =
+solveNodeRef _ _ (Extract (Var i t) c j) val | not (isInternal i) =
   Map.singleton (LField i t c j) val
 solveNodeRef env block (Extract (Var i@Internal{} _) 0 j) val
   | Case hd alts _ <- lookupBlock i block, IntT <- typeRef hd =
   solveCase env block hd [Lambda dag (rets !! j) | Lambda dag rets <- alts] val
-solveNodeRef _ _ ref val =
-  trace ("WARN assuming "++ show ref ++" unifies with "++ "[...]" {-show val-}) emptyEEnv
+solveNodeRef env block ref val = Map.singleton (LConstr $ reDExpr env block ref ==* val) true
+  --trace ("WARN assuming "++ show ref ++" unifies with "++ show val) emptyEEnv
 
 solveCase :: EEnv -> Block -> NodeRef -> [Lambda NodeRef] -> DExpr -> EEnv
 solveCase env block hd alts val = Map.unions $ do
   (k,env') <- zip [1..] envs
-  let env'' = Map.fromList $ do
-        (l,v) <- Map.toAscList . solveNodeRef env block hd $ integer k
-        return (LCond l $ but (k-1) conds, v)
-  return $ env'' `Map.union` condEnv (reDExpr env block hd ==* integer k) env'
-  where given :: EEnv -> DExpr
-        given env' = List.foldl (&&*) true $ do
+  let env'' = condEnv (reDExpr env block hd ==* integer k) env'
+  case but (k-1) conds of
+    _ | (conds !! (k-1)) == true -> return env''
+    Nothing -> mzero
+    Just c -> return $ env'' `Map.union` Map.fromList
+      [(LCond l c, v) | (l,v) <- Map.toAscList . solveNodeRef env block hd $ integer k]
+  where given :: EEnv -> [DExpr]
+        given env' = do
           (k,v) <- Map.toAscList env'
           case k of
-            --LVar i ->
-            --  let a = DExpr . return $ Var i UnknownType
-            --  in return $ a ==* v
-            LField i t c j ->
+            LVar i@Symbol{} ->
+              let a = DExpr . return $ Var i UnknownType
+              in return $ a ==* v
+            LField i@Symbol{} t c j ->
               let a = DExpr . return $ Extract (Var i t) c j
               in return $ a ==* v
+            LConstr e | isSymbol `all` Set.toList (dependsD e)
+                      , sizeD e < 3 -> return e -- TODO: sizeD limit is a hack
             _ -> trace ("WARN ignoring "++ show k) mzero
-        but k bs = let bs' = take k bs ++ drop (k+1) bs
-                   in (bs !! k) &&* notB (List.foldl (||*) false bs')
+        sizeD = length . nodes . topDAG . snd . runDExpr
+        but k bs = case filter (true /=) $ take k bs ++ drop (k+1) bs of
+          [] -> Just (bs !! k)
+          bs' | ((bs !! k) ==) `any` bs' -> Nothing
+              | otherwise -> Just $ (bs !! k) &&* List.foldl1 (&&*) (notB <$> bs')
         (conds,envs) = unzip $ do
           Lambda dag ret <- alts
           let block' = deriveBlock dag block
               env' = solveNodeRef env block' ret val
-          return (given env', env')
+          case given env' of
+            [] -> return (true, env')
+            cs -> return (List.foldl1 (&&*) cs, env')
         condEnv = Map.mapKeys . flip LCond
 
 firstDiffD :: Z -> Z -> DExpr -> DExpr -> Z
@@ -327,7 +341,7 @@ solveNodeRefs env block ((ref,val):rvs) =
 solveNode :: EEnv -> Block -> Node -> DExpr -> EEnv
 solveNode env block (Array sh (Lambda body hd) t) val = Map.fromList $ do
   kvs <- groupBy f $ Map.toAscList subs
-  let i = unreplicate $ getId' . fst <$> kvs
+  let i = unreplicate $ mapMaybe (getId' . fst) kvs
       e = DExpr . return $ PartiallyConstrained (zip lo' hi') (inputsT body)
             [(k,v) | (LSub _ k,v) <- kvs] t
   return (LVar i, e)
@@ -428,10 +442,10 @@ diffNodeRef env block (Var i s) var t
 diffNode :: Env -> Block -> Node -> Id -> Type -> ConstVal
 diffNode env block (Apply "+" [a,b] _) var t | isJust a' =
     diffNodeRef env block b var t
-  where a' = evalNodeRef (Map.filterWithKey (const . not . (var ==) . getId') env) block a
+  where a' = evalNodeRef (Map.filterWithKey (const . not . (Just var ==) . getId') env) block a
 diffNode env block (Apply "#>" [a,b] _) var t | isJust a' =
     fromJust a' <> diffNodeRef env block b var t
-  where a' = evalNodeRef (Map.filterWithKey (const . not . (var ==) . getId') env) block a
+  where a' = evalNodeRef (Map.filterWithKey (const . not . (Just var ==) . getId') env) block a
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
 
@@ -441,7 +455,8 @@ derivD env e = derivNodeRef env block ret
 
 independent :: NodeRef -> NodeRef -> Bool
 independent (Var Internal{} _) _ = False
-independent (Var i@Volatile{} _) (Var j@Volatile{} _) = i /= j
+independent (Var i _) (Var j _)
+  | not (isInternal i), not (isInternal j) = i /= j
 independent (Index u _) v = independent u v
 independent (Extract u c j) (Extract u' c' j')
   | independent u u' || c /= c' || j /= j' = True

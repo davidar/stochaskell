@@ -37,19 +37,29 @@ type Pointer = Int
 type Level = Int
 type NS = String
 
-data Id = Dummy    { idLevel :: Level, idPointer :: Pointer }
-        | Volatile { idNS :: NS, idLevel :: Level, idPointer :: Pointer }
-        | Internal { idLevel :: Level, idPointer :: Pointer }
+data Id = Dummy    { idLevel' :: Level, idPointer :: Pointer }
+        | Volatile { idNS :: NS, idLevel' :: Level, idPointer :: Pointer }
+        | Internal { idLevel' :: Level, idPointer :: Pointer }
+        | Symbol   { idName :: String }
         deriving (Eq, Ord)
+
+idLevel :: Id -> Level
+idLevel Symbol{} = -1
+idLevel i = idLevel' i
 
 isInternal :: Id -> Bool
 isInternal (Internal _ _) = True
 isInternal _ = False
 
+isSymbol :: Id -> Bool
+isSymbol Symbol{} = True
+isSymbol _ = False
+
 instance Show Id where
-  show (Dummy l p)    = "i_"++ show l ++"_"++ show p
+  show (Dummy l p)       = "i_"++ show l ++"_"++ show p
   show (Volatile ns l p) = "x_"++ ns ++"_"++ show l ++"_"++ show p
-  show (Internal l p) = "v_"++ show l ++"_"++ show p
+  show (Internal l p)    = "v_"++ show l ++"_"++ show p
+  show (Symbol s)        = s
 
 data NodeRef = Var Id Type
              | Const ConstVal Type
@@ -240,13 +250,15 @@ data LVal = LVar Id
           | LSub Id [DExpr]
           | LField Id Type Tag Int
           | LCond LVal DExpr
+          | LConstr DExpr
           deriving (Eq, Ord, Show)
 
-getId' :: LVal -> Id
-getId' (LVar i ) = i
-getId' (LSub i _) = i
-getId' (LField i _ _ _) = i
+getId' :: LVal -> Maybe Id
+getId' (LVar i ) = Just i
+getId' (LSub i _) = Just i
+getId' (LField i _ _ _) = Just i
 getId' (LCond l _) = getId' l
+getId' LConstr{} = Nothing
 
 type EEnv = Map LVal DExpr
 emptyEEnv :: EEnv
@@ -518,6 +530,7 @@ varies (DAG level inp _) xs = level == 0 || any p xs
   where p (Var i@Internal{} _) = idLevel i == level
         p (Var i@Volatile{} _) = idLevel i == level
         p (Var i@Dummy{} _) = i `elem` map fst inp
+        p (Var Symbol{} _) = False
         p (Const _ _) = False
         p (Data _ is _) = any p is
         p (BlockArray a _) = any p (A.elems a)
@@ -558,6 +571,7 @@ dependsNodeRef _ (Const _ _) = Set.empty
 dependsNodeRef block (Index a i) =
   Set.unions $ map (dependsNodeRef block) (a:i)
 dependsNodeRef block (Extract r _ _) = dependsNodeRef block r
+dependsNodeRef _ Unconstrained{} = Set.empty
 dependsNodeRef _ r = error $ "dependsNodeRef "++ show r
 
 dependsNode :: Block -> Node -> Set Id
@@ -574,6 +588,10 @@ dependsNode block (FoldScan _ _ (Lambda body hd) seed ls _) =
         hdeps = Set.filter ((dagLevel body >) . idLevel) $
           dependsNodeRef (deriveBlock body block) hd
 dependsNode _ n = error $ "dependsNode "++ show n
+
+dependsD :: DExpr -> Set Id
+dependsD e = Set.filter (not . isInternal) $ dependsNodeRef block ret
+  where (ret, block) = runDExpr e
 
 substEEnv :: EEnv -> EEnv
 substEEnv env = Map.map (substD env) `fixpt` env
@@ -605,6 +623,9 @@ extractNodeRef env block (Var i t)
     _ <- simplify $ Apply "getExternal" [Var i t'] t'
     return $ Var i t'
   | Dummy{} <- i = do
+    t' <- extractType env block t
+    return $ Var i t'
+  | Symbol{} <- i = do
     t' <- extractType env block t
     return $ Var i t'
   where val = Map.lookup (LVar i) env
@@ -653,6 +674,7 @@ concatCond xs | isCond `any` xs = do
           Just Unconstrained{} -> mzero
           Just v -> return v
           Nothing -> mzero
+        Unconstrained{} -> mzero
         _ -> return x
 concatCond xs = error $ "concatCond "++ show xs
 
@@ -683,6 +705,7 @@ simplifyNodeRef (Cond cvs t) | isCond `any` (map fst cvs ++ map snd cvs) = do
   simplifyNodeRef $ Cond (concat cvs') t
 simplifyNodeRef (Cond cvs t) = return $ Cond (filter p cvs) t
   where p (Const 0 _,_) = False
+        p (_,Unconstrained _) = False
         p _ = True
 simplifyNodeRef r@(Index i [Cond cvs _]) =
   simplifyNodeRef $ Cond [(c,Index i [j]) | (c,j) <- cvs] (typeRef r)
@@ -956,6 +979,13 @@ simplify' block (Apply "==" [x,Var i@Internal{} _] t)
   | (Apply "-" [y,c@Const{}] _) <- lookupBlock i block = Right $ do
       j <- simplify $ Apply "-" [y,x] (coerce (typeRef y) (typeRef x))
       simplify $ Apply "==" [j,c] t
+simplify' block (Apply "==" [Var i@Internal{} _,x] t)
+  | (Apply "+" [y,c@Const{}] _) <- lookupBlock i block = Right $ do
+      j <- simplify $ Apply "-" [x,y] (coerce (typeRef x) (typeRef y))
+      simplify $ Apply "==" [j,c] t
+  | (Apply "-" [y,c@Const{}] _) <- lookupBlock i block = Right $ do
+      j <- simplify $ Apply "-" [y,x] (coerce (typeRef y) (typeRef x))
+      simplify $ Apply "==" [j,c] t
 simplify' block (Apply "exp" [Var i@Internal{} _] _)
   | (Apply "log" [j] _) <- lookupBlock i block = Right $ return j
 simplify' block (Apply "log" [Var i@Internal{} _] _)
@@ -1011,7 +1041,8 @@ simplifyConj' block refs = nub . sort $ do
   ref <- refs
   case ref of
     Const 1 _ -> mzero
-    Var i@Internal{} _ | Apply "&&" js _ <- lookupBlock i block -> simplifyConj' block js
+    Var i@Internal{} _ | Apply f js _ <- lookupBlock i block
+                       , f `elem` ["&&","&&s"] -> simplifyConj' block js
     _ -> return ref
 
 apply :: String -> Type -> [Expr a] -> Expr r
@@ -1372,17 +1403,17 @@ instance AA.Indexable DExpr DExpr DExpr where
     deleteIndex a e = DExpr $ do
       f <- fromDExpr a
       j <- fromDExpr e
-      let (ArrayT _ ((lo,hi):sh) t) = typeRef f
+      let (ArrayT nm ((lo,hi):sh) t) = typeRef f
       hi' <- simplify $ Apply "-" [hi, Const 1 IntT] (typeRef hi)
-      let t' = ArrayT Nothing ((lo,hi'):sh) t
+      let t' = ArrayT nm ((lo,hi'):sh) t
       simplify $ Apply "deleteIndex" [f,j] t'
     insertIndex a e d = DExpr $ do
       f <- fromDExpr a
       i <- fromDExpr e
       j <- fromDExpr d
-      let (ArrayT _ ((lo,hi):sh) t) = typeRef f
+      let (ArrayT nm ((lo,hi):sh) t) = typeRef f
       hi' <- simplify $ Apply "+" [hi, Const 1 IntT] (typeRef hi)
-      let t' = ArrayT Nothing ((lo,hi'):sh) t
+      let t' = ArrayT nm ((lo,hi'):sh) t
       simplify $ Apply "insertIndex" [f,i,j] t'
     replaceIndex a e d = DExpr $ do
       f <- fromDExpr a

@@ -259,10 +259,10 @@ stanDAG whitelist dag = indent $ extract decl ++ extract stanNode
 stanProgram :: PBlock -> String
 stanProgram pb@(PBlock block _ given _) =
     "data {\n"++ printRefs (\i n ->
-        if getId i `elem` map (Just . getId') (Map.keys given)
+        if getId i `elem` map getId' (Map.keys given)
         then stanDecl True (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
     "parameters {\n"++ printRefs (\i n ->
-        if getId i `elem` map (Just . getId') (Map.keys given)
+        if getId i `elem` map getId' (Map.keys given)
         then "" else stanDecl True (stanNodeRef i) (typePNode n)) ++"\n}\n"++
     "model {\n"++
       stanDAG (Just tparams) (topDAG block) ++"\n\n"++

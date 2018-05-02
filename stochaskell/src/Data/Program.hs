@@ -142,7 +142,8 @@ runProgExprs ns p = runState (fromProgExprs p) $ emptyPBlock ns
 modelSkeleton :: PBlock -> Set Id
 modelSkeleton pb@(PBlock block _ given _) = tparams
   where samples = pnodes pb
-        params = Map.keysSet samples Set.\\ Set.map getId' (Map.keysSet given)
+        params = Map.keysSet samples Set.\\
+          (Set.fromList . mapMaybe getId' . Set.toList $ Map.keysSet given)
         dependents xs = Set.union xs . Map.keysSet $
           Map.filter (not . Set.null . Set.intersection xs . dependsPNode block) samples
         dparams = fixpt dependents params
@@ -725,11 +726,14 @@ sampleP = sampleP' emptyEnv
 sampleP' :: (ExprTuple t) => Env -> Prog t -> IO t
 sampleP' env p = do
     env' <- samplePNodes env block idents
-    let env'' = Map.filterWithKey (const . not . isInternal . getId') env'
+    let env'' = Map.filterWithKey (const . p' . getId') env'
     return . fromConstVals $ map (fromJust . evalNodeRef env'' block) rets
   where (rets, PBlock block refs _ ns) = runProgExprs "sim" p
         idents = [ (Volatile ns (dagLevel $ topDAG block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
+        p' (Just Internal{}) = False
+        p' Nothing = False
+        p' _ = True
 
 samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
 samplePNodes env _ [] = return env
@@ -830,7 +834,7 @@ samplePNode env block (HODist "orderedSample" d [n] _) =
 samplePNode env block (Switch hd alts ns _) = do
   let env' = Map.fromList (inputsL ldag `zip` ks) `Map.union` env
   env'' <- samplePNodes env' block' idents
-  let env''' = Map.filterWithKey (const . not . isInternal . getId') env''
+  let env''' = Map.filterWithKey (const . p . getId') env''
   return . constTuple . fromJust . sequence $ evalNodeRef env''' block' <$> lhd
   where Tagged c ks = fromJust $ evalNodeRef env block hd
         (Lambda ldag lhd, ds) = alts !! c
@@ -838,6 +842,9 @@ samplePNode env block (Switch hd alts ns _) = do
         idents = [ (Volatile ns (dagLevel ldag) i, d) | (i,d) <- zip [0..] ds ]
         constTuple [x] = x
         constTuple xs = Tagged 0 xs
+        p (Just Internal{}) = False
+        p Nothing = False
+        p _ = True
 
 samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
 
@@ -910,11 +917,11 @@ rjmcTransRatio q x y = subst emptyEEnv . subst (substEEnv substEnv) $ lu' - lu +
           return $ Var (Volatile ns 0 i) t
         x_::t = entuple . expr $ do
           t <- extractType emptyEEnv block (typeRef ret)
-          return $ Var (Volatile "rjx" 0 0) t
+          return $ Var (Symbol "rjx") t
           where (ret, block) = runExpr (detuple x)
         y_::t = entuple . expr $ do
           t <- extractType emptyEEnv block (typeRef ret)
-          return $ Var (Volatile "rjy" 0 0) t
+          return $ Var (Symbol "rjy") t
           where (ret, block) = runExpr (detuple y)
         x' = let (rets, pb) = runProgExprs "qx" (q x_)
                  tup = toExprTuple $ reDExpr emptyEEnv (definitions pb) <$> rets :: t
@@ -939,6 +946,6 @@ rjmcTransRatio q x y = subst emptyEEnv . subst (substEEnv substEnv) $ lu' - lu +
         substAux = getAux "qx" x_ y_ True `Map.union` getAux "qy" y_ x_ True
         jacobian = Expr . substD (substEEnv substAux) $ blockMatrix (top:bot) :: RMat
         substEnv = Map.fromList
-          [(LVar $ Volatile "rjx" 0 0, erase $ detuple x)
-          ,(LVar $ Volatile "rjy" 0 0, erase $ detuple y)
+          [(LVar $ Symbol "rjx", erase $ detuple x)
+          ,(LVar $ Symbol "rjy", erase $ detuple y)
           ]
