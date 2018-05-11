@@ -7,6 +7,7 @@ import qualified Data.Array.IArray as A
 import Data.Array.Abstract hiding ((<>))
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy.Char8 as LC
+import Data.Either.Utils
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
@@ -402,7 +403,7 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
     putStrLn' $ "Extracting: "++ stanNodeRef `commas` rets
 
     putStrLn' "--- Removing temporary files ---"
-    return [fromJust $ evalProg env prog | env <- stanRead table]
+    return [fromRight $ evalProg env prog | env <- stanRead table]
   where (rets,p@(PBlock block _ given _)) = runProgExprs "stan" prog
         noComment row = not (LC.null row) && LC.head row /= '#'
 

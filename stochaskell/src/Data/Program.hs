@@ -152,7 +152,7 @@ modelSkeleton pb@(PBlock block _ given _) = tparams
           where g i = let n = fromJust $ Map.lookup i samples
                       in Set.filter isInternal $ dependsPNode block n
 
-evalProg :: (ExprTuple t) => Env -> Prog t -> Maybe t
+evalProg :: (ExprTuple t) => Env -> Prog t -> Either String t
 evalProg env prog = do
   xs <- sequence (evalNodeRef (Map.union given env) block <$> rets)
   return $ fromConstVals xs
@@ -648,58 +648,58 @@ densityPBlock env (PBlock block refs _ ns) = product $ do
 densityPNode :: Env -> Block -> PNode -> ConstVal -> LF.LogFloat
 densityPNode env block (Dist "bernoulli" [p] _) x =
     LF.logFloat (if toBool x then p' else 1 - p')
-  where p' = toDouble . fromJust $ evalNodeRef env block p
+  where p' = toDouble . fromRight' $ evalNodeRef env block p
 densityPNode env block (Dist "bernoulliLogit" [l] _) a
     | x == 1 = LF.logFloat p
     | x == 0 = LF.logFloat (1 - p)
     | otherwise = LF.logFloat 0
   where x = toRational a
-        l' = toDouble . fromJust $ evalNodeRef env block l
+        l' = toDouble . fromRight' $ evalNodeRef env block l
         p = 1 / (1 + exp (-l'))
 densityPNode env block (Dist "categorical" [q] _) x = LF.logFloat p
-  where q' = map toDouble . toList . fromJust $ evalNodeRef env block q
+  where q' = map toDouble . toList . fromRight' $ evalNodeRef env block q
         p = fromMaybe 0 . lookup x $ zip [1..] q'
 densityPNode env block (Dist "gamma" [a,b] _) x
     | x' >= 0 = LF.logToLogFloat $ lpdfGamma x' a' b'
     | otherwise = LF.logFloat 0
-  where a' = toDouble . fromJust $ evalNodeRef env block a
-        b' = toDouble . fromJust $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $ evalNodeRef env block a
+        b' = toDouble . fromRight' $ evalNodeRef env block b
         x' = toDouble x
 densityPNode env block (Dist "inv_gamma" [a,b] _) x
     | x' >= 0 = LF.logToLogFloat l
     | otherwise = LF.logFloat 0
-  where a' = toDouble . fromJust $ evalNodeRef env block a
-        b' = toDouble . fromJust $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $ evalNodeRef env block a
+        b' = toDouble . fromRight' $ evalNodeRef env block b
         x' = toDouble x
         l = a' * log b' - (a' + 1) * log x' - b' / x' - logGamma a'
 densityPNode env block (Dist "geometric" [t] _) x = p * q^k
-  where t' = toDouble . fromJust $ evalNodeRef env block t
+  where t' = toDouble . fromRight' $ evalNodeRef env block t
         p = LF.logFloat t'
         q = LF.logFloat (1 - t')
         k = toInteger x
 densityPNode env block (Dist "normal" [m,s] _) x =
     LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
-  where m' = toDouble . fromJust $ evalNodeRef env block m
-        s' = toDouble . fromJust $ evalNodeRef env block s
+  where m' = toDouble . fromRight' $ evalNodeRef env block m
+        s' = toDouble . fromRight' $ evalNodeRef env block s
 densityPNode env block (Dist "multi_normal" [m,s] _) x =
     LF.logToLogFloat $ -0.5 * (real $ (x' <.> (s' <\> x')) + logDet s' + n * log (2*pi))
-  where m' = fromJust $ evalNodeRef env block m
-        s' = fromJust $ evalNodeRef env block s
+  where m' = fromRight' $ evalNodeRef env block m
+        s' = fromRight' $ evalNodeRef env block s
         n = integer $ length (toList m')
         x' = x - m'
 densityPNode env block (Dist "poisson" [l] _) x =
     LF.logToLogFloat $ lpdfPoisson k l'
-  where l' = toDouble . fromJust $ evalNodeRef env block l
+  where l' = toDouble . fromRight' $ evalNodeRef env block l
         k = toInteger x
 densityPNode env block (Dist "uniform" [a,b] _) x =
     LF.logFloat $ if a' <= x' && x' <= b' then 1/(b' - a') else 0
-  where a' = toDouble . fromJust $ evalNodeRef env block a
-        b' = toDouble . fromJust $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $ evalNodeRef env block a
+        b' = toDouble . fromRight' $ evalNodeRef env block b
         x' = toDouble x
 densityPNode env block (Dist "discreteUniform" [a,b] _) x =
     LF.logFloat $ if a' <= x' && x' <= b' then 1/(fromInteger $ b' - a' + 1) else 0
-  where a' = toInteger . fromJust $ evalNodeRef env block a
-        b' = toInteger . fromJust $ evalNodeRef env block b
+  where a' = toInteger . fromRight' $ evalNodeRef env block a
+        b' = toInteger . fromRight' $ evalNodeRef env block b
         x' = toInteger x
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
@@ -711,7 +711,7 @@ densityPNode env block (Loop shp (Lambda ldag body) _) a = product
 
 densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
     [ densityPNode env block d (fromRational x) | x <- entries a ]
-  where n' = toInteger . fromJust $ evalNodeRef env block n
+  where n' = toInteger . fromRight' $ evalNodeRef env block n
 
 
 ------------------------------------------------------------------------------
@@ -727,7 +727,7 @@ sampleP' :: (ExprTuple t) => Env -> Prog t -> IO t
 sampleP' env p = do
     env' <- samplePNodes env block idents
     let env'' = Map.filterWithKey (const . p' . getId') env'
-    return . fromConstVals $ map (fromJust . evalNodeRef env'' block) rets
+    return . fromConstVals $ map (fromRight' . evalNodeRef env'' block) rets
   where (rets, PBlock block refs _ ns) = runProgExprs "sim" p
         idents = [ (Volatile ns (dagLevel $ topDAG block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
@@ -749,76 +749,76 @@ samplePNode env block d@(Dist f js (SubrangeT t lo hi)) = do
     then trace ("rejecting OOB sample "++ show x) $
            samplePNode env block d
     else return x
-  where lo' | (Just r) <- lo = fromJust $ evalNodeRef env block r
+  where lo' | (Just r) <- lo = fromRight' $ evalNodeRef env block r
             | otherwise = negativeInfinity
-        hi' | (Just r) <- hi = fromJust $ evalNodeRef env block r
+        hi' | (Just r) <- hi = fromRight' $ evalNodeRef env block r
             | otherwise = infinity
 samplePNode env block (Dist "bernoulli" [p] _) = fromBool <$> bernoulli p'
-  where p' = toDouble . fromJust $ evalNodeRef env block p
+  where p' = toDouble . fromRight' $ evalNodeRef env block p
 samplePNode env block (Dist "bernoulliLogit" [l] _) = fromBool <$> bernoulli p'
-  where l' = toDouble . fromJust $ evalNodeRef env block l
+  where l' = toDouble . fromRight' $ evalNodeRef env block l
         p' = 1 / (1 + exp (-l'))
 samplePNode env block (Dist "bernoulliLogits" [l] _) = do
   z <- sequence $ map bernoulliLogit l'
   return $ fromList (map fromBool z)
-  where l' = map toDouble . toList . fromJust $ evalNodeRef env block l
+  where l' = map toDouble . toList . fromRight' $ evalNodeRef env block l
 samplePNode env block (Dist "categorical" [q] _) = fromInteger <$> categorical q'
-  where q' = map toDouble . toList . fromJust $ evalNodeRef env block q
+  where q' = map toDouble . toList . fromRight' $ evalNodeRef env block q
 samplePNode env block (Dist "cauchy" [m,s] _) = fromDouble <$> cauchy m' s'
-  where m' = toDouble . fromJust $ evalNodeRef env block m
-        s' = toDouble . fromJust $ evalNodeRef env block s
+  where m' = toDouble . fromRight' $ evalNodeRef env block m
+        s' = toDouble . fromRight' $ evalNodeRef env block s
 samplePNode env block (Dist "cauchys" [m,s] (ArrayT _ [_] _)) = fromVector <$> cauchys m' s'
-  where m' = toVector . fromJust $ evalNodeRef env block m
-        s' = toVector . fromJust $ evalNodeRef env block s
+  where m' = toVector . fromRight' $ evalNodeRef env block m
+        s' = toVector . fromRight' $ evalNodeRef env block s
 samplePNode env block (Dist "gamma" [a,b] _) = fromDouble <$> gamma a' b'
-  where a' = toDouble . fromJust $ evalNodeRef env block a
-        b' = toDouble . fromJust $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $ evalNodeRef env block a
+        b' = toDouble . fromRight' $ evalNodeRef env block b
 samplePNode env block (Dist "inv_gamma" [a,b] _) = fromDouble <$> invGamma a' b'
-  where a' = toDouble . fromJust $ evalNodeRef env block a
-        b' = toDouble . fromJust $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $ evalNodeRef env block a
+        b' = toDouble . fromRight' $ evalNodeRef env block b
 samplePNode env block (Dist "inv_wishart" [n,w] _) = fromMatrix <$> invWishart n' w'
-  where n' = toInteger . fromJust $ evalNodeRef env block n
-        w' = toMatrix . fromJust $ evalNodeRef env block w
+  where n' = toInteger . fromRight' $ evalNodeRef env block n
+        w' = toMatrix . fromRight' $ evalNodeRef env block w
 samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric 0 p'
-  where p' = toDouble . fromJust $ evalNodeRef env block p
+  where p' = toDouble . fromRight' $ evalNodeRef env block p
 samplePNode env block (Dist "lkj_corr" [v] (ArrayT _ sh _)) = fromMatrix <$> corrLKJ v' (head sh')
-  where v' = toDouble . fromJust $ evalNodeRef env block v
+  where v' = toDouble . fromRight' $ evalNodeRef env block v
         sh' = evalShape env block sh
 samplePNode env block (Dist "neg_binomial" [a,b] _) = fromInteger <$> negBinomial a' b'
-  where a' = toDouble . fromJust $ evalNodeRef env block a
-        b' = toDouble . fromJust $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $ evalNodeRef env block a
+        b' = toDouble . fromRight' $ evalNodeRef env block b
 samplePNode env block (Dist "normal" [m,s] _) = fromDouble <$> normal m' s'
-  where m' = toDouble . fromJust $ evalNodeRef env block m
-        s' = toDouble . fromJust $ evalNodeRef env block s
+  where m' = toDouble . fromRight' $ evalNodeRef env block m
+        s' = toDouble . fromRight' $ evalNodeRef env block s
 samplePNode env block (Dist "normals" [m,s] (ArrayT _ [_] _)) = fromVector <$> normals m' s'
-  where m' = toVector . fromJust $ evalNodeRef env block m
-        s' = toVector . fromJust $ evalNodeRef env block s
+  where m' = toVector . fromRight' $ evalNodeRef env block m
+        s' = toVector . fromRight' $ evalNodeRef env block s
 samplePNode env block (Dist "normals" [m,s] (ArrayT _ [_,_] _)) = fromMatrix <$> normals m' s'
-  where m' = toMatrix . fromJust $ evalNodeRef env block m
-        s' = toMatrix . fromJust $ evalNodeRef env block s
+  where m' = toMatrix . fromRight' $ evalNodeRef env block m
+        s' = toMatrix . fromRight' $ evalNodeRef env block s
 samplePNode env block (Dist "multi_normal" [m,s] _) = do
   w <- sequence [ normal 0 1 | _ <- [1..n] ]
   let w' = fromList $ map fromDouble w
   return $ m' + chol s' #> w'
-  where m' = fromJust $ evalNodeRef env block m
-        s' = fromJust $ evalNodeRef env block s
+  where m' = fromRight' $ evalNodeRef env block m
+        s' = fromRight' $ evalNodeRef env block s
         n = length (toList m')
 samplePNode env block (Dist "poisson" [a] _) = fromInteger <$> poisson a'
-  where a' = toDouble . fromJust $ evalNodeRef env block a
+  where a' = toDouble . fromRight' $ evalNodeRef env block a
 samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'
-  where a' = toDouble . fromJust $ evalNodeRef env block a
-        b' = toDouble . fromJust $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $ evalNodeRef env block a
+        b' = toDouble . fromRight' $ evalNodeRef env block b
 samplePNode env block (Dist "uniforms" [a,b] (ArrayT _ sh _)) = do
   z <- sequence $ zipWith uniform a' b'
   return $ listArray' (evalShape env block sh) (map fromDouble z)
-  where a' = map toDouble . elems' . fromJust $ evalNodeRef env block a
-        b' = map toDouble . elems' . fromJust $ evalNodeRef env block b
+  where a' = map toDouble . elems' . fromRight' $ evalNodeRef env block a
+        b' = map toDouble . elems' . fromRight' $ evalNodeRef env block b
 samplePNode env block (Dist "discreteUniform" [a,b] _) = fromInteger <$> uniform a' b'
-  where a' = toInteger . fromJust $ evalNodeRef env block a
-        b' = toInteger . fromJust $ evalNodeRef env block b
+  where a' = toInteger . fromRight' $ evalNodeRef env block a
+        b' = toInteger . fromRight' $ evalNodeRef env block b
 samplePNode env block (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
-  where n' = toInteger . fromJust $ evalNodeRef env block n
-        v' = toMatrix . fromJust $ evalNodeRef env block v
+  where n' = toInteger . fromRight' $ evalNodeRef env block n
+        v' = toMatrix . fromRight' $ evalNodeRef env block v
 
 samplePNode env block (Loop shp (Lambda ldag hd) _) =
   listArray' (evalShape env block shp) <$> sequence arr
@@ -829,14 +829,14 @@ samplePNode env block (Loop shp (Lambda ldag hd) _) =
 
 samplePNode env block (HODist "orderedSample" d [n] _) =
   (fromList . sort) <$> sequence [samplePNode env block d | _ <- [1..n']]
-  where n' = toInteger . fromJust $ evalNodeRef env block n
+  where n' = toInteger . fromRight' $ evalNodeRef env block n
 
 samplePNode env block (Switch hd alts ns _) = do
   let env' = Map.fromList (inputsL ldag `zip` ks) `Map.union` env
   env'' <- samplePNodes env' block' idents
   let env''' = Map.filterWithKey (const . p . getId') env''
-  return . constTuple . fromJust . sequence $ evalNodeRef env''' block' <$> lhd
-  where Tagged c ks = fromJust $ evalNodeRef env block hd
+  return . constTuple . fromRight' . sequence $ evalNodeRef env''' block' <$> lhd
+  where Tagged c ks = fromRight' $ evalNodeRef env block hd
         (Lambda ldag lhd, ds) = alts !! c
         block' = deriveBlock ldag block
         idents = [ (Volatile ns (dagLevel ldag) i, d) | (i,d) <- zip [0..] ds ]

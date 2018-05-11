@@ -1,6 +1,7 @@
 module Language.Edward where
 
 import Control.Monad
+import Data.Either.Utils
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Const.IO
@@ -172,7 +173,7 @@ hmcEdward numSamples numSteps stepSize prog init =
     let vals = zipWith reshape lShapes <$> read out
     return [let env = Map.fromList [(LVar i, x)
                                    | ((i,d),x) <- Map.toAscList latents `zip` xs]
-            in fromJust $ evalProg env prog
+            in fromRight $ evalProg env prog
            | xs <- vals]
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "ed" prog
         dump env = forM_ (Map.toList env) $ \(LVar i,c) -> do

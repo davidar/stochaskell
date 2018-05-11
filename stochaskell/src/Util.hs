@@ -98,6 +98,10 @@ notNull = not . null
 liftMaybe :: MonadPlus m => Maybe a -> m a
 liftMaybe = maybe mzero return
 
+fromRight' :: Either String b -> b
+fromRight' (Left e) = error $ "fromRight: "++ e
+fromRight' (Right x) = x
+
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
     (-) = zipWith (-)

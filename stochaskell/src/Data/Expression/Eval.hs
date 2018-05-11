@@ -9,6 +9,8 @@ import Control.Monad
 import Data.Array.IArray (listArray)
 import Data.Array.Abstract
 import Data.Boolean
+import Data.Either
+import Data.Either.Utils
 import Data.Expression hiding (const)
 import Data.Expression.Const hiding (isScalar)
 import Data.Ix
@@ -45,40 +47,47 @@ evaluable env block ref =
         p Internal{} = False
         p Symbol{}   = False
 
-eval :: Env -> Expr t -> Maybe ConstVal
+type Eval = Either String ConstVal
+type Evals = Either String [ConstVal]
+
+eval :: Env -> Expr t -> Eval
 eval env e = evalNodeRef env block ret
   where (ret, block) = runExpr e
 
-eval_ :: Expr t -> Maybe ConstVal
+eval_ :: Expr t -> Eval
 eval_ = eval emptyEnv
 
-eval' :: (ScalarType t) => Expr t -> Maybe t
+eval' :: (ScalarType t) => Expr t -> Either String t
 eval' = fmap toConcrete . eval_
 
-evalD :: Env -> DExpr -> Maybe ConstVal
+evalD :: Env -> DExpr -> Eval
 evalD env e = evalNodeRef env block ret
   where (ret, block) = runDExpr e
 
-evalD_ :: DExpr -> Maybe ConstVal
+evalD_ :: DExpr -> Eval
 evalD_ = evalD emptyEnv
 
-evalTuple :: (ExprTuple t) => Env -> t -> Maybe [ConstVal]
+evalTuple :: (ExprTuple t) => Env -> t -> Evals
 evalTuple env = sequence . map (evalD env) . fromExprTuple
 
 evalEEnv_ :: EEnv -> Env
-evalEEnv_ = Map.mapMaybe evalD_
+evalEEnv_ env = Map.fromList $ do
+  (k,v) <- Map.toList env
+  case evalD_ v of
+    Left e -> trace ("evalEEnv_: "++ e) mzero
+    Right x -> return (k,x)
 
-evalNodeRefs :: Env -> Block -> [NodeRef] -> Maybe [ConstVal]
+evalNodeRefs :: Env -> Block -> [NodeRef] -> Evals
 evalNodeRefs env block = sequence . map (evalNodeRef env block)
 
-evalNodeRef :: Env -> Block -> NodeRef -> Maybe ConstVal
-evalNodeRef env _ (Var ident _) | isJust val = val
+evalNodeRef :: Env -> Block -> NodeRef -> Eval
+evalNodeRef env _ (Var ident _) | isJust val = Right $ fromJust val
   where val = Map.lookup (LVar ident) env
 evalNodeRef env block (Var i@Internal{} _) =
   evalNode env block $ lookupBlock i block
-evalNodeRef _ _ (Var _ _) = Nothing
-evalNodeRef _ _ (Const c _) = Just c
-evalNodeRef env block (Index arr idx) = do
+evalNodeRef _ _ r@(Var ident _) = Left $ "unable to eval "++ show r
+evalNodeRef _ _ (Const c _) = Right c
+evalNodeRef env block r@(Index arr idx) = do
   a <- evalNodeRef env block arr
   js <- evalNodeRefs env block $ reverse idx
   let (lo,hi) = bounds a
@@ -86,11 +95,11 @@ evalNodeRef env block (Index arr idx) = do
       n = length js'
       bounds' = (take n lo, take n hi)
   if bounds' `inRange` js' then return (a!js') else
-    trace (show js' ++" not in range "++ show bounds') Nothing
-evalNodeRef env block (Extract d c j) = do
-  Tagged c' args <- evalNodeRef env block d
-  if | c /= c' -> trace "evalNodeRef(Extract): tag mismatch" Nothing
-     | j >= length args -> trace ("cannot "++ show args ++" !! "++ show j) Nothing
+    Left $ show js' ++" not in range "++ show bounds' ++": "++ show r
+evalNodeRef env block r@(Extract d c j) = do
+  val@(Tagged c' args) <- evalNodeRef env block d
+  if | c /= c' -> Left $ "tag mismatch: "++ show (r, val)
+     | j >= length args -> Left $ "OOB: "++ show (r, val)
      | otherwise -> return $ args !! j
 evalNodeRef env block (Data c args _) = do
   js <- evalNodeRefs env block args
@@ -104,27 +113,28 @@ evalNodeRef env block m | isBlockMatrix m = do
 evalNodeRef env block@(Block dags) r@(Cond cvs _) = go cvs'
   where (cs,vs) = unzip cvs
         cvs' = (evalNodeRef env block <$> cs) `zip` (evalNodeRef env block <$> vs)
-        go ((Just 1, x):_) = x
-        go ((Nothing,_):_) = Nothing
+        go ((Right 1, Left e):_) = Left $ "'"++ e ++"' in value while evaluating "++ show r
+        go ((Right 1, Right x):_) = Right x
+        go ((Left e,_):_) = Left $ "'"++ e ++"' in condition while evaluating "++ show r
         go (_:rest) = go rest
-        go [] = Nothing
-evalNodeRef _ _ Unconstrained{} = Nothing
+        go [] = Left $ "no more conditions: "++ show r
+evalNodeRef _ _ Unconstrained{} = Left "unconstrained"
 evalNodeRef env (Block dags) r = error . showBlock dags $ "evalNodeRef "++ show r ++"\n"++
   "where env = "++ show env
 
 evalRange :: Env -> Block -> [(NodeRef,NodeRef)] -> [[ConstVal]]
 evalRange env block sh = range (a,b)
   where (i,j) = unzip sh
-        a = fromJust . evalNodeRef env block <$> i
-        b = fromJust . evalNodeRef env block <$> j
+        a = fromRight . evalNodeRef env block <$> i
+        b = fromRight . evalNodeRef env block <$> j
 
 evalShape :: Env -> Block -> [(NodeRef,NodeRef)] -> [(Integer,Integer)]
 evalShape env block sh = zip a b
   where (i,j) = unzip sh
-        a = integer . fromJust . evalNodeRef env block <$> i
-        b = integer . fromJust . evalNodeRef env block <$> j
+        a = integer . fromRight . evalNodeRef env block <$> i
+        b = integer . fromRight . evalNodeRef env block <$> j
 
-evalNode :: Env -> Block -> Node -> Maybe ConstVal
+evalNode :: Env -> Block -> Node -> Eval
 evalNode env block (Apply fn args _) =
   f <$> sequence (evalNodeRef env block <$> args)
   where f = fromMaybe (error $ "builtin lookup failure: " ++ fn) $
@@ -154,15 +164,15 @@ evalNode env block (Case hd alts _) = do
     [ret] -> return ret
     _ -> return $ Tagged 0 rets
 
-evalFn :: Env -> Block -> Lambda NodeRef -> [ConstVal] -> Maybe ConstVal
+evalFn :: Env -> Block -> Lambda NodeRef -> [ConstVal] -> Eval
 evalFn env block (Lambda body ret) args = head <$> evalFn' env block (Lambda body [ret]) args
-evalFn' :: Env -> Block -> Lambda [NodeRef] -> [ConstVal] -> Maybe [ConstVal]
+evalFn' :: Env -> Block -> Lambda [NodeRef] -> [ConstVal] -> Evals
 evalFn' env block (Lambda body rets) args = sequence $ evalNodeRef env'' block' <$> rets
   where block' = deriveBlock body block
         env' = Map.fromList (inputsL body `zip` args) `Map.union` env
         env'' = evalDAG block' body env' -- optional caching
 
-evalFn2 :: Env -> Block -> Lambda NodeRef -> ConstVal -> ConstVal -> Maybe ConstVal
+evalFn2 :: Env -> Block -> Lambda NodeRef -> ConstVal -> ConstVal -> Eval
 evalFn2 env block lam a b = evalFn env block lam [a,b]
 
 -- TODO: deriveBlock for each dag?
@@ -172,8 +182,8 @@ evalBlock block@(Block dags) = compose (evalDAG block <$> reverse dags)
 evalDAG :: Block -> DAG -> Env -> Env
 evalDAG block dag = compose
   [ \env -> case evalNode env block node of
-              Just val -> Map.insert (LVar (Internal level ptr)) val env
-              Nothing -> env
+              Right val -> Map.insert (LVar (Internal level ptr)) val env
+              Left e -> trace ("evalDAG: "++ e) env
   | (ptr,node) <- nodes dag ]
   where level = dagLevel dag
 
@@ -188,7 +198,7 @@ unifyD e c env = env `Map.union` unifyNodeRef env block ret c
 unifyTuple :: (ExprTuple t) => Block -> [NodeRef] -> t -> Env -> Env
 unifyTuple block rets vals = compose
   [ \env -> env `Map.union` unifyNodeRef env block r v
-  | (r,e) <- zip rets $ fromExprTuple vals, let Just v = evalD_ e ]
+  | (r,e) <- zip rets $ fromExprTuple vals, let Right v = evalD_ e ]
 
 unifyNodeRef :: Env -> Block -> NodeRef -> ConstVal -> Env
 unifyNodeRef env block (Var i@Internal{} _) val =
@@ -202,30 +212,30 @@ unifyNode env block (Array sh (Lambda body hd) _) val = Map.unions $ do -- TODO 
     idx <- range (bounds val)
     let env' = Map.fromList (inputsL body `zip` map fromInteger idx) `Map.union` env
     return $ unifyNodeRef env' (deriveBlock body block) hd (val ! idx)
-unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isJust c' =
-    unifyNodeRef env block (if toBool (fromJust c') then a else b) val
+unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isRight c' =
+    unifyNodeRef env block (if toBool (fromRight c') then a else b) val
   where c' = evalNodeRef env block c
-unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isJust a' && isJust b' =
-    if fromJust a' == fromJust b' then emptyEnv
-    else if fromJust a' == val then unifyNodeRef env block c true
-    else if fromJust b' == val then unifyNodeRef env block c false
+unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isRight a' && isRight b' =
+    if fromRight a' == fromRight b' then emptyEnv
+    else if fromRight a' == val then unifyNodeRef env block c true
+    else if fromRight b' == val then unifyNodeRef env block c false
     else error "unification error in ifThenElse"
   where a' = evalNodeRef env block a
         b' = evalNodeRef env block b
-unifyNode env block (Apply "+" [a,b] _) val | isJust a' =
-    unifyNodeRef env block b (val - fromJust a')
+unifyNode env block (Apply "+" [a,b] _) val | isRight a' =
+    unifyNodeRef env block b (val - fromRight a')
   where a' = evalNodeRef env block a
-unifyNode env block (Apply "*" [a,b] _) val | isJust a' =
-    unifyNodeRef env block b (val / fromJust a')
+unifyNode env block (Apply "*" [a,b] _) val | isRight a' =
+    unifyNodeRef env block b (val / fromRight a')
   where a' = evalNodeRef env block a
-unifyNode env block (Apply "/" [a,b] _) val | isJust b' =
-    unifyNodeRef env block a (val * fromJust b')
+unifyNode env block (Apply "/" [a,b] _) val | isRight b' =
+    unifyNodeRef env block a (val * fromRight b')
   where b' = evalNodeRef env block b
-unifyNode env block (Apply "#>" [a,b] _) val | isJust a' =
-    unifyNodeRef env block b ((fromJust a') <\> val)
+unifyNode env block (Apply "#>" [a,b] _) val | isRight a' =
+    unifyNodeRef env block b ((fromRight a') <\> val)
   where a' = evalNodeRef env block a
-unifyNode env block (Apply "<>" [a,b] _) val | isJust b' =
-    unifyNodeRef env block a (val <> inv (fromJust b'))
+unifyNode env block (Apply "<>" [a,b] _) val | isRight b' =
+    unifyNodeRef env block a (val <> inv (fromRight b'))
   where b' = evalNodeRef env block b
 unifyNode env block (Apply "inv" [a] _) val =
     unifyNodeRef env block a (inv val)
@@ -236,20 +246,20 @@ unifyNode env block (Apply "quad_form_diag" [m,v] _) val
                                 | j <- [lo..hi]] | i <- [lo..hi]]
         v' = fromList [sqrt (val![i,i]) | i <- [lo..hi]]
         (lo,hi):_ = shape val
-unifyNode env block (Apply "deleteIndex" [a,i] _) val | isJust a' && dimension val == 1 =
+unifyNode env block (Apply "deleteIndex" [a,i] _) val | isRight a' && dimension val == 1 =
     unifyNodeRef env block i (integer idx)
   where a' = evalNodeRef env block a
-        j = firstDiff (toList $ fromJust a') (toList val)
+        j = firstDiff (toList $ fromRight a') (toList val)
         ([lo],_) = bounds val
         idx = lo + integer j
-unifyNode env block (Apply "insertIndex" [a,i,e] _) val | isJust a' && dimension val == 1 =
+unifyNode env block (Apply "insertIndex" [a,i,e] _) val | isRight a' && dimension val == 1 =
     unifyNodeRef env block i (integer idx) `Map.union` unifyNodeRef env block e elt
   where a' = evalNodeRef env block a
-        j = firstDiff (toList $ fromJust a') (toList val)
+        j = firstDiff (toList $ fromRight a') (toList val)
         ([lo],_) = bounds val
         idx = lo + integer j
         elt = val![idx]
-unifyNode env block node val | isJust lhs && fromJust lhs == val = emptyEnv
+unifyNode env block node val | isRight lhs && fromRight lhs == val = emptyEnv
   where lhs = evalNode env block node
 unifyNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
   unifyNodeRef env block seed seed' `Map.union` unifyNodeRef env block ls ls'
@@ -469,11 +479,11 @@ diffNodeRef env block (Var i s) var t
   | otherwise = zeros (numelType env block s) (numelType env block t)
 
 diffNode :: Env -> Block -> Node -> Id -> Type -> ConstVal
-diffNode env block (Apply "+" [a,b] _) var t | isJust a' =
+diffNode env block (Apply "+" [a,b] _) var t | isRight a' =
     diffNodeRef env block b var t
   where a' = evalNodeRef (Map.filterWithKey (const . not . (Just var ==) . getId') env) block a
-diffNode env block (Apply "#>" [a,b] _) var t | isJust a' =
-    fromJust a' <> diffNodeRef env block b var t
+diffNode env block (Apply "#>" [a,b] _) var t | isRight a' =
+    fromRight a' <> diffNodeRef env block b var t
   where a' = evalNodeRef (Map.filterWithKey (const . not . (Just var ==) . getId') env) block a
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
@@ -582,31 +592,31 @@ derivNode _ block node var = error . showLet' (topDAG block) $
 instance (ScalarType t, Enum t) => Enum (Expr t)
 
 instance (ScalarType t, Real t) => Real (Expr t) where
-  toRational = real . fromJust . eval_
+  toRational = real . fromRight . eval_
 
 instance (ScalarType t, Integral t) => Integral (Expr t) where
-  toInteger = integer . fromJust . eval_
+  toInteger = integer . fromRight . eval_
 
 instance IsList RVec where
     type Item RVec = Double
     fromList xs = expr . return $ Const c t
       where c = fromList $ map real xs
             t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] RealT
-    toList = map real . toList . fromJust . eval_
+    toList = map real . toList . fromRight . eval_
 
 instance IsList ZVec where
     type Item ZVec = Integer
     fromList xs = expr . return $ Const c t
       where c = fromList $ map integer xs
             t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] IntT
-    toList = map integer . toList . fromJust . eval_
+    toList = map integer . toList . fromRight . eval_
 
 instance IsList BVec where
     type Item BVec = Bool
     fromList xs = expr . return $ Const c t
       where c = fromList $ map fromBool xs
             t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] boolT
-    toList = map toBool . toList . fromJust . eval_
+    toList = map toBool . toList . fromRight . eval_
 
 instance IsList RMat where
     type Item RMat = [Double]
@@ -616,12 +626,12 @@ instance IsList RMat where
             c = Approx $ listArray ([1,1],[n,m]) (concat xs)
             t = ArrayT Nothing [(Const 1 IntT, Const (fromInteger n) IntT)
                                ,(Const 1 IntT, Const (fromInteger m) IntT)] RealT
-    toList = map (map real . toList) . toList . fromJust . eval_
+    toList = map (map real . toList) . toList . fromRight . eval_
 
 instance forall t. (Show t, ScalarType t) => Show (Expr t) where
   show x = case eval_ x of
-    Just c  -> show (toConcrete c :: t)
-    Nothing -> show (erase x)
+    Right c  -> show (toConcrete c :: t)
+    Left _ -> show (erase x)
 
 wrapReadsPrec :: (Read a) => (a -> t) -> Int -> ReadS t
 wrapReadsPrec f d s = [(f x, s') | (x, s') <- readsPrec d s]

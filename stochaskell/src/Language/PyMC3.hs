@@ -3,6 +3,7 @@
 module Language.PyMC3 where
 
 import Control.Monad
+import Data.Either.Utils
 import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Const.IO
@@ -237,7 +238,7 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   let vals = zipWith reshape lShapes <$> read out
   return [let env = Map.fromList [(LVar i, x)
                                  | ((i,d),x) <- Map.toAscList latents `zip` xs]
-          in fromJust $ evalProg env prog
+          in fromRight $ evalProg env prog
          | xs <- vals]
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "pm" prog
         g i = "trace['"++ pmId i ++"'].tolist()"

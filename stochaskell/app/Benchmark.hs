@@ -4,6 +4,7 @@
 module Main where
 import Language.Stochaskell
 
+import Data.Either.Utils
 import Data.Expression.Eval
 import Data.List (transpose)
 import Data.Maybe
@@ -143,7 +144,7 @@ poly' = do
   (xData,alphaTrue,betaTrue,yData) <- simulate (poly n d)
   let design = matrix [ let p = cast (j-1) in (xData!i)**p
                       | i <- 1...n, j <- 1...(d+1) ] :: RMat
-      design' = constExpr . fromJust $ eval_ design
+      design' = constExpr . fromRight $ eval_ design
   let post = [ (a,b) | (x,a,b,y) <- nlm n (d+1), x == design', y == yData ]
       stepSize = 0.1
   (_,alphaInit,betaInit,_) <- simulate (poly n d)
@@ -217,7 +218,7 @@ benchStanHMC numSamp numSteps stepSize p init = do
         }
   samples <- runStan method p init
   tocStan <- getPOSIXTime
-  let means = map mean . transpose $ map (map (fromJust . evalD_) . fromExprTuple) samples
+  let means = map mean . transpose $ map (map (fromRight . evalD_) . fromExprTuple) samples
   return $ "STAN:\t"++ show means ++" took "++ show (tocStan - ticStan)
 
 benchPyMC3HMC numSamp numSteps stepSize p init = do

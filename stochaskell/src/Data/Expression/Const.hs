@@ -217,34 +217,34 @@ fromMatrix (ShMat (r,r') (c,c') m) = Approx $ listArray ([r,c],[r',c']) (toList 
 foldrConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
 foldrConst f r = foldr f r . toList
 
-foldrConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal -> Maybe ConstVal
-foldrConst' f r = foldr f' (Just r) . toList
-  where f' _ Nothing = Nothing
-        f' x (Just y) = f x y
+foldrConst' :: (ConstVal -> ConstVal -> Either String ConstVal) -> ConstVal -> ConstVal -> Either String ConstVal
+foldrConst' f r = foldr f' (Right r) . toList
+  where f' _ (Left e) = Left $ "foldrConst': "++ e
+        f' x (Right y) = f x y
 
 foldlConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
 foldlConst f r = foldl f r . toList
 
-foldlConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal -> Maybe ConstVal
-foldlConst' f r = foldl f' (Just r) . toList
-  where f' Nothing _ = Nothing
-        f' (Just y) x = f y x
+foldlConst' :: (ConstVal -> ConstVal -> Either String ConstVal) -> ConstVal -> ConstVal -> Either String ConstVal
+foldlConst' f r = foldl f' (Right r) . toList
+  where f' (Left e) _ = Left $ "foldlConst': "++ e
+        f' (Right y) x = f y x
 
 scanrConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
 scanrConst f r = fromList . scanr f r . toList
 
-scanrConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal -> Maybe ConstVal
-scanrConst' f r = fmap fromList . sequence . scanr f' (Just r) . toList
-  where f' _ Nothing = Nothing
-        f' x (Just y) = f x y
+scanrConst' :: (ConstVal -> ConstVal -> Either String ConstVal) -> ConstVal -> ConstVal -> Either String ConstVal
+scanrConst' f r = fmap fromList . sequence . scanr f' (Right r) . toList
+  where f' _ (Left e) = Left $ "scanrConst': "++ e
+        f' x (Right y) = f x y
 
 scanlConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
 scanlConst f r = fromList . scanl f r . toList
 
-scanlConst' :: (ConstVal -> ConstVal -> Maybe ConstVal) -> ConstVal -> ConstVal -> Maybe ConstVal
-scanlConst' f r = fmap fromList . sequence . scanl f' (Just r) . toList
-  where f' Nothing _ = Nothing
-        f' (Just y) x = f y x
+scanlConst' :: (ConstVal -> ConstVal -> Either String ConstVal) -> ConstVal -> ConstVal -> Either String ConstVal
+scanlConst' f r = fmap fromList . sequence . scanl f' (Right r) . toList
+  where f' (Left e) _ = Left $ "scanlConst': "++ e
+        f' (Right y) x = f y x
 
 isZeros :: ConstVal -> Bool
 isZeros (Exact  a) = (0 ==) `all` elems a

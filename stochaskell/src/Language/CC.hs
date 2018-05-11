@@ -5,6 +5,7 @@ import Control.Monad
 import Control.Monad.State
 import Data.Array.Abstract
 import qualified Data.ByteString.Char8 as C
+import Data.Either.Utils
 import Data.Expression hiding (const)
 import Data.Expression.Const hiding (isScalar)
 import qualified Data.Expression.Const as Const
@@ -272,7 +273,7 @@ runCC prog x = do
     putStrLn' $ unwords (cxx:args)
     callProcess cxx args
 
-  output <- readProcess exename [] $ printCC (fromJust $ eval_ x)
+  output <- readProcess exename [] $ printCC (fromRight $ eval_ x)
   let (cs,[]) = readChain (readCC . typeRef <$> rets) $ words output
   return $ fromConstVals cs
   where (code,rets) = ccProgram (typeExpr x) prog
