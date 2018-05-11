@@ -139,6 +139,13 @@ newtype Uniform a = Uniform a
 instance (Random t) => Distribution Uniform (t,t) IO t where
     sample (Uniform (a,b)) = getStdRandom $ randomR (a,b)
 uniform a b = sample $ Uniform (a,b)
+lpdfUniform x a b | x < a || b < x = log 0
+                  | otherwise = log $ 1 / (b - a)
+cdfUniform x a b | x < a = 0
+                 | x > b = 1
+                 | otherwise = (x - a) / (b - a)
+lpdfDiscreteUniform x a b | x < a || b < x = log 0
+                          | otherwise = log $ 1 / (fromIntegral $ b - a + 1)
 
 newtype Uniforms a = Uniforms a
 uniforms a b = sample $ Uniforms (a,b)

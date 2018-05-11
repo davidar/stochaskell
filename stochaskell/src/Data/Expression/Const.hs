@@ -9,6 +9,7 @@ import Data.Array.Unboxed hiding ((!),bounds)
 import Data.Boolean
 import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.Char
+import Data.List
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Monoid
@@ -21,12 +22,14 @@ import Debug.Trace
 import GHC.Exts
 import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra.Data as LAD
+import Numeric.SpecFunctions
 import Util
 
 constFuns :: Map String ([ConstVal] -> ConstVal)
 constFuns = Map.fromList
   [("+", \[a,b] -> a + b)
-  ,("+s", \xs -> sum xs)
+  ,("+s", sum)
+  ,("&&s", foldl1 (&&*))
   ,("-", \[a,b] -> a - b)
   ,("*", \[a,b] -> a * b)
   ,("/", \[a,b] -> a / b)
@@ -39,6 +42,7 @@ constFuns = Map.fromList
   ,("true", const true)
   ,("false", const false)
   ,("pi", const pi)
+  ,("logFactorial", real . logFactorial . integer . head)
   ,("getExternal", head)
   ,("<>", \[a,b] -> a <> b)
   ,("<.>", \[u,v] -> u <.> v)
@@ -49,12 +53,14 @@ constFuns = Map.fromList
   ,("asColumn", asColumn . head)
   ,("asRow", asRow . head)
   ,("eye", eye . integer . head)
+  ,("zeros", \[m,n] -> zeros (integer m) (integer n))
   ,("chol", chol . head)
   ,("inv", inv . head)
   ,("det", det . head)
   ,("log_det", logDet . head)
   ,("tr", tr . head)
   ,("tr'", tr' . head)
+  ,("vectorSize", integer . vectorSize . head)
   ,("ifThenElse", \[a,b,c] -> ifB a b c)
   ,("==", \[a,b] -> a ==* b)
   ,("/=", \[a,b] -> a /=* b)
@@ -67,6 +73,8 @@ constFuns = Map.fromList
   ,("not", notB . head)
   ,("deleteIndex", \[a,i]   -> deleteIndex a [integer i])
   ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
+  ,("replaceIndex", \[a,i,x] -> replaceIndex a [integer i] x)
+  ,("findSortedInsertIndex", \[x,a] -> findSortedInsertIndexC x a)
   ,("quad_form_diag", \[m,v] -> diag v <> m <> diag v)
   ,("bernoulli_pdf",     \[b,p]   -> if toBool b then p else 1-p)
   ,("bernoulli_lpdf",    \[b,p]   -> log $ if toBool b then p else 1-p)
@@ -75,6 +83,10 @@ constFuns = Map.fromList
   ,("neg_binomial_lpdf", \[k,a,b] -> real $ lpdfNegBinomial (integer k) (real a) (real b))
   ,("poisson_lpdf",      \[k,l]   -> real $ lpdfPoisson (integer k) (real l))
   ,("normal_lpdf",       \[x,m,s] -> real $ logPdf (Rand.Normal (toDouble m) (toDouble s)) (real x))
+  ,("uniform_lpdf",      \[x,a,b] -> real $ lpdfUniform (toDouble x) (toDouble a) (toDouble b))
+  ,("uniform_cdf",       \[x,a,b] -> real $ cdfUniform (toDouble x) (toDouble a) (toDouble b))
+  ,("discreteUniform_lpdf", \[x,a,b] -> real $
+     lpdfDiscreteUniform (toInteger x) (toInteger a) (toInteger b))
   ]
 
 toBool :: (Boolean b, Eq b) => b -> Bool
@@ -153,8 +165,11 @@ binarize :: (forall a. (Num a, EqB a, OrdB a) => a -> BooleanOf a) -> ConstVal -
 binarize f (Exact  a) = Exact $ amap (\x -> if f x then 1 else 0) a
 binarize f (Approx a) = Exact $ amap (\x -> if f x then 1 else 0) a
 
-isScalar a = bounds a == ([],[])
+isScalar :: (Indexable a [i] e) => a -> Bool
+isScalar a | ([],[]) <- bounds a = True
+           | otherwise = False
 
+toScalar :: (Indexable a [i] e, Show a) => a -> e
 toScalar a | isScalar a = a![]
            | otherwise  = error $ "can't convert non-scalar "++ show a ++" to real"
 
@@ -257,6 +272,13 @@ reshape :: [Interval Integer] -> ConstVal -> ConstVal
 reshape sh (Exact  a) = Exact  $ listArray (unzip sh) (elems a)
 reshape sh (Approx a) = Approx $ listArray (unzip sh) (elems a)
 
+findSortedInsertIndexC :: ConstVal -> ConstVal -> ConstVal
+findSortedInsertIndexC x a = case find (\j -> x < (a![j])) [1..n] of
+  Just i  -> integer i
+  Nothing -> integer $ n + 1
+  where a' = list a :: [ConstVal]
+        n = fromIntegral $ length a'
+
 instance Num ConstVal where
     (+) = constBinOp (+)
     (-) = constBinOp (-)
@@ -312,14 +334,9 @@ instance Indexable ConstVal [Integer] ConstVal where
     c ! i = slice c [ i ++ j | j <- fromShape (drop (length i) (shape c)) ]
     bounds (Exact  a) = bounds a
     bounds (Approx a) = bounds a
-    deleteIndex (Exact a) [i] | dimension (Exact a) == 1 =
-        Exact $ listArray ([lo],[hi-1]) xs
-      where ([lo],[hi]) = bounds a
-            xs = deleteIndex (elems a) (integer $ i - lo)
-    insertIndex (Exact a) [i] x | dimension (Exact a) == 1 =
-        Exact $ listArray ([lo],[hi+1]) xs
-      where ([lo],[hi]) = bounds a
-            xs = insertIndex (elems a) (integer $ i - lo) (integer x)
+    deleteIndex  c [i]   = fromList $ deleteIndex  (toList c) (integer $ i-1)
+    insertIndex  c [i] x = fromList $ insertIndex  (toList c) (integer $ i-1) x
+    replaceIndex c [i] x = fromList $ replaceIndex (toList c) (integer $ i-1) x
 
 instance Ix ConstVal where
     range (Exact a, Exact b) | bounds a == bounds b =
@@ -340,6 +357,14 @@ instance Scalable ConstVal ConstVal where
 instance InnerProduct ConstVal ConstVal where
     u <.> v = fromDouble $ toVector u <.> toVector v
 
+instance Vector ConstVal Integer ConstVal where
+    blockVector = fromVector . blockVector . map toVector'
+      where toVector' x | isScalar x = toVector (list [x])
+                        | otherwise  = toVector x
+    vectorSize v = case shape v of
+      [(1,n)] -> n
+      sh -> error $ "vectorSize "++ show sh
+
 instance Monoid ConstVal where
     mappend a b = fromMatrix $ toMatrix a <> toMatrix b
 
@@ -353,6 +378,7 @@ instance LinearOperator ConstVal ConstVal where
     asRow    a = fromMatrix . asRow    $ toVector a
 
 instance Matrix ConstVal Integer ConstVal where
+    blockMatrix = fromMatrix . blockMatrix . map (map toMatrix)
     eye n = Exact $ array ([1,1],[n,n])
       [ ([i,j], if i == j then 1 else 0) | i <- [1..n], j <- [1..n] ]
     zeros n n' = Exact $ array ([1,1],[n,n'])

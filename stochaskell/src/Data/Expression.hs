@@ -84,6 +84,13 @@ isBlockArray :: NodeRef -> Bool
 isBlockArray BlockArray{} = True
 isBlockArray _ = False
 
+isBlockVector :: NodeRef -> Bool
+isBlockVector (BlockArray a _) = length (AA.shape a) == 1
+isBlockVector _ = False
+fromBlockVector :: NodeRef -> [NodeRef]
+fromBlockVector (BlockArray a _) = [a![i] | i <- [1..n]]
+  where [(1,n)] = AA.shape a
+
 isBlockMatrix :: NodeRef -> Bool
 isBlockMatrix (BlockArray a _) = length (AA.shape a) == 2
 isBlockMatrix _ = False

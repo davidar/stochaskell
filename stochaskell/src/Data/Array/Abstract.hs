@@ -117,6 +117,7 @@ instance Indexable [e] Int e where
     bounds xs = (0, length xs - 1)
     deleteIndex xs i   = take i xs ++ drop (i+1) xs
     insertIndex xs i x = take i xs ++ [x] ++ drop i xs
+    replaceIndex xs i x = take i xs ++ [x] ++ drop (i+1) xs
 
 instance Indexable (AbstractArray i e) [i] e where
     (AArr _ f) ! i = f i
@@ -133,7 +134,7 @@ instance (A.IArray A.UArray e, Ix i) => Indexable (A.UArray i e) i e where
     (!) = (A.!)
     bounds = A.bounds
 
-class (Indexable v i e) => Vector v i e | v -> i e, i e -> v where
+class Vector v i e | v -> i e, i e -> v where
     vector :: AbstractArray i e -> v
     blockVector :: [v] -> v
     vectorSize :: v -> i
@@ -152,8 +153,11 @@ instance (Num (LAD.Vector t)) => Num (ShapedVector t) where
 instance (Storable t) => Indexable (ShapedVector t) Integer t where
     (ShVec sh v) ! i = LAD.toList v !! index sh i
     bounds (ShVec sh _) = sh
-instance (Storable t) => Vector (ShapedVector t) Integer t where
+instance Vector (ShapedVector Double) Integer Double where
     vector a = ShVec (head $ shape a) . LAD.fromList . A.elems $ toArray a
+    blockVector vs = ShVec (1, fromIntegral n) v'
+      where v' = LAD.vjoin [v | ShVec _ v <- vs]
+            n = LAD.size v'
 
 infixr 7 *>
 class Scalable a v | v -> a where
@@ -192,6 +196,9 @@ instance Matrix (ShapedMatrix Double) Integer Double where
       where ncol = fromInteger . cardinality $ shape a !! 1
             xs = A.elems $ toArray a
             r:c:_ = shape a
+    blockMatrix rows = ShMat (1, fromIntegral r) (1, fromIntegral c) m'
+      where m' = LAD.fromBlocks [[m | ShMat _ _ m <- row] | row <- rows]
+            (r,c) = LAD.size m'
 instance Monoid (ShapedMatrix Double) where
     mappend (ShMat r c m) (ShMat r' c' m') | c == r' = ShMat r c' $ (LA.<>) m m'
 

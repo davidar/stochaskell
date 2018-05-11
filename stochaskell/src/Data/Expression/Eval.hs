@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, MonadComprehensions, ScopedTypeVariables, TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances, MonadComprehensions, MultiWayIf, ScopedTypeVariables, TypeFamilies #-}
 
 module Data.Expression.Eval where
 
@@ -81,15 +81,36 @@ evalNodeRef _ _ (Const c _) = Just c
 evalNodeRef env block (Index arr idx) = do
   a <- evalNodeRef env block arr
   js <- evalNodeRefs env block $ reverse idx
-  return (a!(toInteger <$> js))
+  let (lo,hi) = bounds a
+      js' = toInteger <$> js
+      n = length js'
+      bounds' = (take n lo, take n hi)
+  if bounds' `inRange` js' then return (a!js') else
+    trace (show js' ++" not in range "++ show bounds') Nothing
 evalNodeRef env block (Extract d c j) = do
   Tagged c' args <- evalNodeRef env block d
-  assert (c == c') . return $ args !! j
+  if | c /= c' -> trace "evalNodeRef(Extract): tag mismatch" Nothing
+     | j >= length args -> trace ("cannot "++ show args ++" !! "++ show j) Nothing
+     | otherwise -> return $ args !! j
 evalNodeRef env block (Data c args _) = do
   js <- evalNodeRefs env block args
   return $ Tagged c js
+evalNodeRef env block v | isBlockVector v = do
+  v' <- sequence $ evalNodeRef env block <$> fromBlockVector v
+  return $ blockVector v'
+evalNodeRef env block m | isBlockMatrix m = do
+  m' <- sequence $ sequence . map (evalNodeRef env block) <$> fromBlockMatrix m
+  return $ blockMatrix m'
+evalNodeRef env block@(Block dags) r@(Cond cvs _) = go cvs'
+  where (cs,vs) = unzip cvs
+        cvs' = (evalNodeRef env block <$> cs) `zip` (evalNodeRef env block <$> vs)
+        go ((Just 1, x):_) = x
+        go ((Nothing,_):_) = Nothing
+        go (_:rest) = go rest
+        go [] = Nothing
 evalNodeRef _ _ Unconstrained{} = Nothing
-evalNodeRef _ _ r = error $ "evalNodeRef "++ show r
+evalNodeRef env (Block dags) r = error . showBlock dags $ "evalNodeRef "++ show r ++"\n"++
+  "where env = "++ show env
 
 evalRange :: Env -> Block -> [(NodeRef,NodeRef)] -> [[ConstVal]]
 evalRange env block sh = range (a,b)
@@ -126,9 +147,17 @@ evalNode env block (FoldScan fs lr lam seed ls _) = do
     (Fold, Left_)  -> foldlConst' (flip f) r xs
     (Scan, Right_) -> scanrConst' f        r xs
     (Scan, Left_)  -> scanlConst' (flip f) r xs
+evalNode env block (Case hd alts _) = do
+  k <- evalNodeRef env block hd
+  rets <- evalFn' env block (alts !! (integer k - 1)) []
+  case rets of
+    [ret] -> return ret
+    _ -> return $ Tagged 0 rets
 
 evalFn :: Env -> Block -> Lambda NodeRef -> [ConstVal] -> Maybe ConstVal
-evalFn env block (Lambda body hd) args = evalNodeRef env'' block' hd
+evalFn env block (Lambda body ret) args = head <$> evalFn' env block (Lambda body [ret]) args
+evalFn' :: Env -> Block -> Lambda [NodeRef] -> [ConstVal] -> Maybe [ConstVal]
+evalFn' env block (Lambda body rets) args = sequence $ evalNodeRef env'' block' <$> rets
   where block' = deriveBlock body block
         env' = Map.fromList (inputsL body `zip` args) `Map.union` env
         env'' = evalDAG block' body env' -- optional caching
@@ -535,12 +564,12 @@ derivNode env block (Apply op [a,b] _) var
         g' = derivNodeRef env block b var
 derivNode env block (Apply "deleteIndex" [a,j] _) var =
   deleteIndex (derivNodeRef env block a var) (reDExpr env block j)
-derivNode env block (Apply "insertIndex" [a,j,e] _) var =
+derivNode env block (Apply "insertIndex" [a,j,e] _) var | isScalar (typeRef e) =
   insertIndex (derivNodeRef env block a var) (reDExpr env block j)
-              (derivNodeRef env block e var)
-derivNode env block (Apply "replaceIndex" [a,j,e] _) var =
+              (derivNodeRef env block e var ! 1)
+derivNode env block (Apply "replaceIndex" [a,j,e] _) var | isScalar (typeRef e) =
   replaceIndex (derivNodeRef env block a var) (reDExpr env block j)
-               (derivNodeRef env block e var)
+               (derivNodeRef env block e var ! 1)
 derivNode env block (Case hd alts _) var = caseD hd' alts'
   where hd' = reDExpr env block hd
         alts' = do
