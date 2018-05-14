@@ -889,7 +889,7 @@ rjmc target proposal x = do
   y <- proposal x
   let f = lpdf target -- TODO: jacobian adjustment for transformed dist
       a = exp $ f y - f x + rjmcTransRatio proposal x y
-  accept <- bernoulli $ ifB (a >* 1) 1 a
+  accept <- bernoulli $ applyClosed2 "min" 1 a
   return $ ifB accept y x
 
 rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)

@@ -76,6 +76,9 @@ getId :: NodeRef -> Maybe Id
 getId (Var i _) = Just i
 getId _ = Nothing
 
+isConst :: NodeRef -> Bool
+isConst Const{} = True
+isConst _ = False
 getConstVal :: NodeRef -> Maybe ConstVal
 getConstVal (Const c _) = Just c
 getConstVal _ = Nothing
@@ -653,7 +656,7 @@ extractNodeRef env block (Index v i) = do
   simplifyNodeRef $ Index v' i'
 extractNodeRef env block (Extract d c i) = do
   d' <- extractNodeRef env block d
-  return $ case d' of
+  simplifyNodeRef $ case d' of
     Data k js _ | c == k, i < length js -> js !! i
     _ -> Extract d' c i
 extractNodeRef env block (Cond cvs t) = do
@@ -700,7 +703,7 @@ flattenCond (c, Cond cbs _) = do
 flattenCond cv = return [cv]
 
 simplifyNodeRef :: NodeRef -> State Block NodeRef
-simplifyNodeRef r@BlockArray{} | isBlockMatrix r, isCond `any` concat m = do
+simplifyNodeRef r@BlockArray{} | isBlockMatrix r, any isCond `all` m = do
   cvs <- sequence $ concatCond <$> m
   let cs = nub . sort . map fst $ concat cvs
   vs <- sequence [blockMatrix' $ mapMaybe (lookup c) cvs | c <- cs]
@@ -716,6 +719,10 @@ simplifyNodeRef (Cond cvs t) = return $ Cond (filter p cvs) t
         p _ = True
 simplifyNodeRef r@(Index i [Cond cvs _]) =
   simplifyNodeRef $ Cond [(c,Index i [j]) | (c,j) <- cvs] (typeRef r)
+simplifyNodeRef r@(Index (Cond cvs _) js) =
+  simplifyNodeRef $ Cond [(c,Index i js) | (c,i) <- cvs] (typeRef r)
+simplifyNodeRef r@(Extract (Cond cvs _) k j) =
+  simplifyNodeRef $ Cond [(c,Extract i k j) | (c,i) <- cvs] (typeRef r)
 simplifyNodeRef r = return r
 
 extractNode :: EEnv -> Block -> Node -> State Block NodeRef
@@ -893,11 +900,23 @@ simplify (Apply "ifThenElse" [_,Const a _,Const b _] t)
   | a == b = return $ Const a t
 simplify (Apply "ifThenElse" [Const 1 _,a,_] _) = return a
 simplify (Apply "ifThenElse" [Const 0 _,_,b] _) = return b
+simplify (Apply "ifThenElse" [Cond cvs _,a,b] t) | isConst `all` vs = do
+  let vs' = [if c == 1 then a else b | Const c _ <- vs]
+  r <- simplifyNodeRef $ Cond (zip cs vs') t
+  simplify $ Apply "id" [r] t
+  where (cs,vs) = unzip cvs
 simplify (Apply f js t)
-  | not (null `any` cs), f /= "ifThenElse", not (endswith "pdf" f) = do
+  | not (null `any` cs), f /= "ifThenElse", f /= "id" = do
   cs' <- sequence $ simplifyConj <$> cs
   vs' <- sequence [simplify $ Apply f v t | v <- vs]
-  return $ Cond (zip cs' vs') t
+  r <- simplifyNodeRef $ Cond (zip cs' vs') t
+  case head js of
+    Cond cvs _ | endswith "pdf" f -> do
+      ns <- sequence [simplify $ Apply "not" [c] boolT | (c,_) <- cvs]
+      c <- simplifyConj ns
+      let z = if endswith "lpdf" f then 0 else 1
+      simplify $ Apply "ifThenElse" [c, Const z t, r] t
+    _ -> return r
   where (cs,vs) = unzip $ liftCond js
         liftCond ((Cond cvs _):rest) =
             [(c:cs, v:vs) | (c,v) <- cvs, (cs,vs) <- liftCond rest]

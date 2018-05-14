@@ -113,9 +113,9 @@ evalNodeRef env block m | isBlockMatrix m = do
 evalNodeRef env block@(Block dags) r@(Cond cvs _) = go cvs'
   where (cs,vs) = unzip cvs
         cvs' = (evalNodeRef env block <$> cs) `zip` (evalNodeRef env block <$> vs)
-        go ((Right 1, Left e):_) = Left $ "'"++ e ++"' in value while evaluating "++ show r
+        go ((Right 1, Left e):_) = Left $ "while evaluating value of "++ show r ++":\n"++ indent e
         go ((Right 1, Right x):_) = Right x
-        go ((Left e,_):_) = Left $ "'"++ e ++"' in condition while evaluating "++ show r
+        go ((Left e,_):_) = Left $ "while evaluating condition of "++ show r ++":\n"++ indent e
         go (_:rest) = go rest
         go [] = Left $ "no more conditions: "++ show r
 evalNodeRef _ _ Unconstrained{} = Left "unconstrained"
@@ -183,7 +183,7 @@ evalDAG :: Block -> DAG -> Env -> Env
 evalDAG block dag = compose
   [ \env -> case evalNode env block node of
               Right val -> Map.insert (LVar (Internal level ptr)) val env
-              Left e -> trace ("evalDAG: "++ e) env
+              Left e -> {-trace ("evalDAG: "++ e)-} env
   | (ptr,node) <- nodes dag ]
   where level = dagLevel dag
 
@@ -456,7 +456,9 @@ solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
         f' x y = let env' = Map.insert j x env
                  in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
 solveNode _ _ (FoldScan Fold _ _ _ _ _) _ = trace ("WARN assuming fold = val") Map.empty
-solveNode env _ n v = error $ "solveNode "++ show env ++" "++ show n ++" "++ show v
+solveNode _ _ (Apply "findSortedInsertIndex" _ _) _ = Map.empty
+solveNode env (Block dags) n v = error $
+  "solveNode: "++ showBlock dags (show n ++" = "++ show v) ++"\nwith env = "++ show env
 
 diff :: Env -> Expr t -> Id -> Type -> ConstVal
 diff env = diffD env . erase
