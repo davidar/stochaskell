@@ -110,6 +110,9 @@ showPNodes ns d refs ret = "do "++ indent' 0 3 s ++"\n"++
                            "   return "++ ret
   where s = unlines [show i ++" <- "++ show r | (i,r) <- Map.toList $ pnodes' ns d refs]
 
+showPBlock :: PBlock -> String -> String
+showPBlock (PBlock (Block block) refs _ ns) = showBlock block . showPNodes ns 0 (reverse refs)
+
 -- lift into Block
 liftExprBlock :: MonadState PBlock m => State Block b -> m b
 liftExprBlock s = do
@@ -126,8 +129,8 @@ runProg :: NS -> Prog a -> (a, PBlock)
 runProg ns p = runState (fromProg p) $ emptyPBlock ns
 
 instance (ExprTuple t) => Show (Prog t) where
-  show p = showBlock block . showPNodes ns 0 (reverse refs) $ show rets
-    where (rets, PBlock (Block block) refs _ ns) = runProgExprs "show" p
+  show p = showPBlock pb $ show rets
+    where (rets, pb) = runProgExprs "show" p
 
 fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NodeRef]
 fromProgExprs p = do
@@ -725,12 +728,15 @@ simulate = sampleP
 sampleP :: (ExprTuple t) => Prog t -> IO t
 sampleP = sampleP' emptyEnv
 sampleP' :: (ExprTuple t) => Env -> Prog t -> IO t
-sampleP' env p = do
+sampleP' env p = fromConstVals <$> samplePBlock env pb rets
+  where (rets, pb) = runProgExprs "sim" p
+
+samplePBlock :: Env -> PBlock -> [NodeRef] -> IO [ConstVal]
+samplePBlock env (PBlock block refs _ ns) rets = do
     env' <- samplePNodes env block idents
     let env'' = Map.filterWithKey (const . p' . getId') env'
-    return . fromConstVals $ map (fromRight' . evalNodeRef env'' block) rets
-  where (rets, PBlock block refs _ ns) = runProgExprs "sim" p
-        idents = [ (Volatile ns (dagLevel $ topDAG block) i, d)
+    return $ map (fromRight' . evalNodeRef env'' block) rets
+  where idents = [ (Volatile ns (dagLevel $ topDAG block) i, d)
                  | (i,d) <- zip [0..] $ reverse refs ]
         p' (Just Internal{}) = False
         p' Nothing = False
