@@ -588,7 +588,8 @@ pdfPNode _ _ _ _ node x = error $ "pdfPNode "++ show node ++" "++ show x
 
 pdfOrderStats :: Map Id PNode -> Bool -> EEnv -> Block -> PNode -> NodeRef
               -> Interval DExpr -> (Id,Type) -> (DExpr,DExpr) -> R
-pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) = if lg
+pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) =
+  ifB (Expr lo >* Expr hi) (if lg then 0 else 1) $ if lg
   then    logFactorial' n'  + intervalL +     sum' intervals + intervalR +     sum' points
   else cast (factorial' n') * intervalL * product' intervals * intervalR * product' points
   where fcdf = cdfPNode env block d

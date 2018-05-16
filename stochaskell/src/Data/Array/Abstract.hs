@@ -87,8 +87,7 @@ coerceShape sh sh' = sequence $ zipWith g sh sh'
                             | hi  == hi' = Just (lo,hi)
                             | lo' == hi' = Just (lo,hi)
                             | lo  == hi  = Just (lo,hi')
-                            | otherwise = flip trace Nothing $
-                              "dimensions incompatible: "++ show (lo,hi) ++" "++ show (lo',hi')
+                            | otherwise = Nothing
 
 infix 5 ...
 (...) :: a -> a -> AbstractArray a a
@@ -197,10 +196,12 @@ instance Matrix (ShapedMatrix Double) Integer Double where
             xs = A.elems $ toArray a
             r:c:_ = shape a
     blockMatrix rows = ShMat (1, fromIntegral r) (1, fromIntegral c) m'
-      where m' = LAD.fromBlocks [[m | ShMat _ _ m <- row] | row <- rows]
+      where m' = LAD.fromBlocks [[m | ShMat (1,r) (1,c) m <- row, r > 0, c > 0] | row <- rows]
             (r,c) = LAD.size m'
 instance Monoid (ShapedMatrix Double) where
-    mappend (ShMat r c m) (ShMat r' c' m') | c == r' = ShMat r c' $ (LA.<>) m m'
+    mappend a@(ShMat r c m) b@(ShMat r' c' m')
+      | c == r' = ShMat r c' $ (LA.<>) m m'
+      | otherwise = error $ "cannot multiply "++ show a ++" with "++ show b
 
 instance LA.Transposable (ShapedMatrix Double) (ShapedMatrix Double) where
     tr  (ShMat r c m) = ShMat c r $ LA.tr  m

@@ -107,9 +107,11 @@ evalNodeRef env block (Data c args _) = do
 evalNodeRef env block v | isBlockVector v = do
   v' <- sequence $ evalNodeRef env block <$> fromBlockVector v
   return $ blockVector v'
-evalNodeRef env block m | isBlockMatrix m = do
-  m' <- sequence $ sequence . map (evalNodeRef env block) <$> fromBlockMatrix m
-  return $ blockMatrix m'
+evalNodeRef env block m | isBlockMatrix m =
+  if all isMatrix `all` m' && not (null m') then Right (blockMatrix m') else Left $
+    show m ++" = "++ show m' ++" contains non-matrix blocks"
+  where m' = filter (not . null) [rights [evalNodeRef env block cell | cell <- row]
+                                 | row <- fromBlockMatrix m]
 evalNodeRef env block@(Block dags) r@(Cond cvs _) = go cvs'
   where (cs,vs) = unzip cvs
         cvs' = (evalNodeRef env block <$> cs) `zip` (evalNodeRef env block <$> vs)
@@ -118,7 +120,7 @@ evalNodeRef env block@(Block dags) r@(Cond cvs _) = go cvs'
         go ((Left e,_):_) = Left $ "while evaluating condition of "++ show r ++":\n"++ indent e
         go (_:rest) = go rest
         go [] = Left $ "no more conditions: "++ show r
-evalNodeRef _ _ Unconstrained{} = Left "unconstrained"
+evalNodeRef env _ Unconstrained{} = Left $ "unconstrained, with env = "++ show env
 evalNodeRef env (Block dags) r = error . showBlock dags $ "evalNodeRef "++ show r ++"\n"++
   "where env = "++ show env
 
@@ -135,6 +137,13 @@ evalShape env block sh = zip a b
         b = integer . fromRight . evalNodeRef env block <$> j
 
 evalNode :: Env -> Block -> Node -> Eval
+evalNode env block (Apply "log_det" [i] _)
+  | Right m <- evalNodeRef env block i, not (isSquareMatrix m)
+  = Left $ show i ++" = "++ show m ++" is not square("++ show (shape m) ++"), "++
+    "cannot take log det, with env = "++ show env
+evalNode env block (Apply "ifThenElse" [c,a,b] _) = do
+  c' <- evalNodeRef env block c
+  evalNodeRef env block $ if c' == 1 then a else b
 evalNode env block (Apply fn args _) =
   f <$> sequence (evalNodeRef env block <$> args)
   where f = fromMaybe (error $ "builtin lookup failure: " ++ fn) $
@@ -352,7 +361,7 @@ solveCase env block hd alts val = Map.unions $ do
               in return $ a ==* v
             LConstr e | isSymbol `all` Set.toList (dependsD e)
                       , sizeD e < 3 -> return e -- TODO: sizeD limit is a hack
-            _ -> trace ("WARN ignoring "++ show k) mzero
+            _ -> trace ("WARN ignoring constraint" {- ++ show k-}) mzero
         sizeD = length . nodes . topDAG . snd . runDExpr
         but k bs = case filter (true /=) $ take k bs ++ drop (k+1) bs of
           [] -> Just (bs !! k)
@@ -420,7 +429,7 @@ solveNode env block (Apply "replaceIndex" [a,e,d] _) val =
   solveNodeRefs env block [(e,j), (d, val!j)]
   where a' = reDExpr env block a
         n = Expr $ vectorSize a' :: Z
-        j = erase $ firstDiffD n (Expr $ unconstrained IntT) a' val
+        j = erase $ firstDiffD n (-1) a' val
 solveNode env block (Apply "insertIndex" [a,e,d] _) val =
   trace ("WARN assuming "++ show a ++" = "++ show val ++" except at inserted index "++ show e) $
   solveNodeRefs env block [(e,j), (d, val!j)]

@@ -672,22 +672,6 @@ extractNodeRef _ _ (PartiallyConstrained _ _ _ t) = trace "WARN ignoring partial
   return $ Unconstrained t
 extractNodeRef _ _ r = error $ "extractNodeRef "++ show r
 
-concatCond :: [NodeRef] -> State Block [(NodeRef,[NodeRef])]
-concatCond xs | isCond `any` xs = do
-  xs' <- sequence $ simplifyNodeRef <$> xs
-  return $ do
-    c <- nub $ sort [c | Cond cvs _ <- xs', (c,v) <- cvs, not $ isUnconstrained v]
-    return . (c,) $ do
-      x <- xs'
-      case x of
-        Cond cvs _ -> case lookup c cvs of
-          Just Unconstrained{} -> mzero
-          Just v -> return v
-          Nothing -> mzero
-        Unconstrained{} -> mzero
-        _ -> return x
-concatCond xs = error $ "concatCond "++ show xs
-
 flattenCond :: (NodeRef,NodeRef) -> State Block [(NodeRef,NodeRef)]
 flattenCond (Cond cas _, Cond cbs _) = do
   let (cs,vs) = unzip [(simplifyConj [c,c'], b)
@@ -703,16 +687,23 @@ flattenCond (c, Cond cbs _) = do
 flattenCond cv = return [cv]
 
 simplifyNodeRef :: NodeRef -> State Block NodeRef
-simplifyNodeRef r@BlockArray{} | isBlockMatrix r, any isCond `all` m = do
-  cvs <- sequence $ concatCond <$> m
-  let cs = nub . sort . map fst $ concat cvs
-  vs <- sequence [blockMatrix' $ mapMaybe (lookup c) cvs | c <- cs]
-  return $ Cond (zip cs vs) t
-  where m = fromBlockMatrix r
-        t = typeRef r
+{- -- TODO: sometimes produces broken code
+simplifyNodeRef ref@BlockArray{} | isBlockMatrix ref, any isCond `any` m = do
+  m' <- sequence $ sequence . fmap simplifyNodeRef <$> m
+  let cs = nub $ sort [c | row <- m', Cond cvs _ <- row, (c,v) <- cvs, not (isUnconstrained v)]
+      f c (Cond cvs _) = do
+        v <- lookup c cvs
+        f c v
+      f _ Unconstrained{} = Nothing
+      f _ x = Just x
+  vs <- sequence [blockMatrix' $ filter (not . null) [mapMaybe (f c) row | row <- m'] | c <- cs]
+  simplifyNodeRef $ Cond (zip cs vs) t
+  where m = fromBlockMatrix ref
+        t = typeRef ref
 simplifyNodeRef (Cond cvs t) | isCond `any` (map fst cvs ++ map snd cvs) = do
   cvs' <- sequence $ flattenCond <$> cvs
   simplifyNodeRef $ Cond (concat cvs') t
+-}
 simplifyNodeRef (Cond cvs t) = return $ Cond (filter p cvs) t
   where p (Const 0 _,_) = False
         p (_,Unconstrained _) = False
@@ -1347,7 +1338,7 @@ blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent
     [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
   where flattenRow = foldr1 (zipWith (++))
         flattenMatrix = concat . map flattenRow :: [[[[a]]]] -> [[a]]
-        k | isBlockArray `all` concat k' = flattenMatrix $ map fromBlockMatrix <$> k'
+        k -- | isBlockArray `all` concat k' = flattenMatrix $ map fromBlockMatrix <$> k'
           | otherwise = k'
         bnd = ([1,1],[length k, length $ head k])
         rs = do

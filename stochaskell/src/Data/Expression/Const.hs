@@ -207,8 +207,10 @@ fromVector :: ShapedVector Double -> ConstVal
 fromVector v = Approx $ listArray ([lo],[hi]) (toList v)
   where (lo,hi) = bounds v
 
+isMatrix :: ConstVal -> Bool
+isMatrix c = dimension c == 2
 toMatrix :: ConstVal -> ShapedMatrix Double
-toMatrix c | dimension c /= 2 = error $ "not two-dimensional: "++ show c
+toMatrix c | not (isMatrix c) = error $ "not two-dimensional: "++ show c
 toMatrix (Approx a) = ShMat r c $ LAD.matrix ncol xs
   where ncol = fromInteger . cardinality $ shape a !! 1
         xs = elems a
@@ -216,6 +218,10 @@ toMatrix (Approx a) = ShMat r c $ LAD.matrix ncol xs
 toMatrix a = toMatrix (approx a)
 fromMatrix :: ShapedMatrix Double -> ConstVal
 fromMatrix (ShMat (r,r') (c,c') m) = Approx $ listArray ([r,c],[r',c']) (toList $ LAD.flatten m)
+
+isSquareMatrix :: ConstVal -> Bool
+isSquareMatrix m | [(1,r),(1,c)] <- shape m, r == c = True
+isSquareMatrix _ = False
 
 foldrConst :: (ConstVal -> ConstVal -> ConstVal) -> ConstVal -> ConstVal -> ConstVal
 foldrConst f r = foldr f r . toList
@@ -316,7 +322,7 @@ instance Integral ConstVal where
 
 instance IsList ConstVal where
     type Item ConstVal = ConstVal
-    fromList [] = error "fromList [] -> ConstVal"
+    fromList [] = Exact $ array ([1],[0]) []
     fromList xs = if ok then val else error "cannot concat irregular arrays"
       where n = integer (length xs)
             (lo,hi):bs = map bounds xs
