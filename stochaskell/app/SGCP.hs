@@ -19,8 +19,8 @@ gpClassifier kernel n s = do
   phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
   return (g,phi)
 
-poissonProcess :: R -> R -> P (Z,RVec)
-poissonProcess rate t = do
+poissonProcess' :: R -> R -> P (Z,RVec)
+poissonProcess' rate t = do
   n <- poisson (rate * t)
   s <- orderedSample n (uniform 0 t)
   return (n,s)
@@ -35,7 +35,7 @@ sgcp t = do
   lsv <- normal 0 1
   lls2 <- normal (log 100) 2
   cap <- gamma 1 1
-  (n,s) <- poissonProcess cap t
+  (n,s) <- poissonProcess' cap t
   let kernel = kernelSE lsv lls2
   (g,phi) <- gpClassifier kernel n s
   return (lsv, lls2, cap, n, s, g, phi)

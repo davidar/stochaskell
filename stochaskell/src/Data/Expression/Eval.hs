@@ -50,6 +50,10 @@ evaluable env block ref =
 type Eval = Either String ConstVal
 type Evals = Either String [ConstVal]
 
+evalContext :: String -> Either String a -> Either String a
+evalContext s (Left e) = Left $ s ++":\n"++ indent e
+evalContext _ r = r
+
 eval :: Env -> Expr t -> Eval
 eval env e = evalNodeRef env block ret
   where (ret, block) = runExpr e
@@ -87,6 +91,16 @@ evalNodeRef env block (Var i@Internal{} _) =
   evalNode env block $ lookupBlock i block
 evalNodeRef _ _ r@(Var ident _) = Left $ "unable to eval "++ show r
 evalNodeRef _ _ (Const c _) = Right c
+evalNodeRef env block r@(Index (PartiallyConstrained [(lo,hi)] [(id,_)] [([k],v)] _) [j]) =
+  evalContext (show r) $ do
+    let env_ = Map.filterWithKey (const . maybe True (not . isInternal) . getId') env
+    lo' <- integer <$> evalD env_ lo
+    hi' <- integer <$> evalD env_ hi
+    j' <- integer <$> evalNodeRef env block j
+    let env' i = Map.insert (LVar id) (fromInteger i) env_
+    case lookup (Right j') [(evalD (env' i) k, i) | i <- range (lo',hi')] of
+      Just i -> evalD (env' i) v
+      Nothing -> Left "insufficient partial constraints"
 evalNodeRef env block r@(Index arr idx) = do
   a <- evalNodeRef env block arr
   js <- evalNodeRefs env block $ reverse idx
@@ -97,10 +111,13 @@ evalNodeRef env block r@(Index arr idx) = do
   if bounds' `inRange` js' then return (a!js') else
     Left $ show js' ++" not in range "++ show bounds' ++": "++ show r
 evalNodeRef env block r@(Extract d c j) = do
-  val@(Tagged c' args) <- evalNodeRef env block d
-  if | c /= c' -> Left $ "tag mismatch: "++ show (r, val)
-     | j >= length args -> Left $ "OOB: "++ show (r, val)
-     | otherwise -> return $ args !! j
+  val <- evalNodeRef env block d
+  case val of
+    Tagged c' args ->
+      if | c /= c' -> Left $ "tag mismatch: "++ show (r, val)
+         | j >= length args -> Left $ "OOB: "++ show (r, val)
+         | otherwise -> return $ args !! j
+    _ -> Left $ show r ++" where "++ show d ++" = "++ show val
 evalNodeRef env block (Data c args _) = do
   js <- evalNodeRefs env block args
   return $ Tagged c js
@@ -120,7 +137,7 @@ evalNodeRef env block@(Block dags) r@(Cond cvs _) = go cvs'
         go ((Left e,_):_) = Left $ "while evaluating condition of "++ show r ++":\n"++ indent e
         go (_:rest) = go rest
         go [] = Left $ "no more conditions: "++ show r
-evalNodeRef env _ Unconstrained{} = Left $ "unconstrained, with env = "++ show env
+evalNodeRef env _ Unconstrained{} = Left $ "unconstrained\nwhere env = "++ show env
 evalNodeRef env (Block dags) r = error . showBlock dags $ "evalNodeRef "++ show r ++"\n"++
   "where env = "++ show env
 
@@ -144,7 +161,13 @@ evalNode env block (Apply "log_det" [i] _)
 evalNode env block (Apply "ifThenElse" [c,a,b] _) = do
   c' <- evalNodeRef env block c
   evalNodeRef env block $ if c' == 1 then a else b
-evalNode env block (Apply fn args _) =
+evalNode env block (Apply "poissonProcess_lpdf" [y,_,Var i _,mean] _) = do
+  y' <- evalNodeRef env block y
+  let Function lam _ = lookupBlock i block
+  rates <- sequence $ evalFn1 env block lam <$> toList y'
+  mean' <- evalNodeRef env block mean
+  return $ sum (log <$> rates) - mean'
+evalNode env block n@(Apply fn args _) = evalContext (show n) $
   f <$> sequence (evalNodeRef env block <$> args)
   where f = fromMaybe (error $ "builtin lookup failure: " ++ fn) $
               Map.lookup fn constFuns
@@ -172,6 +195,7 @@ evalNode env block (Case hd alts _) = do
   case rets of
     [ret] -> return ret
     _ -> return $ Tagged 0 rets
+evalNode _ _ n@Function{} = Left $ "evalNode "++ show n
 
 evalFn :: Env -> Block -> Lambda NodeRef -> [ConstVal] -> Eval
 evalFn env block (Lambda body ret) args = head <$> evalFn' env block (Lambda body [ret]) args
@@ -181,6 +205,8 @@ evalFn' env block (Lambda body rets) args = sequence $ evalNodeRef env'' block' 
         env' = Map.fromList (inputsL body `zip` args) `Map.union` env
         env'' = evalDAG block' body env' -- optional caching
 
+evalFn1 :: Env -> Block -> Lambda NodeRef -> ConstVal -> Eval
+evalFn1 env block lam a = evalFn env block lam [a]
 evalFn2 :: Env -> Block -> Lambda NodeRef -> ConstVal -> ConstVal -> Eval
 evalFn2 env block lam a b = evalFn env block lam [a,b]
 
@@ -313,8 +339,10 @@ aggregateConds env = Map.union env' env
           return (lval, condD $ conds) -- ++ [cond'])
 
 solve :: Expr t -> Expr t -> EEnv -> EEnv
-solve e val env = aggregateLVals $ env `Map.union` solveNodeRef env block ret (erase val)
-  where (ret, block) = runExpr e
+solve e val = solveD (erase e) (erase val)
+solveD :: DExpr -> DExpr -> EEnv -> EEnv
+solveD e val env = aggregateLVals $ env `Map.union` solveNodeRef env block ret val
+  where (ret, block) = runDExpr e
 
 solveTupleD :: Block -> [NodeRef] -> [DExpr] -> EEnv -> EEnv
 solveTupleD block rets vals = aggregateLVals . compose

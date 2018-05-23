@@ -159,6 +159,10 @@ data Node = Apply { fName :: String
                   , cAlts :: [Lambda [NodeRef]]
                   , typeNode :: Type
                   }
+          | Function
+                  { fFunc :: Lambda NodeRef
+                  , typeNode :: Type
+                  }
           deriving (Eq, Ord)
 showLet :: (Show r) => DAG -> r -> String
 showLet dag ret = showLet' dag $ show ret
@@ -196,6 +200,9 @@ instance Show Node where
                     | otherwise = "C"++ show i ++" "++ intercalate " " (map show $ inputs dag)
                 rhs = indent (showLet dag ret)
             return $ lhs ++" ->\n"++ rhs
+  show (Function (Lambda dag hd) _) =
+    "\\"++ unwords (show <$> inputs' dag) ++" ->\n"++
+      indent (showLet dag hd)
 
 data DAG = DAG { dagLevel :: Level
                , inputsT :: [(Id,Type)]
@@ -229,7 +236,7 @@ lookupBlock :: Id -> Block -> Node
 lookupBlock i@(Internal level ptr) (Block dags)
   | level < length dags =
   fromMaybe (error $ "internal lookup failure: " ++ show i) $
-    ptr `lookup` nodes (reverse dags !! level)
+    ptr `Bimap.lookupR` bimap (reverse dags !! level)
   | otherwise = error $ "trying to access level "++ show level ++
                         " but block only has "++ show (length dags) ++"\n"++
                         showBlock dags (show i)
@@ -320,6 +327,9 @@ boolT = SubrangeT IntT (Just $ Const 0 IntT) (Just $ Const 1 IntT)
 tupleT :: [Type] -> Type
 tupleT [t] = t
 tupleT ts = TupleT ts
+
+vecT :: Type -> Type
+vecT = ArrayT (Just "vector") [(Const 1 IntT, Unconstrained IntT)]
 
 instance Show Type where
   show IntT = "Z"
@@ -548,6 +558,7 @@ varies (DAG level inp _) xs = level == 0 || any p xs
         p (Extract v _ _) = p v
         p (Cond cvs _) = any p (map fst cvs) || any p (map snd cvs)
         p (Unconstrained _) = False
+        p PartiallyConstrained{} = False
 
 variesLambda :: DAG -> Lambda NodeRef -> Bool
 variesLambda dag (Lambda adag ret) = variesLambda' dag (Lambda adag [ret])
@@ -668,8 +679,7 @@ extractNodeRef env block (Cond cvs t) = do
 extractNodeRef env block (Unconstrained t) = do
   t' <- extractType env block t
   return $ Unconstrained t'
-extractNodeRef _ _ (PartiallyConstrained _ _ _ t) = trace "WARN ignoring partial constraints" $
-  return $ Unconstrained t
+extractNodeRef _ _ r@PartiallyConstrained{} = return r
 extractNodeRef _ _ r = error $ "extractNodeRef "++ show r
 
 flattenCond :: (NodeRef,NodeRef) -> State Block [(NodeRef,NodeRef)]
@@ -748,6 +758,13 @@ extractNode env block n@(Case hd lams t) = do
   dag <- topDAG <$> get
   if varies dag [hd'] || variesLambda' dag `any` lams'
   then simplify $ Case hd' lams' t'
+  else liftBlock $ extractNode env block n
+extractNode env block n@(Function lam t) = do
+  lam' <- extractLambda env block lam
+  t' <- extractType env block t
+  dag <- topDAG <$> get
+  if variesLambda dag lam'
+  then simplify $ Function lam' t'
   else liftBlock $ extractNode env block n
 extractNode _ _ n = error $ "extractNode "++ show n
 

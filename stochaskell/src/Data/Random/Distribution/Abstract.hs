@@ -135,6 +135,9 @@ instance Distribution Poisson Double IO Integer where
 poisson a = sample $ Poisson a
 lpdfPoisson k l = fromInteger k * log l - logFactorial k - l
 
+newtype PoissonProcess a = PoissonProcess a
+poissonProcess t rate mean = sample $ PoissonProcess (t, rate, mean)
+
 newtype Uniform a = Uniform a
 instance (Random t) => Distribution Uniform (t,t) IO t where
     sample (Uniform (a,b)) = getStdRandom $ randomR (a,b)

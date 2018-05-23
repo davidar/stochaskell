@@ -408,6 +408,17 @@ instance Distribution Poisson R Prog Z where
         i <- fromExpr a
         return $ Dist "poisson" [i] IntT
 
+instance Distribution PoissonProcess (R, R -> R, R) Prog RVec where
+    sample (PoissonProcess (t, rate, mean)) = dist $ do
+        i <- fromExpr t
+        d <- getNextLevel
+        lam <- runLambda [(Dummy d 1, RealT)] . fromExpr . rate . expr . return $
+          Var (Dummy d 1) RealT
+        j <- simplify $ Function lam RealT
+        k <- fromExpr mean
+        return . Dist "poissonProcess" [i,j,k] $
+          ArrayT (Just "vector") [(Const 1 IntT, Unconstrained IntT)] RealT
+
 instance Distribution Uniform (R,R) Prog R where
     sample (Uniform (a,b)) = dist $ do
         i <- fromExpr a
