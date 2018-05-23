@@ -1237,6 +1237,9 @@ foldscan fs dir f r xs = do
 find' :: (ScalarType e) => (Expr e -> B) -> Expr e -> Expr [e] -> Expr e
 find' p def v = foldr f def v where f i j = ifB (p i) i j
 
+findSortedInsertIndex :: R -> RVec -> Z
+findSortedInsertIndex = apply2 "findSortedInsertIndex" IntT
+
 
 ------------------------------------------------------------------------------
 -- INSTANCES                                                                --

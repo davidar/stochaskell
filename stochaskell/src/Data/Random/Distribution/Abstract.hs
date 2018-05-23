@@ -114,6 +114,10 @@ instance Distribution Normal (Double,Double) IO Double where
     sample (Normal (m,s)) = Rand.sample (Rand.Normal m s)
 normal m s = sample $ Normal (m,s)
 
+lognormal m s = do
+  x <- normal m s
+  return (exp x)
+
 newtype Normals a = Normals a
 instance Distribution Normals (ShapedVector Double, ShapedVector Double) IO (ShapedVector Double) where
   sample (Normals (m,s)) = joint vector [ normal (m!i) (s!i) | i <- a...b ]
