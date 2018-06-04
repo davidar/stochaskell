@@ -12,7 +12,9 @@ import Data.Boolean
 import Data.Either
 import Data.Either.Utils
 import Data.Expression hiding (const)
+import Data.Expression.Case
 import Data.Expression.Const hiding (isScalar)
+import Data.Expression.Extract
 import Data.Ix
 import Data.List
 import qualified Data.List as List
@@ -38,6 +40,7 @@ numelType env block (ArrayT _ sh _) = product $ map f sh'
   where sh' = evalShape env block sh
         f (lo,hi) = hi - lo + 1
 
+-- TODO: mark individual symbols as evaluable, even when not set in env
 evaluable :: EEnv -> Block -> NodeRef -> Bool
 evaluable env block ref =
   deps `Set.isSubsetOf` (Set.fromList . mapMaybe getId' . Set.toList $ Map.keysSet env)
@@ -527,9 +530,19 @@ diffNode env block (Apply "#>" [a,b] _) var t | isRight a' =
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
 
+deriv :: EEnv -> Expr s -> Expr t -> RMat
+deriv env e = Expr . derivNodeRef env block ret . fst . runExpr
+  where (ret, block) = runExpr e
+
+deriv_ :: Expr s -> Expr t -> RMat
+deriv_ = deriv emptyEEnv
+
 derivD :: EEnv -> DExpr -> NodeRef -> DExpr
 derivD env e = derivNodeRef env block ret
   where (ret, block) = runDExpr e
+
+derivD_ :: DExpr -> NodeRef -> DExpr
+derivD_ = derivD emptyEEnv
 
 independent :: NodeRef -> NodeRef -> Bool
 independent (Var Internal{} _) _ = False

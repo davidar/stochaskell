@@ -4,6 +4,7 @@ module Language.Stochaskell
   , module Data.Array.Abstract
   , module Data.Boolean.Overload
   , module Data.Expression
+  , module Data.Expression.Case
   , module Data.Expression.Const
   , module Data.Expression.Const.IO
   , module Data.Monoid
@@ -26,6 +27,7 @@ import Control.Monad.Guard
 import Data.Array.Abstract
 import Data.Boolean.Overload hiding (boolean) -- TODO: no infix declaration
 import Data.Expression hiding (apply,const)
+import Data.Expression.Case
 import Data.Expression.Const hiding (isScalar)
 import Data.Expression.Const.IO
 import Data.Monoid

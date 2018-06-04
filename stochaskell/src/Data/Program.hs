@@ -14,8 +14,10 @@ import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Expression hiding (const,foldl,foldr,scanl,scanr)
 import qualified Data.Expression as E
+import Data.Expression.Case
 import Data.Expression.Const
 import Data.Expression.Eval
+import Data.Expression.Extract
 import Data.List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -581,7 +583,7 @@ pdfPNode _ lg env block (Dist f args _) x = expr $ do
     Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
     PartiallyConstrained{} -> error "TODO: partially constrained"
     _ -> do
-      js <- sequence $ extractNodeRef env block <$> args
+      js <- sequence $ extractNodeRef simplifyNodeRef simplify env block <$> args
       simplify $ Apply (f ++ if lg then "_lpdf" else "_pdf") (i:js) RealT
 pdfPNode r lg env block (Loop _ (Lambda ldag body) _) a
   | (Unconstrained _,_) <- runDExpr a = if lg then 0 else 1
@@ -629,7 +631,7 @@ pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) =
 cdfPNode :: EEnv -> Block -> PNode -> DExpr -> R
 cdfPNode env block (Dist f args _) x = expr $ do
   i <- fromDExpr x
-  js <- sequence $ extractNodeRef env block <$> args
+  js <- sequence $ extractNodeRef simplifyNodeRef simplify env block <$> args
   simplify $ Apply (f ++"_cdf") (i:js) RealT
 
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
@@ -907,7 +909,7 @@ rjmc target proposal x = do
   y <- proposal x
   let f = lpdf target -- TODO: jacobian adjustment for transformed dist
       a = exp $ f y - f x + rjmcTransRatio proposal x y
-  accept <- bernoulli $ applyClosed2 "min" 1 a
+  accept <- bernoulli $ min' 1 a
   return $ ifB accept y x
 
 rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)
