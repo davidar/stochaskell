@@ -104,6 +104,8 @@ fromBlockMatrix (BlockArray a _) = [[a![i,j] | j <- [1..n]] | i <- [1..m]]
 isCond :: NodeRef -> Bool
 isCond Cond{} = True
 isCond _ = False
+getConds :: NodeRef -> [NodeRef]
+getConds (Cond cvs _) = map fst cvs
 
 isUnconstrained :: NodeRef -> Bool
 isUnconstrained Unconstrained{} = True

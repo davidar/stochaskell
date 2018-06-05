@@ -2,6 +2,7 @@
 
 module Util where
 
+import qualified Control.Exception
 import Control.Monad
 import Data.Boolean
 import qualified Data.ByteString as B
@@ -11,6 +12,7 @@ import Debug.Trace
 import GHC.Exts
 import Numeric.SpecFunctions
 import System.IO
+import qualified System.IO.Unsafe
 import System.Process
 import Text.Printf (printf)
 
@@ -85,9 +87,12 @@ pairWith :: (a -> a -> b) -> [a] -> [b]
 pairWith f (x:y:zs) = f x y : pairWith f (y:zs)
 pairWith _ _ = []
 
+replicated :: (Eq a) => [a] -> Bool
+replicated (x:xs) = (x ==) `all` xs
+replicated [] = True
 unreplicate :: (Eq a, Show a) => [a] -> a
-unreplicate (x:xs) | (x ==) `all` xs = x
-unreplicate xs = error $ show xs ++" is not replicated"
+unreplicate [] = error "unreplicate []"
+unreplicate xs = if replicated xs then head xs else error (show xs ++" is not replicated")
 
 traceShow' :: (Show a) => String -> a -> a
 traceShow' s x = trace ("["++ s ++"] "++ show x) x
@@ -101,6 +106,12 @@ liftMaybe = maybe mzero return
 fromRight' :: Either String b -> b
 fromRight' (Left e) = error $ "fromRight: "++ e
 fromRight' (Right x) = x
+
+unsafeCatch :: a -> Either String a
+unsafeCatch x = System.IO.Unsafe.unsafePerformIO $
+  Control.Exception.catch (x `seq` return (Right x)) handler
+  where handler :: Control.Exception.ErrorCall -> IO (Either String a)
+        handler = return . Left . show
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)

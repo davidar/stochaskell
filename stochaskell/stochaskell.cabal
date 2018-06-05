@@ -18,9 +18,11 @@ library
   exposed-modules:     Control.Monad.Guard
                      , Data.Array.Abstract
                      , Data.Expression
+                     , Data.Expression.Case
                      , Data.Expression.Const
                      , Data.Expression.Const.IO
                      , Data.Expression.Eval
+                     , Data.Expression.Extract
                      , Data.Program
                      , Data.Random.Distribution.Abstract
                      , Language.CC

@@ -132,14 +132,14 @@ evalNodeRef env block m | isBlockMatrix m =
     show m ++" = "++ show m' ++" contains non-matrix blocks"
   where m' = filter (not . null) [rights [evalNodeRef env block cell | cell <- row]
                                  | row <- fromBlockMatrix m]
-evalNodeRef env block@(Block dags) r@(Cond cvs _) = go cvs'
+evalNodeRef env block r@(Cond cvs _) = case sequence (evalNodeRef env block <$> cs) of
+  Left e -> Left $ "while evaluating condition of "++ show r ++":\n"++ indent e
+  Right cs' | length (filter (1 ==) cs') /= 1 ->
+              Left $ "zero or multiple true conditions in "++ show r ++" ("++ show cs' ++")"
+            | otherwise -> case evalNodeRef env block (fromJust . lookup 1 $ zip cs' vs) of
+                Left e -> Left $ "while evaluating value of "++ show r ++":\n"++ indent e
+                Right x -> Right x
   where (cs,vs) = unzip cvs
-        cvs' = (evalNodeRef env block <$> cs) `zip` (evalNodeRef env block <$> vs)
-        go ((Right 1, Left e):_) = Left $ "while evaluating value of "++ show r ++":\n"++ indent e
-        go ((Right 1, Right x):_) = Right x
-        go ((Left e,_):_) = Left $ "while evaluating condition of "++ show r ++":\n"++ indent e
-        go (_:rest) = go rest
-        go [] = Left $ "no more conditions: "++ show r
 evalNodeRef env _ Unconstrained{} = Left $ "unconstrained\nwhere env = "++ show env
 evalNodeRef env (Block dags) r = error . showBlock dags $ "evalNodeRef "++ show r ++"\n"++
   "where env = "++ show env
@@ -170,10 +170,10 @@ evalNode env block (Apply "poissonProcess_lpdf" [y,_,Var i _,mean] _) = do
   rates <- sequence $ evalFn1 env block lam <$> toList y'
   mean' <- evalNodeRef env block mean
   return $ sum (log <$> rates) - mean'
-evalNode env block n@(Apply fn args _) = evalContext (show n) $
-  f <$> sequence (evalNodeRef env block <$> args)
-  where f = fromMaybe (error $ "builtin lookup failure: " ++ fn) $
-              Map.lookup fn constFuns
+evalNode env block n@(Apply fn args _) = evalContext (show n) $ do
+  js <- sequence (evalNodeRef env block <$> args)
+  unsafeCatch $ f js
+  where f = fromMaybe (error $ "builtin lookup failure: " ++ fn) $ Map.lookup fn constFuns
 evalNode env block (Array sh lam _) = do
   sh' <- sequence [ do x <- evalNodeRef env block a
                        y <- evalNodeRef env block b

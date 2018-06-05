@@ -1,6 +1,7 @@
 module Data.Expression.Extract where
 
 import Control.Monad.State
+import qualified Data.Array as A
 import Data.Expression
 import Data.List
 import qualified Data.Map.Strict as Map
@@ -152,6 +153,42 @@ extractType env block = go where
     UnknownType -> return UnknownType
   f :: (Traversable t) => t NodeRef -> State Block (t NodeRef)
   f t = sequence $ extractNodeRef simplifyNodeRef simplify env block <$> t
+
+optimiseE :: Expr t -> Expr t
+optimiseE = Expr . optimiseD . erase
+
+optimiseD :: DExpr -> DExpr
+optimiseD e = DExpr $ extractNodeRef optimiseNodeRef simplify emptyEEnv block ret
+  where (ret, block) = runDExpr e
+
+flattenCond :: (NodeRef,NodeRef) -> State Block [(NodeRef,NodeRef)]
+flattenCond (Cond cas _, Cond cbs _) = do
+  let (cs,vs) = unzip [(simplifyConj [c,c'], b)
+                      | (c,a) <- cas, getConstVal a == Just 1, (c',b) <- cbs]
+  cs' <- sequence cs
+  return (zip cs' vs)
+flattenCond (Cond cas _, b) =
+  return [(c,b) | (c,a) <- cas, getConstVal a == Just 1]
+flattenCond (c, Cond cbs _) = do
+  let (cs,vs) = unzip [(simplifyConj [c,c'], b) | (c',b) <- cbs]
+  cs' <- sequence cs
+  return (zip cs' vs)
+flattenCond cv = return [cv]
+
+optimiseNodeRef :: NodeRef -> State Block NodeRef
+optimiseNodeRef (BlockArray a t) = do
+  a' <- sequence $ optimiseNodeRef <$> a
+  if isCond `all` A.elems a' && replicated (getConds <$> A.elems a') then
+    let cvs = do
+          c <- unreplicate (getConds <$> A.elems a')
+          let f (Cond cvs' _) = fromJust $ lookup c cvs'
+          return (c, BlockArray (f <$> a') t)
+    in optimiseNodeRef $ Cond cvs t
+  else simplifyNodeRef $ BlockArray a' t
+optimiseNodeRef (Cond cvs t) | isCond `any` (map fst cvs ++ map snd cvs) = do
+  cvs' <- sequence $ flattenCond <$> cvs
+  optimiseNodeRef $ Cond (concat cvs') t
+optimiseNodeRef ref = simplifyNodeRef ref
 
 extractIndex :: DExpr -> [DExpr] -> DExpr
 extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block)
