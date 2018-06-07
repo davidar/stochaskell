@@ -161,19 +161,20 @@ optimiseD :: DExpr -> DExpr
 optimiseD e = DExpr $ extractNodeRef optimiseNodeRef simplify emptyEEnv block ret
   where (ret, block) = runDExpr e
 
-flattenCond :: (NodeRef,NodeRef) -> State Block [(NodeRef,NodeRef)]
-flattenCond (Cond cas _, Cond cbs _) = do
-  let (cs,vs) = unzip [(simplifyConj [c,c'], b)
-                      | (c,a) <- cas, getConstVal a == Just 1, (c',b) <- cbs]
-  cs' <- sequence cs
-  return (zip cs' vs)
-flattenCond (Cond cas _, b) =
-  return [(c,b) | (c,a) <- cas, getConstVal a == Just 1]
-flattenCond (c, Cond cbs _) = do
-  let (cs,vs) = unzip [(simplifyConj [c,c'], b) | (c',b) <- cbs]
-  cs' <- sequence cs
-  return (zip cs' vs)
-flattenCond cv = return [cv]
+flattenConds :: [(NodeRef,NodeRef)] -> State Block [(NodeRef,NodeRef)]
+flattenConds cvs = concat <$> (sequence $ flattenCond <$> cvs) where
+  flattenCond (Cond cas _, b)
+    | isConst `all` map snd cas = flattenConds [(c,b) | (c,a) <- cas, getConstVal a == Just 1]
+    | otherwise = undefined
+  flattenCond (c, Cond cbs_ _) = do
+    cbs <- flattenConds cbs_
+    case lookup c cbs of
+      Just b -> flattenCond (c,b)
+      Nothing -> do
+        let (cs,vs) = unzip [(simplifyConj [c,c'], b) | (c',b) <- cbs]
+        cs' <- sequence cs
+        return (zip cs' vs)
+  flattenCond cv = return [cv]
 
 optimiseNodeRef :: NodeRef -> State Block NodeRef
 optimiseNodeRef (BlockArray a t) = do
@@ -186,8 +187,8 @@ optimiseNodeRef (BlockArray a t) = do
     in optimiseNodeRef $ Cond cvs t
   else simplifyNodeRef $ BlockArray a' t
 optimiseNodeRef (Cond cvs t) | isCond `any` (map fst cvs ++ map snd cvs) = do
-  cvs' <- sequence $ flattenCond <$> cvs
-  optimiseNodeRef $ Cond (concat cvs') t
+  cvs' <- flattenConds cvs
+  optimiseNodeRef $ Cond cvs' t
 optimiseNodeRef ref = simplifyNodeRef ref
 
 extractIndex :: DExpr -> [DExpr] -> DExpr

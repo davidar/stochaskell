@@ -67,6 +67,7 @@ data NodeRef = Var Id Type
              | BlockArray (A.Array [Int] NodeRef) Type
              | Index NodeRef [NodeRef]
              | Extract NodeRef Tag Int
+             -- conditions are assumed to be mutually exclusive (ie. unordered)
              | Cond [(NodeRef,NodeRef)] Type
              | Unconstrained Type
              | PartiallyConstrained [AA.Interval DExpr] [(Id,Type)] [([DExpr],DExpr)] Type
@@ -685,9 +686,11 @@ simplify (Apply f js t)
     _ -> return r
   where (cs,vs) = unzip $ liftCond js
         liftCond ((Cond cvs _):rest) =
-            [(c:cs, v:vs) | (c,v) <- cvs, (cs,vs) <- liftCond rest]
+            [(c:cs, v:vs) | (c,v) <- cvs, (cs,vs) <- liftCond $ lookupCond c <$> rest]
         liftCond (a:rest) = [(cs, a:vs) | (cs,vs) <- liftCond rest]
         liftCond [] = [([],[])]
+        lookupCond c (Cond cvs _) | Just v <- lookup c cvs = v
+        lookupCond _ r = r
 simplify (Apply "*" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "*" [_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "/" [Const 0 _,_] t) = return $ Const 0 t
