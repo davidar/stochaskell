@@ -127,9 +127,11 @@ evalNodeRef env block (Data c args _) = do
 evalNodeRef env block v | isBlockVector v = do
   v' <- sequence $ evalNodeRef env block <$> fromBlockVector v
   return $ blockVector v'
-evalNodeRef env block m | isBlockMatrix m =
-  if all isMatrix `all` m' && not (null m') then Right (blockMatrix m') else Left $
-    show m ++" = "++ show m' ++" contains non-matrix blocks"
+evalNodeRef env block m
+  | isBlockMatrix m, isMatrix `all` concat m', not (null m'), replicated (map length m') =
+      unsafeCatch (blockMatrix m')
+  | isBlockMatrix m = Left $
+      show m ++" = "++ show m' ++" contains non-matrix blocks or is not rectangular"
   where m' = filter (not . null) [rights [evalNodeRef env block cell | cell <- row]
                                  | row <- fromBlockMatrix m]
 evalNodeRef env block r@(Cond cvs _) = case sequence (evalNodeRef env block <$> cs) of

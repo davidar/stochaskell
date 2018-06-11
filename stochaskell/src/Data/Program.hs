@@ -916,8 +916,7 @@ rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t ->
 rjmcC p = switchOf . rjmc p . fromCaseP
 
 rjmcTransRatio :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
-rjmcTransRatio q x y = optimiseE . subst emptyEEnv . subst (substEEnv substEnv) $
-  lu' - lu + logDet jacobian
+rjmcTransRatio q x y = subst (substEEnv substEnv) $ lu' - lu + logDet jacobian
   where lu  = q x_ `lpdf` y_
         lu' = q y_ `lpdf` x_
         getAux ns a b allowInt =
@@ -965,7 +964,7 @@ rjmcTransRatio q x y = optimiseE . subst emptyEEnv . subst (substEEnv substEnv) 
         bot = [(d v x_ + (d v y_ <> d x' x_)) : [qualify r $ d v y_ <> d_ x' r | r <- u]
               | v <- Map.elems u']
         substAux = getAux "qx" x_ y_ True `Map.union` getAux "qy" y_ x_ True
-        jacobian = Expr . substD (substEEnv substAux) $ blockMatrix (top:bot) :: RMat
+        jacobian = Expr . optimiseD 2 . substD (substEEnv substAux) . optimiseD 1 $ blockMatrix (top:bot) :: RMat
         substEnv = Map.fromList
           [(LVar $ Symbol "rjx", erase $ detuple x)
           ,(LVar $ Symbol "rjy", erase $ detuple y)

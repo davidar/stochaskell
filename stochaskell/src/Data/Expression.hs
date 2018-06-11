@@ -644,13 +644,29 @@ condD cvs = DExpr $ do
     coerces $ typeRef <$> js
   where (cs,vs) = unzip cvs
 
+condProduct :: [NodeRef] -> State Block [(NodeRef,[NodeRef])]
+condProduct js
+  | null `any` cs = error "empty conditions in condProduct"
+  | otherwise = do
+    cs' <- sequence $ simplifyConj <$> cs
+    return $ zip cs' vs
+  where (cs,vs) = unzip $ liftCond js
+        liftCond ((Cond cvs _):rest) =
+            [(c:cs, v:vs) | (c,v) <- cvs, (cs,vs) <- liftCond $ lookupCond c <$> rest]
+        liftCond (a:rest) = [(cs, a:vs) | (cs,vs) <- liftCond rest]
+        liftCond [] = [([],[])]
+        lookupCond c (Cond cvs _) | Just v <- lookup c cvs = v
+        lookupCond _ r = r
+
 
 ------------------------------------------------------------------------------
 -- FUNCTION APPLICATION                                                     --
 ------------------------------------------------------------------------------
 
 simplifyNodeRef :: NodeRef -> State Block NodeRef
-simplifyNodeRef (Cond cvs t) = return $ Cond (filter p cvs) t
+simplifyNodeRef (Cond cvs t) = return $ case filter p cvs of
+  [] -> Unconstrained t
+  cvs' -> Cond cvs' t
   where p (Const 0 _,_) = False
         p (_,Unconstrained _) = False
         p _ = True
@@ -672,11 +688,10 @@ simplify (Apply "ifThenElse" [Cond cvs _,a,b] t) | isConst `all` vs = do
   r <- simplifyNodeRef $ Cond (zip cs vs') t
   simplify $ Apply "id" [r] t
   where (cs,vs) = unzip cvs
-simplify (Apply f js t)
-  | not (null `any` cs), f /= "ifThenElse", f /= "id" = do
-  cs' <- sequence $ simplifyConj <$> cs
+simplify (Apply f js t) | isCond `any` js, f /= "ifThenElse", f /= "id" = do
+  (cs,vs) <- unzip <$> condProduct js
   vs' <- sequence [simplify $ Apply f v t | v <- vs]
-  r <- simplifyNodeRef $ Cond (zip cs' vs') t
+  r <- simplifyNodeRef $ Cond (zip cs vs') t
   case head js of
     Cond cvs _ | endswith "pdf" f -> do
       ns <- sequence [simplify $ Apply "not" [c] boolT | (c,_) <- cvs]
@@ -684,13 +699,6 @@ simplify (Apply f js t)
       let z = if endswith "lpdf" f then 0 else 1
       simplify $ Apply "ifThenElse" [c, Const z t, r] t
     _ -> return r
-  where (cs,vs) = unzip $ liftCond js
-        liftCond ((Cond cvs _):rest) =
-            [(c:cs, v:vs) | (c,v) <- cvs, (cs,vs) <- liftCond $ lookupCond c <$> rest]
-        liftCond (a:rest) = [(cs, a:vs) | (cs,vs) <- liftCond rest]
-        liftCond [] = [([],[])]
-        lookupCond c (Cond cvs _) | Just v <- lookup c cvs = v
-        lookupCond _ r = r
 simplify (Apply "*" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "*" [_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "/" [Const 0 _,_] t) = return $ Const 0 t

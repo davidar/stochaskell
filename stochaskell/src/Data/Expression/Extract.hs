@@ -6,6 +6,7 @@ import Data.Expression
 import Data.List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import Debug.Trace
 import Util
 
 substEEnv :: EEnv -> EEnv
@@ -154,11 +155,8 @@ extractType env block = go where
   f :: (Traversable t) => t NodeRef -> State Block (t NodeRef)
   f t = sequence $ extractNodeRef simplifyNodeRef simplify env block <$> t
 
-optimiseE :: Expr t -> Expr t
-optimiseE = Expr . optimiseD . erase
-
-optimiseD :: DExpr -> DExpr
-optimiseD e = DExpr $ extractNodeRef optimiseNodeRef simplify emptyEEnv block ret
+optimiseD :: Int -> DExpr -> DExpr
+optimiseD ol e = DExpr $ extractNodeRef (optimiseNodeRef ol) simplify emptyEEnv block ret
   where (ret, block) = runDExpr e
 
 flattenConds :: [(NodeRef,NodeRef)] -> State Block [(NodeRef,NodeRef)]
@@ -176,20 +174,38 @@ flattenConds cvs = concat <$> (sequence $ flattenCond <$> cvs) where
         return (zip cs' vs)
   flattenCond cv = return [cv]
 
-optimiseNodeRef :: NodeRef -> State Block NodeRef
-optimiseNodeRef (BlockArray a t) = do
-  a' <- sequence $ optimiseNodeRef <$> a
-  if isCond `all` A.elems a' && replicated (getConds <$> A.elems a') then
+optimiseNodeRef :: Int -> NodeRef -> State Block NodeRef
+optimiseNodeRef ol (BlockArray a t) = do
+  a' <- sequence $ optimiseNodeRef ol <$> a
+  optimiseBlockArray ol a' t
+optimiseNodeRef ol (Cond cvs t) | isCond `any` (map fst cvs ++ map snd cvs) = do
+  cvs' <- flattenConds cvs
+  optimiseNodeRef ol $ Cond cvs' t
+optimiseNodeRef _ ref = simplifyNodeRef ref
+
+optimiseBlockArray :: Int -> A.Array [Int] NodeRef -> Type -> State Block NodeRef
+optimiseBlockArray ol a' t
+  | isCond `all` js, replicated (getConds <$> js) =
     let cvs = do
-          c <- unreplicate (getConds <$> A.elems a')
+          c <- unreplicate (getConds <$> js)
           let f (Cond cvs' _) = fromJust $ lookup c cvs'
           return (c, BlockArray (f <$> a') t)
-    in optimiseNodeRef $ Cond cvs t
-  else simplifyNodeRef $ BlockArray a' t
-optimiseNodeRef (Cond cvs t) | isCond `any` (map fst cvs ++ map snd cvs) = do
-  cvs' <- flattenConds cvs
-  optimiseNodeRef $ Cond cvs' t
-optimiseNodeRef ref = simplifyNodeRef ref
+    in optimiseNodeRef ol $ Cond cvs t
+  | ol >= 2, isCond (head js), getConds (head js) == tailConds = do
+    let cs = getConds (head js)
+    vs <- sequence $ do
+      c <- cs
+      let f (Cond cvs' t') = case lookup c cvs' of
+            Just v -> v
+            Nothing -> Unconstrained t'
+          f r = r
+      return $ optimiseBlockArray ol (f <$> a') t
+    optimiseNodeRef ol $ Cond (zip cs vs) t
+  | ol >= 2, isBlockMatrix (BlockArray a' t) = blockMatrix' . filter (not . null) $
+    filter (not . isUnconstrained) <$> fromBlockMatrix (BlockArray a' t)
+  | otherwise = simplifyNodeRef $ BlockArray a' t
+  where js = A.elems a'
+        tailConds = nub $ sort [c | Cond cvs _ <- tail js, (c,_) <- cvs]
 
 extractIndex :: DExpr -> [DExpr] -> DExpr
 extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block)
