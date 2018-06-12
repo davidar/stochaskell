@@ -155,15 +155,20 @@ extractType env block = go where
   f :: (Traversable t) => t NodeRef -> State Block (t NodeRef)
   f t = sequence $ extractNodeRef simplifyNodeRef simplify env block <$> t
 
+optimiseE :: Int -> Expr t -> Expr t
+optimiseE ol = Expr . optimiseD ol . erase
+
 optimiseD :: Int -> DExpr -> DExpr
-optimiseD ol e = DExpr $ extractNodeRef (optimiseNodeRef ol) simplify emptyEEnv block ret
+optimiseD ol e = DExpr $ extractNodeRef (optimiseNodeRef ol) (optimiseNode ol) emptyEEnv block ret
   where (ret, block) = runDExpr e
 
 flattenConds :: [(NodeRef,NodeRef)] -> State Block [(NodeRef,NodeRef)]
 flattenConds cvs = concat <$> (sequence $ flattenCond <$> cvs) where
   flattenCond (Cond cas _, b)
     | isConst `all` map snd cas = flattenConds [(c,b) | (c,a) <- cas, getConstVal a == Just 1]
-    | otherwise = undefined
+    | otherwise = do
+        cs <- sequence [simplifyConj [c,a] | (c,a) <- cas, getConstVal a /= Just 0]
+        flattenConds [(c,b) | c <- cs]
   flattenCond (c, Cond cbs_ _) = do
     cbs <- flattenConds cbs_
     case lookup c cbs of
@@ -206,6 +211,20 @@ optimiseBlockArray ol a' t
   | otherwise = simplifyNodeRef $ BlockArray a' t
   where js = A.elems a'
         tailConds = nub $ sort [c | Cond cvs _ <- tail js, (c,_) <- cvs]
+
+optimiseNode :: Int -> Node -> State Block NodeRef
+optimiseNode _ (Apply "<>" [a,b] _) | isBlockMatrix a, isBlockMatrix b = do
+  m <- sequence [sequence [blockDot row col | col <- transpose b'] | row <- a']
+  blockMatrix' m
+  where a' = fromBlockMatrix a
+        b' = fromBlockMatrix b
+optimiseNode _ (Apply "+" [a,b] _) | isBlockMatrix a, isBlockMatrix b = do
+  m <- sequence [sequence [simplify . Apply "+" [x,y] $ typeRef x `coerce` typeRef y
+                          | (x,y) <- zip u v] | (u,v) <- zip a' b']
+  blockMatrix' m
+  where a' = fromBlockMatrix a
+        b' = fromBlockMatrix b
+optimiseNode _ n = simplify n
 
 extractIndex :: DExpr -> [DExpr] -> DExpr
 extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block)

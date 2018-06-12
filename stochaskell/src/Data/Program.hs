@@ -916,7 +916,7 @@ rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t ->
 rjmcC p = switchOf . rjmc p . fromCaseP
 
 rjmcTransRatio :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
-rjmcTransRatio q x y = subst (substEEnv substEnv) $ lu' - lu + logDet jacobian
+rjmcTransRatio q x y = optimiseE 2 . subst (substEEnv substEnv) $ lu' - lu + logDet jacobian
   where lu  = q x_ `lpdf` y_
         lu' = q y_ `lpdf` x_
         getAux ns a b allowInt =

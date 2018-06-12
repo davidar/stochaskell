@@ -183,6 +183,8 @@ class Matrix m i e | m -> i e where
     blockMatrix :: [[m]] -> m
     eye :: i -> m
     zeros :: i -> i -> m
+    matrixRows :: m -> i
+    matrixCols :: m -> i
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
 instance (Show t, LA.Element t) => Show (ShapedMatrix t) where

@@ -41,6 +41,7 @@ library
                      , containers
                      , cryptohash
                      , data-binary-ieee754
+                     , deepseq
                      , directory
                      , extra
                      , hmatrix

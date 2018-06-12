@@ -1,9 +1,10 @@
 {-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FlexibleContexts, RankNTypes,
-             TypeFamilies, MonadComprehensions #-}
+             TypeFamilies, MonadComprehensions, DeriveGeneric #-}
 module Data.Expression.Const where
 
 import Prelude hiding ((<*),(*>),isInfinite)
 
+import Control.DeepSeq
 import Data.Array.Abstract hiding (elems)
 import Data.Array.Unboxed hiding ((!),bounds)
 import Data.Boolean
@@ -20,6 +21,7 @@ import Data.Random.Distribution.Abstract
 import Data.Ratio
 import Debug.Trace
 import GHC.Exts
+import GHC.Generics
 import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra.Data as LAD
 import Numeric.SpecFunctions
@@ -61,6 +63,8 @@ constFuns = Map.fromList
   ,("tr", tr . head)
   ,("tr'", tr' . head)
   ,("vectorSize", integer . vectorSize . head)
+  ,("matrixRows", integer . matrixRows . head)
+  ,("matrixCols", integer . matrixCols . head)
   ,("ifThenElse", \[a,b,c] -> ifB a b c)
   ,("==", \[a,b] -> a ==* b)
   ,("/=", \[a,b] -> a /=* b)
@@ -110,6 +114,11 @@ type Tag = Int
 data ConstVal = Exact  (UArray [Integer] Int)
               | Approx (UArray [Integer] Double)
               | Tagged Tag [ConstVal]
+              deriving (Generic)
+
+instance (Ix a, IArray UArray b, NFData a, NFData b) => NFData (UArray a b) where
+  rnf x = rnf (bounds x, elems x)
+instance NFData ConstVal
 
 instance Show ConstVal where
     show (Tagged c cs) = "C"++ show c ++ show cs
@@ -392,6 +401,10 @@ instance Matrix ConstVal Integer ConstVal where
       [ ([i,j], if i == j then 1 else 0) | i <- [1..n], j <- [1..n] ]
     zeros n n' = Exact $ array ([1,1],[n,n'])
       [ ([i,j], 0) | i <- [1..n], j <- [1..n'] ]
+    matrixRows m = case shape m of
+      [(1,r),_] -> r
+    matrixCols m = case shape m of
+      [_,(1,c)] -> c
 
 instance SquareMatrix ConstVal ConstVal where
     chol   = fromMatrix . chol   . toMatrix

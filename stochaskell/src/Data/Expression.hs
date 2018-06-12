@@ -663,13 +663,20 @@ condProduct js
 -- FUNCTION APPLICATION                                                     --
 ------------------------------------------------------------------------------
 
+blockDot :: [NodeRef] -> [NodeRef] -> State Block NodeRef
+blockDot u v = do
+  w <- sequence [simplify . Apply "<>" [a,b] $ typeRef a `typeMatrixProduct` typeRef b
+                | (a,b) <- zip u v]
+  simplify $ Apply "+s" w (coerces $ typeRef <$> w)
+
 simplifyNodeRef :: NodeRef -> State Block NodeRef
-simplifyNodeRef (Cond cvs t) = return $ case filter p cvs of
+simplifyNodeRef (Cond cvs t) = return $ case mapMaybe f cvs of
   [] -> Unconstrained t
   cvs' -> Cond cvs' t
-  where p (Const 0 _,_) = False
-        p (_,Unconstrained _) = False
-        p _ = True
+  where f (Const 0 _,_) = Nothing
+        f (_,Unconstrained _) = Nothing
+        f (c,v) | c == v = Just (c, Const 1 boolT)
+        f cv = Just cv
 simplifyNodeRef r = case r of
   Index i [Cond cvs _]     -> simplifyNodeRef $ Cond [(c,Index i [j])   | (c,j) <- cvs] (typeRef r)
   Index   (Cond cvs _) js  -> simplifyNodeRef $ Cond [(c,Index i js)    | (c,i) <- cvs] (typeRef r)
@@ -688,7 +695,7 @@ simplify (Apply "ifThenElse" [Cond cvs _,a,b] t) | isConst `all` vs = do
   r <- simplifyNodeRef $ Cond (zip cs vs') t
   simplify $ Apply "id" [r] t
   where (cs,vs) = unzip cvs
-simplify (Apply f js t) | isCond `any` js, f /= "ifThenElse", f /= "id" = do
+simplify (Apply f js t) | isCond `any` js, not $ f `elem` ["ifThenElse","id","log_det"] = do
   (cs,vs) <- unzip <$> condProduct js
   vs' <- sequence [simplify $ Apply f v t | v <- vs]
   r <- simplifyNodeRef $ Cond (zip cs vs') t
@@ -701,12 +708,16 @@ simplify (Apply f js t) | isCond `any` js, f /= "ifThenElse", f /= "id" = do
     _ -> return r
 simplify (Apply "*" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "*" [_,Const 0 _] t) = return $ Const 0 t
+simplify (Apply "*" [Const c _,x] t) | isZeros c, isScalar (typeRef x) = return $ Const c t
+simplify (Apply "*" [x,Const c _] t) | isZeros c, isScalar (typeRef x) = return $ Const c t
 simplify (Apply "/" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "*" [Const 1 _,x] _) = return x
 simplify (Apply "*" [x,Const 1 _] _) = return x
 simplify (Apply "/" [x,Const 1 _] _) = return x
 simplify (Apply "+" [Const 0 _,x] _) = return x
 simplify (Apply "+" [x,Const 0 _] _) = return x
+simplify (Apply "+" [Const c _,x] _) | isZeros c, not $ isScalar (typeRef x) = return x
+simplify (Apply "+" [x,Const c _] _) | isZeros c, not $ isScalar (typeRef x) = return x
 simplify (Apply "-" [x,Const 0 _] _) = return x
 simplify (Apply "*" [Const (-1) _,x] t) = simplify (Apply "negate" [x] t)
 simplify (Apply "*" [x,Const (-1) _] t) = simplify (Apply "negate" [x] t)
@@ -728,6 +739,7 @@ simplify (Apply "det"     [i@BlockArray{}] t) | Just s <- simplifyDet False i t 
 simplify (Apply "log_det" [i@BlockArray{}] t) | Just s <- simplifyDet True  i t = s
 simplify (Apply "replaceIndex" [Const 0 _,_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "+s" [a,b] t) = simplify (Apply "+" [a,b] t)
+simplify (Apply "+s" [a] _) = return a
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
@@ -797,7 +809,70 @@ simplify' block (Apply "det" [Var i@Internal{} _] t)
   | (Apply "eye" _ _) <- lookupBlock i block = Right . return $ Const 1 t
 simplify' block (Apply "not" [Var i@Internal{} _] _)
   | (Apply "not" [j] _) <- lookupBlock i block = Right $ return j
+simplify' block (Apply "*" [Var i@Internal{} t,_] _)
+  | Apply "zeros" _ _ <- lookupBlock i block = Right . return $ Var i t
+simplify' block (Apply "*" [_,Var i@Internal{} t] _)
+  | Apply "zeros" _ _ <- lookupBlock i block = Right . return $ Var i t
+simplify' block (Apply "/" [Var i@Internal{} t,_] _)
+  | Apply "zeros" _ _ <- lookupBlock i block = Right . return $ Var i t
+simplify' block (Apply "+" [Var i@Internal{} _,a] _)
+  | Apply "zeros" _ _ <- lookupBlock i block = Right $ return a
+simplify' block (Apply "+" [a,Var i@Internal{} _] _)
+  | Apply "zeros" _ _ <- lookupBlock i block = Right $ return a
+simplify' block (Apply "-" [a,Var i@Internal{} _] _)
+  | Apply "zeros" _ _ <- lookupBlock i block = Right $ return a
+simplify' block (Apply "-" [Var i@Internal{} _,a] t)
+  | Apply "zeros" _ _ <- lookupBlock i block = Right . simplify $ Apply "negate" [a] t
+simplify' block (Apply "negate" [Var i@Internal{} t] _)
+  | Apply "zeros" _ _ <- lookupBlock i block = Right . return $ Var i t
+simplify' block (Apply "<>" [Var i@Internal{} _,a] t)
+  | Apply "zeros" [r,_] _ <- lookupBlock i block = Right $ do
+      c <- matrixCols' a
+      simplify $ Apply "zeros" [r,c] t
+simplify' block (Apply "<>" [a,Var i@Internal{} _] t)
+  | Apply "zeros" [_,c] _ <- lookupBlock i block = Right $ do
+      r <- matrixRows' a
+      simplify $ Apply "zeros" [r,c] t
+simplify' block (Apply "+s" js t) | js /= js' = Right . simplify $ Apply "+s" js' t
+  where js' = do
+          j <- js
+          case j of
+            Var i@Internal{} _ -> case lookupBlock i block of
+              Apply "zeros" _ _ -> mzero
+              _ -> return j
+            Const c _ | isZeros c -> mzero
+            _ -> return j
 simplify' _ n = Left n
+
+matrixRows' = matrixRowsCols False
+matrixCols' = matrixRowsCols True
+matrixRowsCols :: Bool -> NodeRef -> State Block NodeRef
+matrixRowsCols cols m@(Var i@Internal{} (ArrayT (Just "matrix") _ _)) = do
+  block <- get
+  case lookupBlock i block of
+    Apply op [a,b] _ | op `elem` ["+","-","*","/"] ->
+      case typeRef a of
+        ArrayT (Just "matrix") _ _ -> do
+          n <- matrixRowsCols cols a
+          if getConstVal n /= Just 1 then return n else case typeRef b of
+            ArrayT (Just "matrix") _ _ -> matrixRowsCols cols b
+            _ -> return n
+        _ -> matrixRowsCols cols b
+    Apply "<>" [a,b] _ -> matrixRowsCols cols $ if cols then b else a
+    Apply "negate" [a] _ -> matrixRowsCols cols a
+    Apply "asRow" _ _ | not cols -> return $ Const 1 IntT
+    Apply "ifThenElse" [c,a,b] _ -> do
+      a' <- matrixRowsCols cols a
+      b' <- matrixRowsCols cols b
+      simplify $ Apply "ifThenElse" [c,a',b'] IntT
+    Apply "zeros" [r,c] _ -> return $ if cols then c else r
+    Apply "eye" [n] _ -> return n
+    Apply f (m:_) _ | f `elem` ["replaceIndex","deleteIndex","insertIndex"], cols ->
+      matrixRowsCols cols m
+    n -> error $ "matrixRowsCols "++ show n
+matrixRowsCols cols m | ArrayT (Just "matrix") _ _ <- typeRef m =
+  simplify $ Apply (if cols then "matrixCols" else "matrixRows") [m] IntT
+matrixRowsCols _ r = error $ "matrixRowsCols "++ show r
 
 simplifyDet :: Bool -> NodeRef -> Type -> Maybe (State Block NodeRef)
 simplifyDet lg i t
@@ -1129,7 +1204,7 @@ blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent
     [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
   where flattenRow = foldr1 (zipWith (++))
         flattenMatrix = concat . map flattenRow :: [[[[a]]]] -> [[a]]
-        k -- | isBlockArray `all` concat k' = flattenMatrix $ map fromBlockMatrix <$> k'
+        k | isBlockArray `all` concat k' = flattenMatrix $ map fromBlockMatrix <$> k'
           | otherwise = k'
         bnd = ([1,1],[length k, length $ head k])
         rs = do
@@ -1185,15 +1260,15 @@ instance AA.Matrix DExpr DExpr DExpr where
                                      ,(Const 1 IntT,Unconstrained IntT)] RealT
       simplify $ Apply "zeros" [m',n'] t
 
+typeMatrixProduct (ArrayT _ [r,_] t) (ArrayT _ [_,c] _) = ArrayT (Just "matrix") [r,c] t
+
 instance (ScalarType e) => Monoid (Expr [[e]]) where
     mappend a b = Expr $ erase a `mappend` erase b
 instance Monoid DExpr where
     mappend a b = DExpr $ do
         i <- fromDExpr a
         j <- fromDExpr b
-        let (ArrayT _ [r,_] t) = typeRef i
-            (ArrayT _ [_,c] _) = typeRef j
-        simplify $ Apply "<>" [i,j] (ArrayT (Just "matrix") [r,c] t)
+        simplify . Apply "<>" [i,j] $ typeRef i `typeMatrixProduct` typeRef j
 
 instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
     a ! e = Expr $ erase a ! erase e

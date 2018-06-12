@@ -129,7 +129,7 @@ evalNodeRef env block v | isBlockVector v = do
   return $ blockVector v'
 evalNodeRef env block m
   | isBlockMatrix m, isMatrix `all` concat m', not (null m'), replicated (map length m') =
-      unsafeCatch (blockMatrix m')
+      unsafeCatchDeep (blockMatrix m')
   | isBlockMatrix m = Left $
       show m ++" = "++ show m' ++" contains non-matrix blocks or is not rectangular"
   where m' = filter (not . null) [rights [evalNodeRef env block cell | cell <- row]

@@ -2,6 +2,7 @@
 
 module Util where
 
+import Control.DeepSeq
 import qualified Control.Exception
 import Control.Monad
 import Data.Boolean
@@ -108,8 +109,12 @@ fromRight' (Left e) = error $ "fromRight: "++ e
 fromRight' (Right x) = x
 
 unsafeCatch :: a -> Either String a
-unsafeCatch x = System.IO.Unsafe.unsafePerformIO $
-  Control.Exception.catch (x `seq` return (Right x)) handler
+unsafeCatch x = unsafeCatch' (seq x) x
+unsafeCatchDeep :: (NFData a) => a -> Either String a
+unsafeCatchDeep x = unsafeCatch' (deepseq x) x
+unsafeCatch' :: (IO (Either String a) -> IO (Either String a)) -> a -> Either String a
+unsafeCatch' f x = System.IO.Unsafe.unsafePerformIO $
+  Control.Exception.catch (f $ return (Right x)) handler
   where handler :: Control.Exception.ErrorCall -> IO (Either String a)
         handler = return . Left . show
 
