@@ -10,7 +10,7 @@ import Debug.Trace
 import Util
 
 substEEnv :: EEnv -> EEnv
-substEEnv env = Map.map (substD env) `fixpt` env
+substEEnv (EEnv env) = EEnv $ Map.map (substD $ EEnv env) `fixpt` env
 
 subst :: EEnv -> Expr e -> Expr e
 subst env = Expr . substD env . erase
@@ -42,7 +42,7 @@ extractNodeRef fNodeRef fNode env block = go where
       | Symbol{} <- i -> do
         t' <- extractType env block t
         return $ Var i t'
-      where val = Map.lookup (LVar i) env
+      where val = lookupEEnv i env
     Const c t -> do
       t' <- extractType env block t
       return $ Const c t'
@@ -126,7 +126,7 @@ extractNodeRef fNodeRef fNode env block = go where
     runLambda (inputsT body) (sequence $ extractNodeRef fNodeRef fNode env' block' <$> hds)
     where f (i,t) = DExpr . return $ Var i t
           ids' = f <$> inputsT body
-          env' = Map.fromList (inputsL body `zip` ids') `Map.union` env
+          env' = (EEnv . Map.fromList $ inputsL body `zip` ids') `unionEEnv` env
           block' = deriveBlock body block
 
 extractType :: EEnv -> Block -> Type -> State Block Type
@@ -233,7 +233,7 @@ extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block
 extractIndexNode :: EEnv -> Block -> Node -> [DExpr] -> State Block NodeRef
 extractIndexNode env block (Array _ (Lambda body hd) _) idx =
   extractNodeRef simplifyNodeRef simplify env' block' hd
-  where env' = Map.fromList (inputsL body `zip` idx) `Map.union` env
+  where env' = (EEnv . Map.fromList $ inputsL body `zip` idx) `unionEEnv` env
         block' = deriveBlock body block
 extractIndexNode env block (Apply op [a,b] t) idx
   | op `elem` ["+","-","*","/"] = do
@@ -265,8 +265,9 @@ collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret =
   let sh = zip los his
       v = (e `extractIndex` [DExpr . return $ Var (Dummy (-1) 1) IntT])
              `extractIndex` [DExpr . return $ Var (Dummy (-1) 2) IntT]
-      env' = Map.fromList [(LVar (Dummy (-1) 1), DExpr . return $ Var (Dummy d 1) IntT)
-                          ,(LVar (Dummy (-1) 2), DExpr . return $ Var (Dummy d 2) IntT)]
+      env' = EEnv $ Map.fromList
+        [(LVar (Dummy (-1) 1), DExpr . return $ Var (Dummy d 1) IntT)
+        ,(LVar (Dummy (-1) 2), DExpr . return $ Var (Dummy d 2) IntT)]
   lam <- runLambda [(Dummy d 1,IntT),(Dummy d 2,IntT)] (fromDExpr $ substD env' v)
   hashcons $ Array sh lam (ArrayT Nothing sh t')
   where (ret, block) = runDExpr e

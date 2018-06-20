@@ -276,7 +276,7 @@ transform prog = Prog $ do
       ids = Dummy (d-1) <$> [0..(length rets - 1)]
       zs = zipWith Var ids $ map typeRef rets
       eenv = solveTupleD dBlock' rets (DExpr . return <$> zs) emptyEEnv
-      invfs = [fromMaybe (error "not invertible") $ Map.lookup (LVar x) eenv
+      invfs = [fromMaybe (error "not invertible") $ lookupEEnv x eenv
               | (x,t) <- map (Volatile ns d) [0..] `zip` map typePNode (reverse acts')]
       ts = typeRef <$> rets
       t = if length rets > 1 then TupleT ts else head ts
@@ -543,27 +543,32 @@ dirac c = do
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
 
-pdf :: (ExprTuple t) => Prog t -> t -> R
-pdf prog vals = subst (substEEnv env') $ pdfPBlock False env pb
-  where (rets, pb) = runProgExprs "pdf" prog
-        env = solveTuple (definitions pb) rets vals emptyEEnv
-        env' = Map.filterWithKey p env
-        p (LVar (Volatile "pdf" _ _)) _ = True
-        p _ _ = False
-
-pdfC :: (Constructor t) => Prog (Expr t) -> Expr t -> R
-pdfC = caseOf . pdf
+pdf :: (ExprTuple t, Show t) => Prog t -> t -> R
+pdf p = exp . lpdf p
 
 lpdf :: (ExprTuple t, Show t) => Prog t -> t -> R
-lpdf prog vals = subst (substEEnv env') $ pdfPBlock True env pb
-  where (rets, pb) = runProgExprs "lpdf" prog
-        env = solveTuple (definitions pb) rets vals emptyEEnv
-        env' = Map.filterWithKey p env
+lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - logDet jacobian
+  where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "lpdf" prog
+        EEnv env = solveTuple block rets vals emptyEEnv
+        env' = EEnv $ Map.filterWithKey p env
         p (LVar (Volatile "lpdf" _ _)) _ = True
         p _ _ = False
+        jacobian = Expr $ blockMatrix
+          [ [ derivNodeRef env' block r (Var (Volatile ns 0 i) (typePNode d))
+            | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
+          | r <- rets, typeRef r /= IntT ] :: RMat
 
-lpdfC :: (Constructor t, Show t) => Prog (Expr t) -> Expr t -> R
-lpdfC = caseOf . lpdf
+-- compute joint pdf of primitive random variables within the given program
+lpdfAux :: (ExprTuple t, Show t) => Prog t -> t -> R
+lpdfAux prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb
+  where (rets, pb) = runProgExprs "lpdfAux" prog
+        EEnv env = solveTuple (definitions pb) rets vals emptyEEnv
+        env' = EEnv $ Map.filterWithKey p env
+        p (LVar (Volatile "lpdfAux" _ _)) _ = True
+        p _ _ = False
+
+lpdfAuxC :: (Constructor t, Show t) => Prog (Expr t) -> Expr t -> R
+lpdfAuxC = caseOf . lpdfAux
 
 pdfPBlock :: Bool -> EEnv -> PBlock -> R
 pdfPBlock lg env pb@(PBlock block refs _ ns) = pdfPNodes (pnodes pb) ns lg env block refs
@@ -572,7 +577,7 @@ pdfPNodes :: Map Id PNode -> NS -> Bool -> EEnv -> Block -> [PNode] -> R
 pdfPNodes r ns lg env block refs = (if lg then sum else product) $ do
     (i,d) <- zip [0..] $ reverse refs
     let ident = Volatile ns (dagLevel $ topDAG block) i
-    return $ case Map.lookup (LVar ident) env of
+    return $ case lookupEEnv ident env of
       Just val -> pdfPNode r lg env block d val
       Nothing  -> trace (show ident ++" is unconstrained") $ if lg then 0 else 1
 
@@ -610,7 +615,7 @@ pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) =
   else cast (factorial' n') * intervalL * product' intervals * intervalR * product' points
   where fcdf = cdfPNode env block d
         n' = reExpr env block n :: Z
-        kv' i = let envi = Map.singleton (LVar dummy) i
+        kv' i = let envi = EEnv $ Map.singleton (LVar dummy) i
                 in (Expr $ substD envi k, substD envi v) :: (Z,DExpr)
         intervalL = let (i,x) = kv' lo in if lg
           then log (fcdf x) *  cast (i-1) -    logFactorial' (i-1)
@@ -906,49 +911,57 @@ mhAdjust adjust target proposal x = do
 
 rjmc :: (ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => P t -> (t -> P t) -> t -> P t
 rjmc target proposal x = do
+  let a = rjmcRatio target proposal
   y <- proposal x
-  let f = lpdf target -- TODO: jacobian adjustment for transformed dist
-      a = exp $ f y - f x + rjmcTransRatio proposal x y
-  accept <- bernoulli $ min' 1 a
+  accept <- bernoulli (min' 1 (a x y))
   return $ ifB accept y x
 
 rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)
 rjmcC p = switchOf . rjmc p . fromCaseP
 
-rjmcTransRatio :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
-rjmcTransRatio q x y = optimiseE 2 . subst (substEEnv substEnv) $ lu' - lu + logDet jacobian
-  where lu  = q x_ `lpdf` y_
-        lu' = q y_ `lpdf` x_
+rjmcRatio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R
+rjmcRatio target proposal x y = exp $ f y - f x + rjmcTransRatio proposal x y
+  where f = lpdfAux target -- TODO: jacobian adjustment for transformed dist
+
+rjmcTransRatio :: (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
+rjmcTransRatio q x y =
+  optimiseE 2 . subst (substEEnv substEnv) $ rjmcTransRatio' q (sym "rjx" x) (sym "rjy" y)
+  where sym :: (ExprTuple t) => String -> t -> t
+        sym name val = entuple . expr $ do
+          t <- extractType emptyEEnv block (typeRef ret)
+          return $ Var (Symbol name True) t
+          where (ret, block) = runExpr (detuple val)
+        substEnv = EEnv $ Map.fromList
+          [(LVar $ Symbol "rjx" True, erase $ detuple x)
+          ,(LVar $ Symbol "rjy" True, erase $ detuple y)
+          ]
+
+rjmcTransRatio' :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
+rjmcTransRatio' q x y = lu' - lu + logDet jacobian
+  where lu  = q x `lpdfAux` y
+        lu' = q y `lpdfAux` x
         getAux ns a b allowInt =
           let (rets, pb) = runProgExprs ns (q a)
-              env = solveTuple (definitions pb) rets b emptyEEnv
+              EEnv env = solveTuple (definitions pb) rets b emptyEEnv
               p (LVar i@(Volatile ns' _ _)) _
                 | ns' == ns, Just pn' <- pn = allowInt || typePNode pn' /= IntT
                 where pn = Map.lookup i $ pnodes pb
               p _ _ = False
-          in Map.filterWithKey p env
-        u' = getAux "qy" y_ x_ False
-        uDef = getAux "qx" x_ y_ False
+          in EEnv $ Map.filterWithKey p env
+        EEnv u' = getAux "qy" y x False
+        uDef = getAux "qx" x y False
         u = do
-          let (_,PBlock _ refs _ ns) = runProgExprs "qx" (q x_)
+          let (_,PBlock _ refs _ ns) = runProgExprs "qx" (q x)
           (i,r) <- [0..] `zip` reverse refs
           let t = typePNode r
           Monad.guard $ t /= IntT
           return $ Var (Volatile ns 0 i) t
-        x_::t = entuple . expr $ do
-          t <- extractType emptyEEnv block (typeRef ret)
-          return $ Var (Symbol "rjx") t
-          where (ret, block) = runExpr (detuple x)
-        y_::t = entuple . expr $ do
-          t <- extractType emptyEEnv block (typeRef ret)
-          return $ Var (Symbol "rjy") t
-          where (ret, block) = runExpr (detuple y)
-        x' = let (rets, pb) = runProgExprs "qx" (q x_)
+        x' = let (rets, pb) = runProgExprs "qx" (q x)
                  tup = toExprTuple $ reDExpr emptyEEnv (definitions pb) <$> rets :: t
              in erase $ detuple tup
         qualify r val = DExpr $ do
           let Just id = getId r
-          case Map.lookup (LVar id) uDef of
+          case lookupEEnv id uDef of
             Just e -> do
               i <- fromDExpr e
               j <- fromDExpr val
@@ -960,12 +973,8 @@ rjmcTransRatio q x y = optimiseE 2 . subst (substEEnv substEnv) $ lu' - lu + log
               return $ Unconstrained t
         d_ = derivD emptyEEnv
         d a = d_ a . fst . runExpr . detuple
-        top =   d x' x_                       : [qualify r $ d_ x' r           | r <- u]
-        bot = [(d v x_ + (d v y_ <> d x' x_)) : [qualify r $ d v y_ <> d_ x' r | r <- u]
+        top =   d x' x                     : [qualify r $ d_ x' r          | r <- u]
+        bot = [(d v x + (d v y <> d x' x)) : [qualify r $ d v y <> d_ x' r | r <- u]
               | v <- Map.elems u']
-        substAux = getAux "qx" x_ y_ True `Map.union` getAux "qy" y_ x_ True
+        substAux = getAux "qx" x y True `unionEEnv` getAux "qy" y x True
         jacobian = Expr . optimiseD 2 . substD (substEEnv substAux) . optimiseD 1 $ blockMatrix (top:bot) :: RMat
-        substEnv = Map.fromList
-          [(LVar $ Symbol "rjx", erase $ detuple x)
-          ,(LVar $ Symbol "rjy", erase $ detuple y)
-          ]

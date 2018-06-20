@@ -40,7 +40,7 @@ type NS = String
 data Id = Dummy    { idLevel' :: Level, idPointer :: Pointer }
         | Volatile { idNS :: NS, idLevel' :: Level, idPointer :: Pointer }
         | Internal { idLevel' :: Level, idPointer :: Pointer }
-        | Symbol   { idName :: String }
+        | Symbol   { idName :: String, idKnown :: Bool }
         deriving (Eq, Ord)
 
 idLevel :: Id -> Level
@@ -59,7 +59,7 @@ instance Show Id where
   show (Dummy l p)       = "i_"++ show l ++"_"++ show p
   show (Volatile ns l p) = "x_"++ ns ++"_"++ show l ++"_"++ show p
   show (Internal l p)    = "v_"++ show l ++"_"++ show p
-  show (Symbol s)        = s
+  show (Symbol s known)  = (if known then toUpper else toLower) <$> s
 
 data NodeRef = Var Id Type
              | Const ConstVal Type
@@ -121,9 +121,9 @@ unconstrainedLike es = DExpr $ do
 
 -- TODO: make polymorphic
 symbolR :: String -> R
-symbolR name = expr . return $ Var (Symbol name) RealT
+symbolR name = expr . return $ Var (Symbol name False) RealT
 symbolRVec :: String -> RVec
-symbolRVec name = expr . return $ Var (Symbol name) (vecT RealT)
+symbolRVec name = expr . return $ Var (Symbol name False) (vecT RealT)
 
 instance Show NodeRef where
   --show (Var i t) = "("++ show i ++" :: "++ show t ++")"
@@ -229,7 +229,7 @@ nodes dag = Bimap.toAscListR $ bimap dag
 inputs :: DAG -> [Id]
 inputs = map fst . inputsT
 inputsL :: DAG -> [LVal]
-inputsL dag = LVar . fst <$> inputsT dag
+inputsL = map LVar . inputs
 inputs' :: DAG -> [NodeRef]
 inputs' = map (uncurry Var) . inputsT
 instance Show DAG where
@@ -291,9 +291,22 @@ getId' (LField i _ _ _) = Just i
 getId' (LCond l _) = getId' l
 getId' LConstr{} = Nothing
 
-type EEnv = Map LVal DExpr
+newtype EEnv = EEnv (Map LVal DExpr)
 emptyEEnv :: EEnv
-emptyEEnv = Map.empty
+emptyEEnv = EEnv Map.empty
+
+instance Show EEnv where
+  show (EEnv m) = unlines [show i ++" :=\n"++ indent (show v) | (LVar i, v) <- Map.toAscList m]
+
+unionEEnv :: EEnv -> EEnv -> EEnv
+unionEEnv (EEnv a) (EEnv b) = EEnv $ Map.union a b
+unionsEEnv :: [EEnv] -> EEnv
+unionsEEnv envs = EEnv $ Map.unions [env | EEnv env <- envs]
+
+lookupEEnv :: Id -> EEnv -> Maybe DExpr
+lookupEEnv k (EEnv m) = Map.lookup (LVar k) m
+insertEEnv :: Id -> DExpr -> EEnv -> EEnv
+insertEEnv k v (EEnv m) = EEnv $ Map.insert (LVar k) v m
 
 type Expression t = Expr t
 newtype Expr t = Expr { erase :: DExpr }
@@ -515,6 +528,10 @@ coerce (ArrayT nm1 ((Const 1 IntT,m):sh1) s)
         n' = if m == n then n else
           trace "WARN coercing dynamic array" (Unconstrained IntT)
         nm = if isNothing nm1 then nm2 else nm1
+coerce m@(ArrayT (Just "matrix") [(Const 1 IntT,n),_] s)
+       v@(ArrayT (Just "vector") [(Const 1 IntT,k)] t)
+  | n == k, s == t = m
+coerce v@(ArrayT (Just "vector") _ _) m@(ArrayT (Just "matrix") _ _) = coerce m v
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
 coerces :: [Type] -> Type

@@ -42,13 +42,13 @@ numelType env block (ArrayT _ sh _) = product $ map f sh'
 
 -- TODO: mark individual symbols as evaluable, even when not set in env
 evaluable :: EEnv -> Block -> NodeRef -> Bool
-evaluable env block ref =
+evaluable (EEnv env) block ref =
   deps `Set.isSubsetOf` (Set.fromList . mapMaybe getId' . Set.toList $ Map.keysSet env)
   where deps = Set.filter p $ dependsNodeRef block ref
         p Dummy{}    = True
         p Volatile{} = True
         p Internal{} = False
-        p Symbol{}   = False
+        p (Symbol _ known) = if known then False else True
 
 type Eval = Either String ConstVal
 type Evals = Either String [ConstVal]
@@ -78,7 +78,7 @@ evalTuple :: (ExprTuple t) => Env -> t -> Evals
 evalTuple env = sequence . map (evalD env) . fromExprTuple
 
 evalEEnv_ :: EEnv -> Env
-evalEEnv_ env = Map.fromList $ do
+evalEEnv_ (EEnv env) = Map.fromList $ do
   (k,v) <- Map.toList env
   case evalD_ v of
     Left e -> trace ("evalEEnv_: "++ e) mzero
@@ -127,13 +127,19 @@ evalNodeRef env block (Data c args _) = do
 evalNodeRef env block v | isBlockVector v = do
   v' <- sequence $ evalNodeRef env block <$> fromBlockVector v
   return $ blockVector v'
-evalNodeRef env block m
-  | isBlockMatrix m, isMatrix `all` concat m', not (null m'), replicated (map length m') =
+--evalNodeRef env block m
+--  | isBlockMatrix m, isMatrix `all` concat m', not (null m'), replicated (map length m') =
+--      unsafeCatchDeep (blockMatrix m')
+--  | isBlockMatrix m = Left $
+--      show m ++" = "++ show m' ++" contains non-matrix blocks or is not rectangular"
+--  where m' = filter (not . null) [rights [evalNodeRef env block cell | cell <- row]
+--                                 | row <- fromBlockMatrix m]
+evalNodeRef env block m | isBlockMatrix m = do
+  m' <- sequence [sequence [evalNodeRef env block cell | cell <- row] | row <- fromBlockMatrix m]
+  case m' of
+    _ | isMatrix `all` concat m', not (null m'), replicated (map length m') ->
       unsafeCatchDeep (blockMatrix m')
-  | isBlockMatrix m = Left $
-      show m ++" = "++ show m' ++" contains non-matrix blocks or is not rectangular"
-  where m' = filter (not . null) [rights [evalNodeRef env block cell | cell <- row]
-                                 | row <- fromBlockMatrix m]
+    _ -> Left $ show m ++" = "++ show m' ++" contains non-matrix blocks or is not rectangular"
 evalNodeRef env block r@(Cond cvs _) = case sequence (evalNodeRef env block <$> cs) of
   Left e -> Left $ "while evaluating condition of "++ show r ++":\n"++ indent e
   Right cs' | length (filter (1 ==) cs') /= 1 ->
@@ -317,7 +323,7 @@ aggregateLVals :: EEnv -> EEnv
 aggregateLVals = aggregateFields . aggregateConds
 
 aggregateFields :: EEnv -> EEnv
-aggregateFields env = Map.union env' env
+aggregateFields (EEnv env) = EEnv $ Map.union env' env
   where kvss = groupBy f [(k,v) | (k@LField{},v) <- Map.toAscList env]
         f a b = getId' (fst a) == getId' (fst b)
         env' = Map.fromList $ do
@@ -332,7 +338,7 @@ aggregateFields env = Map.union env' env
           else trace ("WARN missing fields: only have "++ show (fst <$> kvs)) mzero
 
 aggregateConds :: EEnv -> EEnv
-aggregateConds env = Map.union env' env
+aggregateConds (EEnv env) = EEnv $ Map.union env' env
   where kvss = groupBy f [(k,v) | (k@LCond{},v) <- Map.toAscList env]
         f (LCond a _,_) (LCond b _,_) = a == b
         env' = Map.fromList $ do
@@ -346,12 +352,15 @@ aggregateConds env = Map.union env' env
 solve :: Expr t -> Expr t -> EEnv -> EEnv
 solve e val = solveD (erase e) (erase val)
 solveD :: DExpr -> DExpr -> EEnv -> EEnv
-solveD e val env = aggregateLVals $ env `Map.union` solveNodeRef env block ret val
+solveD e val env = aggregateLVals $ env `unionEEnv` solveNodeRef env block ret val
   where (ret, block) = runDExpr e
+
+solve_ :: Expr t -> Expr t -> EEnv
+solve_ a b = solve a b emptyEEnv
 
 solveTupleD :: Block -> [NodeRef] -> [DExpr] -> EEnv -> EEnv
 solveTupleD block rets vals = aggregateLVals . compose
-  [ \env -> env `Map.union` solveNodeRef env block r e
+  [ \env -> env `unionEEnv` solveNodeRef env block r e
   | (r,e) <- zip rets vals ]
 
 solveTuple :: (ExprTuple t) => Block -> [NodeRef] -> t -> EEnv -> EEnv
@@ -360,30 +369,31 @@ solveTuple block rets = solveTupleD block rets . fromExprTuple
 solveNodeRef :: EEnv -> Block -> NodeRef -> DExpr -> EEnv
 solveNodeRef env block (Var i@Internal{} _) val =
   solveNode env block (lookupBlock i block) val
-solveNodeRef _ _ (Var ref _) val = Map.singleton (LVar ref) val
-solveNodeRef env block (Data c rs _) val = Map.unions
+solveNodeRef _ _ (Var ref _) val = EEnv $ Map.singleton (LVar ref) val
+solveNodeRef env block (Data c rs _) val = unionsEEnv
   [solveNodeRef env block r $ extractD val c j | (r,j) <- zip rs [0..]]
 solveNodeRef env block (Index (Var i _) js) val | not (isInternal i) =
-  Map.singleton (LSub i $ reDExpr env block <$> js) val
+  EEnv $ Map.singleton (LSub i $ reDExpr env block <$> js) val
 solveNodeRef _ _ (Extract (Var i t) c j) val | not (isInternal i) =
-  Map.singleton (LField i t c j) val
+  EEnv $ Map.singleton (LField i t c j) val
 solveNodeRef env block (Extract (Var i@Internal{} _) 0 j) val
   | Case hd alts _ <- lookupBlock i block, IntT <- typeRef hd =
   solveCase env block hd [Lambda dag (rets !! j) | Lambda dag rets <- alts] val
-solveNodeRef env block ref val = Map.singleton (LConstr $ reDExpr env block ref ==* val) true
+solveNodeRef env block ref val = EEnv $ Map.singleton (LConstr $ reDExpr env block ref ==* val) true
   --trace ("WARN assuming "++ show ref ++" unifies with "++ show val) emptyEEnv
 
 solveCase :: EEnv -> Block -> NodeRef -> [Lambda NodeRef] -> DExpr -> EEnv
-solveCase env block hd alts val = Map.unions $ do
+solveCase env block hd alts val = unionsEEnv $ do
   (k,env') <- zip [1..] envs
   let env'' = condEnv (reDExpr env block hd ==* integer k) env'
+      EEnv kenv = solveNodeRef env block hd $ integer k
   case but (k-1) conds of
     _ | (conds !! (k-1)) == true -> return env''
     Nothing -> mzero
-    Just c -> return $ env'' `Map.union` Map.fromList
-      [(LCond l c, v) | (l,v) <- Map.toAscList . solveNodeRef env block hd $ integer k]
+    Just c -> return . unionEEnv env'' . EEnv $ Map.fromList
+      [(LCond l c, v) | (l,v) <- Map.toAscList kenv]
   where given :: EEnv -> [DExpr]
-        given env' = do
+        given (EEnv env') = do
           (k,v) <- Map.toAscList env'
           case k of
             LVar i@Symbol{} ->
@@ -407,20 +417,20 @@ solveCase env block hd alts val = Map.unions $ do
           case given env' of
             [] -> return (true, env')
             cs -> return (List.foldl1 (&&*) cs, env')
-        condEnv = Map.mapKeys . flip LCond
+        condEnv c (EEnv env) = EEnv $ Map.mapKeys (\k -> LCond k c) env
 
 firstDiffD :: Z -> Z -> DExpr -> DExpr -> Z
 firstDiffD n def a b = find' p def $ vector (1...n)
   where p i = let i' = erase i in Expr $ (a!i') /=* (b!i') :: B
 
 solveNodeRefs :: EEnv -> Block -> [(NodeRef,DExpr)] -> EEnv
-solveNodeRefs _ _ [] = Map.empty
+solveNodeRefs _ _ [] = emptyEEnv
 solveNodeRefs env block ((ref,val):rvs) =
-  env' `Map.union` solveNodeRefs (Map.union env' env) block rvs
+  env' `unionEEnv` solveNodeRefs (unionEEnv env' env) block rvs
   where env' = solveNodeRef env block ref val
 
 solveNode :: EEnv -> Block -> Node -> DExpr -> EEnv
-solveNode env block (Array sh (Lambda body hd) t) val = Map.fromList $ do
+solveNode env block (Array sh (Lambda body hd) t) val = EEnv . Map.fromList $ do
   kvs <- groupBy f $ Map.toAscList subs
   let i = unreplicate $ mapMaybe (getId' . fst) kvs
       e = DExpr . return $ PartiallyConstrained (zip lo' hi') (inputsT body)
@@ -430,7 +440,7 @@ solveNode env block (Array sh (Lambda body hd) t) val = Map.fromList $ do
         lo' = reDExpr env block <$> lo
         hi' = reDExpr env block <$> hi
         elt = Prelude.foldl (!) val [DExpr . return $ Var i t | (i,t) <- inputsT body]
-        subs = solveNodeRef env (deriveBlock body block) hd elt
+        EEnv subs = solveNodeRef env (deriveBlock body block) hd elt
         f (LSub i _,_) (LSub j _,_) = i == j
 solveNode env block (Apply "exp" [a] _) val =
   solveNodeRef env block a (log val)
@@ -447,9 +457,9 @@ solveNode env block (Apply "*" [a,b] _) val | evaluable env block a =
 solveNode env block (Apply "*" [a,b] _) val | evaluable env block b =
   solveNodeRef env block a (val / reDExpr env block b)
 solveNode env block (Apply "*" [a,b] _) val =
-  trace ("WARN assuming "++ show a ++" * "++ show b ++" = "++ "[...]" {-show val-}) Map.empty
+  trace ("WARN assuming "++ show a ++" * "++ show b ++" = "++ "[...]" {-show val-}) emptyEEnv
 solveNode env block (Apply "**" [a,b] _) val =
-  trace ("WARN assuming "++ show a ++" ** "++ show b ++" = "++ "[...]" {-show val-}) Map.empty
+  trace ("WARN assuming "++ show a ++" ** "++ show b ++" = "++ "[...]" {-show val-}) emptyEEnv
 solveNode env block (Apply "ifThenElse" [c,(Data 0 as _),(Data 1 bs _)] _) val =
   solveNodeRefs env block $ (c,c') : zip as as' ++ zip bs bs'
   where c' = caseD val [const [true], const [false]]
@@ -483,9 +493,9 @@ solveNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
         seed' = val!lo'
         ls' = vector [ f' (val!k) (val!(k+1)) | k <- lo'...hi' ]
         block' = deriveBlock dag block
-        [i,j] = inputsL dag
-        f' x y = let env' = Map.insert j x env
-                 in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
+        [i,j] = inputs dag
+        f' x y = let env' = insertEEnv j x env
+                 in fromJust . lookupEEnv i $ solveNodeRef env' block' ret y
 solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
   | evaluable env block seed = solveNodeRef env block ls ls'
   where (ArrayT _ [(lo,hi)] _) = typeRef ls
@@ -494,11 +504,11 @@ solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
         seed' = reDExpr env block seed
         ls' = vector [ f' (ifB (k ==* lo') seed' (val!(k-1))) (val!k) | k <- lo'...hi' ]
         block' = deriveBlock dag block
-        [i,j] = inputsL dag
-        f' x y = let env' = Map.insert j x env
-                 in fromJust . Map.lookup i $ solveNodeRef env' block' ret y
-solveNode _ _ (FoldScan Fold _ _ _ _ _) _ = trace ("WARN assuming fold = val") Map.empty
-solveNode _ _ (Apply "findSortedInsertIndex" _ _) _ = Map.empty
+        [i,j] = inputs dag
+        f' x y = let env' = insertEEnv j x env
+                 in fromJust . lookupEEnv i $ solveNodeRef env' block' ret y
+solveNode _ _ (FoldScan Fold _ _ _ _ _) _ = trace ("WARN assuming fold = val") emptyEEnv
+solveNode _ _ (Apply "findSortedInsertIndex" _ _) _ = emptyEEnv
 solveNode env (Block dags) n v = error $
   "solveNode: "++ showBlock dags (show n ++" = "++ show v) ++"\nwith env = "++ show env
 
@@ -538,6 +548,9 @@ deriv env e = Expr . derivNodeRef env block ret . fst . runExpr
 
 deriv_ :: Expr s -> Expr t -> RMat
 deriv_ = deriv emptyEEnv
+
+d :: (ExprTuple s, ExprTuple t) => s -> t -> RMat
+d x y = subst emptyEEnv $ deriv_ (detuple x) (detuple y)
 
 derivD :: EEnv -> DExpr -> NodeRef -> DExpr
 derivD env e = derivNodeRef env block ret
@@ -603,7 +616,7 @@ derivNodeRef _ block ref var = error . showLet' (topDAG block) $
 
 derivNode :: EEnv -> Block -> Node -> NodeRef -> DExpr
 derivNode env block (Array sh (Lambda body hd) _) var = array' Nothing (length sh)
-  [ let env' = Map.fromList (inputsL body `zip` i) `Map.union` env
+  [ let env' = (EEnv . Map.fromList $ inputsL body `zip` i) `unionEEnv` env
     in derivNodeRef env' block' hd var | i <- fromShape sh' ]
   where sh' = [(reDExpr env block lo, reDExpr env block hi) | (lo,hi) <- sh]
         block' = deriveBlock body block
