@@ -118,7 +118,7 @@ churchProgram prog
                   | otherwise = "(model)"
         printedConds = [churchConstraint k v | (k,v) <- Map.toList given]
 
-simChurchVec :: (Read t, ScalarType t) => Prog (Expr [t]) -> IO [t]
+simChurchVec :: (Read t, ExprType t) => Prog (Expr [t]) -> IO [t]
 simChurchVec prog = withSystemTempDirectory "church" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   let fname = tmpDir ++"/program.church"

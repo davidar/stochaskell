@@ -2,8 +2,12 @@
 module Data.Expression.Case where
 
 import Control.Monad.State
-import Data.Expression
+import Data.Expression hiding (const)
 import Data.Expression.Extract
+
+caseZ :: forall t. (ExprTuple t) => Z -> [t] -> t
+caseZ k alts = toExprTuple . entupleD n $ caseD (erase k) (const . fromExprTuple <$> alts)
+  where TupleSize n = tupleSize :: TupleSize t
 
 caseD :: DExpr -> [[DExpr] -> [DExpr]] -> DExpr
 caseD e fs = DExpr $ do

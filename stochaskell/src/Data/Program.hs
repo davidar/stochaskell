@@ -213,14 +213,13 @@ mixture qps = do
         TupleSize n = tupleSize :: TupleSize t
 
 -- flatten and select with case rather than switch
-mixture' :: forall t. (ExprTuple t) => [(R, P t)] -> P t
+mixture' :: (ExprTuple t) => [(R, P t)] -> P t
 mixture' qps = do
-  k <- categorical qv :: P Z
+  k <- categorical qv
   rs <- sequence progs
-  return . toExprTuple . entupleD n $ caseD (erase k) (const . fromExprTuple <$> rs)
+  return $ caseZ k rs
   where (qs,progs) = unzip qps
         qv = blockVector [cast q | q <- qs] :: RVec
-        TupleSize n = tupleSize :: TupleSize t
 
 
 ------------------------------------------------------------------------------
@@ -384,7 +383,7 @@ instance Distribution Normal (RVec,RMat) Prog RVec where
         j <- fromExpr s
         return $ Dist "multi_normal" [i,j] (typeRef i)
 
-instance (ScalarType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (Expr [t]) where
+instance (ExprType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (Expr [t]) where
     sample (OrderedSample (n,prog)) = Prog $ do
         i <- liftExprBlock $ fromExpr n
         PBlock block rhs given ns <- get
@@ -484,7 +483,7 @@ normalCond n cov s y x = normal m (sqrt v)
 -- LOOPS                                                                    --
 ------------------------------------------------------------------------------
 
-instance forall r f. ScalarType r =>
+instance forall r f. ExprType r =>
          Joint Prog Z (Expr r) (Expr f) where
   joint _ ar = Prog $ do
     sh <- liftExprBlock . sequence . flip map (shape ar) $ \(a,b) -> do
@@ -542,6 +541,11 @@ dirac c = do
 ------------------------------------------------------------------------------
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
+
+solveP :: (ExprTuple t) => String -> Prog t -> t -> EEnv -> EEnv
+solveP ns prog vals = solveTuple block rets vals
+  where (rets, pb) = runProgExprs ns prog
+        block = definitions pb
 
 pdf :: (ExprTuple t, Show t) => Prog t -> t -> R
 pdf p = exp . lpdf p

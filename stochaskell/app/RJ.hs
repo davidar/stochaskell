@@ -20,17 +20,12 @@ instance Constructor Model where
   construct f 1 [lam,kap,y] = Model2 (f lam) (f kap) (f y)
   deconstruct f (Model1 lam     y) = (0, [f lam,        f y])
   deconstruct f (Model2 lam kap y) = (1, [f lam, f kap, f y])
-  typeUnion m = do
-    t <- typeExpr y
-    return $ UnionT [[RealT, t] ,[RealT, RealT, t]]
-    where y = case m of
-                Model1 _   y -> y
-                Model2 _ _ y -> y
 
-instance ScalarType Model where
+instance ExprType Model where
   fromConcrete = fromConcreteC
   toConcrete = toConcreteC
   constVal = fromRight . eval_ . fromConcrete
+  typeOf = TypeIs $ UnionT [[RealT, vecT RealT] ,[RealT, RealT, vecT RealT]]
 
 model1 :: R -> ZVec -> Expr Model
 model1 lam y = fromConcrete (Model1 lam y)

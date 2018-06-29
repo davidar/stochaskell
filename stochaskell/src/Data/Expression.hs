@@ -119,11 +119,11 @@ unconstrainedLike es = DExpr $ do
   ts <- sequence $ typeDExpr <$> es
   return . Unconstrained $ coerces ts
 
--- TODO: make polymorphic
-symbolR :: String -> R
-symbolR name = expr . return $ Var (Symbol name False) RealT
-symbolRVec :: String -> RVec
-symbolRVec name = expr . return $ Var (Symbol name False) (vecT RealT)
+symbol :: forall t. (ExprType t) => String -> Expr t
+symbol name = expr . return $ Var (Symbol name False) t
+  where TypeIs t = typeOf :: TypeOf t
+symbols :: (ExprType t) => String -> [Expr t]
+symbols names = symbol . return <$> names
 
 instance Show NodeRef where
   --show (Var i t) = "("++ show i ++" :: "++ show t ++")"
@@ -356,7 +356,7 @@ tupleT [t] = t
 tupleT ts = TupleT ts
 
 vecT :: Type -> Type
-vecT = ArrayT (Just "vector") [(Const 1 IntT, Unconstrained IntT)]
+vecT t | isScalar t = ArrayT (Just "vector") [(Const 1 IntT, Unconstrained IntT)] t
 
 instance Show Type where
   show IntT = "Z"
@@ -384,57 +384,62 @@ isArrayT :: Type -> Bool
 isArrayT ArrayT{} = True
 isArrayT _ = False
 
-newtype TypeOf t = TypeIs Type
-class ScalarType t where
+newtype TypeOf t = TypeIs Type deriving (Show)
+class ExprType t where
     typeOf       :: TypeOf t
     toConcrete   :: ConstVal -> t
     fromConcrete :: t -> Expr t
     constVal     :: t -> ConstVal
     constExpr    :: ConstVal -> Expr t
     constExpr    = fromConcrete . toConcrete
-instance ScalarType Integer where
+instance ExprType Integer where
     typeOf       = TypeIs IntT
     toConcrete   = toInteger
     fromConcrete = fromInteger
     constVal     = fromInteger
     constExpr c  = expr . return $ Const c IntT
-instance ScalarType Bool where
+instance ExprType Bool where
     typeOf       = TypeIs boolT
     toConcrete   = toBool
     fromConcrete b = if b then true else false
     constVal     b = if b then true else false
     constExpr c  = expr . return $ Const c boolT
-instance ScalarType Double where
+instance ExprType Double where
     typeOf       = TypeIs RealT
     toConcrete   = toDouble
     fromConcrete = fromRational . toRational
     constVal     = fromRational . toRational
     constExpr c  = expr . return $ Const c RealT
-instance forall t. (ScalarType t) => ScalarType [t] where
-    typeOf       = TypeIs t where TypeIs t = typeOf :: TypeOf t
+instance forall t. (ExprType t) => ExprType [t] where
+    typeOf | isScalar t = TypeIs (vecT t)
+      where TypeIs t = typeOf :: TypeOf t
     toConcrete   = map toConcrete . toList
     fromConcrete = constExpr . constVal
     constVal     = fromList . map constVal
-    constExpr c  = expr . return . Const c $ ArrayT Nothing sh t
+    constExpr c | isScalar t = expr . return . Const c $ ArrayT Nothing sh t
       where (lo,hi) = AA.bounds c
             f = flip Const IntT . fromInteger
             sh = map f lo `zip` map f hi
             TypeIs t = typeOf :: TypeOf t
 
+instance forall a b. (ExprType a, ExprType b) => ExprType (Expr a, Expr b) where
+    typeOf = TypeIs $ TupleT [ta,tb]
+      where TypeIs ta = typeOf :: TypeOf a
+            TypeIs tb = typeOf :: TypeOf b
+
 newtype Tags t = Tags [Tag]
-class ScalarType c => Constructor c where
+class ExprType c => Constructor c where
   tags :: Tags c
-  construct   :: (forall t. ScalarType t => a -> Expr t) -> Tag -> [a] -> c
-  deconstruct :: (forall t. ScalarType t => Expr t -> a) -> c -> (Tag, [a])
-  typeUnion :: c -> State Block Type
+  construct   :: (forall t. ExprType t => a -> Expr t) -> Tag -> [a] -> c
+  deconstruct :: (forall t. ExprType t => Expr t -> a) -> c -> (Tag, [a])
 
 toConcreteC :: Constructor t => ConstVal -> t
 toConcreteC (Tagged c args) = construct constExpr c args
 
-fromConcreteC :: Constructor t => t -> Expr t
+fromConcreteC :: forall t. Constructor t => t -> Expr t
 fromConcreteC m = expr $ do
   js <- sequence args
-  t <- typeUnion m
+  let TypeIs t = typeOf :: TypeOf t
   return $ Data c js t
   where (c, args) = deconstruct fromExpr m
 
@@ -542,7 +547,7 @@ instance Cast Z R                          where cast = expr . fromExpr
 instance Cast Int R                        where cast = fromIntegral
 instance Cast (Expr t) (Expr [t])          where cast = expr . fromExpr
 instance Cast (Expr t) (Expr [[t]])        where cast = expr . fromExpr
-instance (ScalarType t) => Cast t (Expr t) where cast = fromConcrete
+instance (ExprType t) => Cast t (Expr t) where cast = fromConcrete
 
 
 ------------------------------------------------------------------------------
@@ -886,7 +891,8 @@ matrixRowsCols cols m@(Var i@Internal{} (ArrayT (Just "matrix") _ _)) = do
     Apply "eye" [n] _ -> return n
     Apply f (m:_) _ | f `elem` ["replaceIndex","deleteIndex","insertIndex"], cols ->
       matrixRowsCols cols m
-    n -> error $ "matrixRowsCols "++ show n
+    n | ArrayT (Just "matrix") _ _ <- typeRef m -> trace ("matrixRowsCols "++ show n) $
+      simplify $ Apply (if cols then "matrixCols" else "matrixRows") [m] IntT
 matrixRowsCols cols m | ArrayT (Just "matrix") _ _ <- typeRef m =
   simplify $ Apply (if cols then "matrixCols" else "matrixRows") [m] IntT
 matrixRowsCols _ r = error $ "matrixRowsCols "++ show r
@@ -1028,7 +1034,7 @@ array' l n a = if length sh == n
                 then DExpr $ floatArray l a
                 else error "dimension mismatch"
   where sh = AA.shape a
-array :: (Num i, ScalarType i, ScalarType e)
+array :: (Num i, ExprType i, ExprType e)
       => Maybe String -> Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t
 array l n = Expr . array' l n . eraseAA
 
@@ -1043,27 +1049,27 @@ index a es = expr $ do
     js <- mapM fromExpr es
     return $ Index f js
 
-foldl :: (ScalarType b) =>
+foldl :: (ExprType b) =>
   (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr b
 foldl f r xs = expr $ foldscan Fold Left_ (flip f) r xs
 
-foldr :: (ScalarType b) =>
+foldr :: (ExprType b) =>
   (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr b
 foldr f r xs = expr $ foldscan Fold Right_ f r xs
 
-scanl :: (ScalarType b) =>
+scanl :: (ExprType b) =>
   (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
 scanl f r xs = expr $ foldscan Scan Left_ (flip f) r xs
 
-scanr :: (ScalarType b) =>
+scanr :: (ExprType b) =>
   (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
 scanr f r xs = expr $ foldscan Scan Right_ f r xs
 
-scan :: (ScalarType b) =>
+scan :: (ExprType b) =>
   (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
 scan f r xs = expr $ foldscan ScanRest Left_ (flip f) r xs
 
-foldscan :: forall a b. (ScalarType b) => FoldOrScan -> LeftRight ->
+foldscan :: forall a b. (ExprType b) => FoldOrScan -> LeftRight ->
   (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> State Block NodeRef
 foldscan fs dir f r xs = do
     seed <- fromExpr r
@@ -1095,7 +1101,7 @@ foldscan fs dir f r xs = do
       else liftBlock $ foldscan fs dir f r xs
 
 -- find leftmost element of v satisfying p, else def if no elements satisfy p
-find' :: (ScalarType e) => (Expr e -> B) -> Expr e -> Expr [e] -> Expr e
+find' :: (ExprType e) => (Expr e -> B) -> Expr e -> Expr [e] -> Expr e
 find' p def v = foldr f def v where f i j = ifB (p i) i j
 
 findSortedInsertIndex :: R -> RVec -> Z
@@ -1140,7 +1146,7 @@ factorial' n = apply "factorial" IntT [n]
 logFactorial' :: Z -> R
 logFactorial' n = apply "logFactorial" RealT [n]
 
-instance (ScalarType t, Num t) => Num (Expr t) where
+instance (ExprType t, Num t) => Num (Expr t) where
     (+) = applyClosed2 "+"
     (-) = applyClosed2 "-"
     (*) = applyClosed2 "*"
@@ -1152,12 +1158,12 @@ instance (ScalarType t, Num t) => Num (Expr t) where
     fromInteger  = expr . return . flip Const t . fromInteger
       where TypeIs t = typeOf :: TypeOf t
 
-instance (ScalarType t, Fractional t) => Fractional (Expr t) where
+instance (ExprType t, Fractional t) => Fractional (Expr t) where
     fromRational = expr . return . flip Const t . fromRational
       where TypeIs t = typeOf :: TypeOf t
     (/) = applyClosed2 "/"
 
-instance (ScalarType t, Floating t) => Floating (Expr t) where
+instance (ExprType t, Floating t) => Floating (Expr t) where
     pi = apply "pi" RealT []
     (**) = applyClosed2 "**"
 
@@ -1177,7 +1183,7 @@ instance (ScalarType t, Floating t) => Floating (Expr t) where
     acosh = applyClosed1 "acosh"
     atanh = applyClosed1 "atanh"
 
-instance (ScalarType e) => AA.Vector (Expr [e]) Z (Expr e) where
+instance (ExprType e) => AA.Vector (Expr [e]) Z (Expr e) where
     vector = array (Just "vector") 1
     blockVector = Expr . AA.blockVector . map erase
     vectorSize  = Expr . AA.vectorSize . erase
@@ -1251,7 +1257,7 @@ blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent
             _ -> error $ "saneCol "++ show t
         allSame' xs = allSame xs || isUnconstrained `any` xs
 
-instance (ScalarType e) => AA.Matrix (Expr [[e]]) Z (Expr e) where
+instance (ExprType e) => AA.Matrix (Expr [[e]]) Z (Expr e) where
     matrix = array (Just "matrix") 2
 instance AA.Matrix DExpr DExpr DExpr where
     matrix = array' (Just "matrix") 2
@@ -1279,7 +1285,7 @@ instance AA.Matrix DExpr DExpr DExpr where
 
 typeMatrixProduct (ArrayT _ [r,_] t) (ArrayT _ [_,c] _) = ArrayT (Just "matrix") [r,c] t
 
-instance (ScalarType e) => Monoid (Expr [[e]]) where
+instance (ExprType e) => Monoid (Expr [[e]]) where
     mappend a b = Expr $ erase a `mappend` erase b
 instance Monoid DExpr where
     mappend a b = DExpr $ do
@@ -1326,7 +1332,7 @@ instance AA.Scalable R RVec where
         i <- fromExpr a
         j <- fromExpr v
         simplify $ Apply "*>" [i,j] (typeRef j)
-instance (ScalarType e) => AA.Scalable (Expr e) (Expr [[e]]) where
+instance (ExprType e) => AA.Scalable (Expr e) (Expr [[e]]) where
     a *> m = expr $ do
         i <- fromExpr a
         j <- fromExpr m
@@ -1341,7 +1347,7 @@ instance LA.Transposable DExpr DExpr where
         i <- fromDExpr m
         let (ArrayT _ [r,c] t) = typeRef i
         simplify $ Apply "tr'" [i] (ArrayT (Just "matrix") [c,r] t)
-instance (ScalarType e) => LA.Transposable (Expr [[e]]) (Expr [[e]]) where
+instance (ExprType e) => LA.Transposable (Expr [[e]]) (Expr [[e]]) where
     tr  = Expr . LA.tr  . erase
     tr' = Expr . LA.tr' . erase
 
@@ -1470,7 +1476,7 @@ instance OrdB (Expr t) where
     (>=*) = apply2 ">=" boolT
     (>*)  = apply2 ">"  boolT
 
-instance (Ord t, ScalarType t) => Transfinite (Expr t) where
+instance (Ord t, ExprType t) => Transfinite (Expr t) where
     infinity = constExpr infinity
 
 detuple :: (ExprTuple t) => t -> Expr t
@@ -1500,34 +1506,34 @@ zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
 constDExpr :: ConstVal -> Type -> DExpr
 constDExpr c = DExpr . return . Const c
 
-const :: (ScalarType t) => ConstVal -> Expr t
+const :: (ExprType t) => ConstVal -> Expr t
 const = constExpr
 
-instance (ScalarType a) => ExprTuple (Expr a) where
+instance (ExprType a) => ExprTuple (Expr a) where
     tupleSize = TupleSize 1
     fromExprTuple (a) = [erase a]
     toExprTuple [a] = (Expr a)
     fromConstVals [a] = (const a)
-instance (ScalarType a, ScalarType b) =>
+instance (ExprType a, ExprType b) =>
          ExprTuple (Expr a, Expr b) where
     tupleSize = TupleSize 2
     fromExprTuple (a,b) = [erase a, erase b]
     toExprTuple [a,b] = (Expr a, Expr b)
     fromConstVals [a,b] = (const a, const b)
-instance (ScalarType a, ScalarType b, ScalarType c) =>
+instance (ExprType a, ExprType b, ExprType c) =>
          ExprTuple (Expr a, Expr b, Expr c) where
     tupleSize = TupleSize 3
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
     toExprTuple [a,b,c] = (Expr a, Expr b, Expr c)
     fromConstVals [a,b,c] = (const a, const b, const c)
-instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d) =>
+instance (ExprType a, ExprType b, ExprType c, ExprType d) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d) where
     tupleSize = TupleSize 4
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
     toExprTuple [a,b,c,d] = (Expr a, Expr b, Expr c, Expr d)
     fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
-instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
-          ScalarType e) =>
+instance (ExprType a, ExprType b, ExprType c, ExprType d,
+          ExprType e) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
     tupleSize = TupleSize 5
     fromExprTuple (a,b,c,d,e) =
@@ -1536,8 +1542,8 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
       (Expr a, Expr b, Expr c, Expr d, Expr e)
     fromConstVals [a,b,c,d,e] =
       (const a, const b, const c, const d, const e)
-instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
-          ScalarType e, ScalarType f) =>
+instance (ExprType a, ExprType b, ExprType c, ExprType d,
+          ExprType e, ExprType f) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
     tupleSize = TupleSize 6
     fromExprTuple (a,b,c,d,e,f) =
@@ -1546,8 +1552,8 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
       (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f)
     fromConstVals [a,b,c,d,e,f] =
       (const a, const b, const c, const d, const e, const f)
-instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
-          ScalarType e, ScalarType f, ScalarType g) =>
+instance (ExprType a, ExprType b, ExprType c, ExprType d,
+          ExprType e, ExprType f, ExprType g) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
     tupleSize = TupleSize 7
     fromExprTuple (a,b,c,d,e,f,g) =
@@ -1556,8 +1562,8 @@ instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
       (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g)
     fromConstVals [a,b,c,d,e,f,g] =
       (const a, const b, const c, const d, const e, const f, const g)
-instance (ScalarType a, ScalarType b, ScalarType c, ScalarType d,
-          ScalarType e, ScalarType f, ScalarType g, ScalarType h) =>
+instance (ExprType a, ExprType b, ExprType c, ExprType d,
+          ExprType e, ExprType f, ExprType g, ExprType h) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
     tupleSize = TupleSize 8
     fromExprTuple (a,b,c,d,e,f,g,h) =

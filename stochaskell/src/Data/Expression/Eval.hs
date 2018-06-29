@@ -64,7 +64,7 @@ eval env e = evalNodeRef env block ret
 eval_ :: Expr t -> Eval
 eval_ = eval emptyEnv
 
-eval' :: (ScalarType t) => Expr t -> Either String t
+eval' :: (ExprType t) => Expr t -> Either String t
 eval' = fmap toConcrete . eval_
 
 evalD :: Env -> DExpr -> Eval
@@ -347,7 +347,7 @@ aggregateConds (EEnv env) = EEnv $ Map.union env' env
               conds = [(c,val) | (LCond _ c,val) <- kvs]
               cond' = (foldr1 (&&*) $ notB . fst <$> conds
                       ,unconstrainedLike $ snd <$> conds)
-          return (lval, condD $ conds) -- ++ [cond'])
+          return (lval, substD emptyEEnv . condD $ conds)
 
 solve :: Expr t -> Expr t -> EEnv -> EEnv
 solve e val = solveD (erase e) (erase val)
@@ -444,6 +444,8 @@ solveNode env block (Array sh (Lambda body hd) t) val = EEnv . Map.fromList $ do
         f (LSub i _,_) (LSub j _,_) = i == j
 solveNode env block (Apply "exp" [a] _) val =
   solveNodeRef env block a (log val)
+solveNode env block (Apply "negate" [a] _) val =
+  solveNodeRef env block a (negate val)
 solveNode env block (Apply "+" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (val - reDExpr env block a)
 solveNode env block (Apply "+" [a,b] _) val | evaluable env block b =
@@ -508,6 +510,8 @@ solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
         f' x y = let env' = insertEEnv j x env
                  in fromJust . lookupEEnv i $ solveNodeRef env' block' ret y
 solveNode _ _ (FoldScan Fold _ _ _ _ _) _ = trace ("WARN assuming fold = val") emptyEEnv
+solveNode env block (Case hd alts _) val | IntT <- typeRef hd, Lambda _ [_] <- head alts =
+  solveCase env block hd [Lambda dag ret | Lambda dag [ret] <- alts] val
 solveNode _ _ (Apply "findSortedInsertIndex" _ _) _ = emptyEEnv
 solveNode env (Block dags) n v = error $
   "solveNode: "++ showBlock dags (show n ++" = "++ show v) ++"\nwith env = "++ show env
@@ -656,12 +660,12 @@ derivNode env block (Case hd alts _) var = caseD hd' alts'
 derivNode _ block node var = error . showLet' (topDAG block) $
   "d "++ show node ++" / d "++ show var
 
-instance (ScalarType t, Enum t) => Enum (Expr t)
+instance (ExprType t, Enum t) => Enum (Expr t)
 
-instance (ScalarType t, Real t) => Real (Expr t) where
+instance (ExprType t, Real t) => Real (Expr t) where
   toRational = real . fromRight . eval_
 
-instance (ScalarType t, Integral t) => Integral (Expr t) where
+instance (ExprType t, Integral t) => Integral (Expr t) where
   toInteger = integer . fromRight . eval_
 
 instance IsList RVec where
@@ -695,7 +699,7 @@ instance IsList RMat where
                                ,(Const 1 IntT, Const (fromInteger m) IntT)] RealT
     toList = map (map real . toList) . toList . fromRight . eval_
 
-instance forall t. (Show t, ScalarType t) => Show (Expr t) where
+instance forall t. (Show t, ExprType t) => Show (Expr t) where
   show x = case eval_ x of
     Right c  -> show (toConcrete c :: t)
     Left _ -> show (erase x)
