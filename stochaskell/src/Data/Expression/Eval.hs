@@ -620,7 +620,7 @@ derivNodeRef _ block ref var = error . showLet' (topDAG block) $
 
 derivNode :: EEnv -> Block -> Node -> NodeRef -> DExpr
 derivNode env block (Array sh (Lambda body hd) _) var = array' Nothing (length sh)
-  [ let env' = (EEnv . Map.fromList $ inputsL body `zip` i) `unionEEnv` env
+  [ let env' = bindInputs body i `unionEEnv` env
     in derivNodeRef env' block' hd var | i <- fromShape sh' ]
   where sh' = [(reDExpr env block lo, reDExpr env block hi) | (lo,hi) <- sh]
         block' = deriveBlock body block

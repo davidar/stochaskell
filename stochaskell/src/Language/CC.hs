@@ -28,6 +28,10 @@ ccForLoop :: [Id] -> [Interval NodeRef] -> String -> String
 ccForLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
   where f i (a,b) = "for(int "++ ccId i ++" = " ++ ccNodeRef a ++"; "++
                                  ccId i ++" <= "++ ccNodeRef b ++"; "++ ccId i ++"++) "
+ccForLoop' :: [Id] -> [Interval String] -> String -> String
+ccForLoop' is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
+  where f i (a,b) = "for(int "++ ccId i ++" = " ++ a ++"; "++
+                                 ccId i ++" <= "++ b ++"; "++ ccId i ++"++) "
 
 
 ------------------------------------------------------------------------------
@@ -42,6 +46,7 @@ ccNodeRef (Var s _) = ccId s
 ccNodeRef (Const c _) | dimension c == 0 = show c
 ccNodeRef (Index f js) = ccNodeRef f `ccIndex` reverse js
 ccNodeRef (Data _ js _) = "make_tuple("++ ccNodeRef `commas` js ++")"
+ccNodeRef r = error $ "ccNodeRef "++ show r
 
 ccIndex :: String -> [NodeRef] -> String
 ccIndex  a js = a ++ concat ["["++ ccNodeRef j ++"-1]" | j <- js]
@@ -57,9 +62,10 @@ ccType :: Type -> String
 ccType IntT = "int"
 ccType RealT = "double"
 ccType (SubrangeT t _ _) = ccType t
-ccType (ArrayT _ sh t) = ccType t ++ replicate (length sh) '*'
+ccType (ArrayT _ [_] t) = "vector<"++ ccType t ++">"
 ccType (TupleT ts) = "tuple<"++ ccType `commas` ts ++">"
 ccType (UnionT ts) = "variant<"++ (ccType . TupleT) `commas` ts ++">"
+ccType t = error $ "ccType "++ show t
 
 ccTie :: [Id] -> [Type] -> String
 ccTie is ts = concat (zipWith f is ts) ++ "tie("++ ccId `commas` is ++")"
@@ -88,6 +94,8 @@ ccNode r _ (Apply "getExternal" [Var i _] _) =
 ccNode _ name (Apply "ifThenElse" [a,b,c] _) =
   "if("++ ccNodeRef a ++") "++ name ++" = "++ ccNodeRef b ++"; "++
   "else "++ name ++" = "++ ccNodeRef c ++";"
+ccNode _ name (Apply "min" js t) =
+  name ++" = min<"++ ccType t ++">("++ ccNodeRef `commas` js ++");"
 ccNode _ name (Apply "negate" [i] _) =
   name ++" = -"++ ccNodeRef i ++";"
 ccNode _ name (Apply op [i,j] _) | isJust s =
@@ -110,10 +118,9 @@ ccNode _ name (Array sh (Lambda dag ret) _) =
   ccForLoop (inputs dag) sh $
     ccDAG Map.empty dag ++"\n  "++
     name `ccIndex'` inputs dag ++" = "++ ccNodeRef ret ++";"
-ccNode _ name (FoldScan fs lr (Lambda dag ret) seed
-               (Var ls s@(ArrayT _ ((Const 1 IntT,n):_) _)) t) =
+ccNode _ name (FoldScan fs lr (Lambda dag ret) seed (Var ls s) t) =
   name ++ sloc ++" = "++ ccNodeRef seed ++";\n"++
-  ccForLoop [idx] [(Const 1 IntT,n)] (unlines
+  ccForLoop' [idx] [("1",n)] (unlines
     ["  "++ ccType (typeIndex 1 s) ++" "++ ccId i ++" = "++ ccId ls ++"["++ loc ++"];"
     ,"  "++ ccType (if fs == Fold then t else typeIndex 1 t) ++" "++
               ccId j ++" = "++ name ++ ploc ++";"
@@ -123,14 +130,15 @@ ccNode _ name (FoldScan fs lr (Lambda dag ret) seed
   where d = dagLevel dag
         idx = Dummy d 0
         [i,j] = inputs dag
+        n = ccId ls ++".size()"
         loc = case lr of
           Left_  -> ccId idx ++"-1"
-          Right_ -> ccNodeRef n ++"-"++ ccId idx
+          Right_ -> n ++"-"++ ccId idx
         sloc = case fs of
           Fold -> ""
           Scan -> case lr of
             Left_ -> "[0]"
-            Right_ -> "["++ ccNodeRef n ++"]"
+            Right_ -> "["++ n ++"]"
         (ploc,rloc) = case fs of
           Fold -> ("","")
           Scan -> case lr of
@@ -178,10 +186,12 @@ ccRead :: Int -> NodeRef -> String
 ccRead l e = ccType (typeRef e) ++" "++ ccNodeRef e ++"; "++ ccRead' l e
 ccRead' :: Int -> NodeRef -> String
 ccRead' _ e | isScalar (typeRef e) = "cin >> "++ ccNodeRef e ++";"
-ccRead' l e | (ArrayT _ sh@[(Const 1 _,n)] t) <- typeRef e =
-  ccNodeRef e ++" = new "++ ccType t ++"["++ ccNodeRef n ++"];\n"++
-  let is = Dummy l <$> [1..length sh] in ccForLoop is sh $
-    "  cin >> "++ ccNodeRef e `ccIndex'` is ++";"
+ccRead' l e | (ArrayT _ [_] t) <- typeRef e =
+  "int "++ n ++"; cin >> "++ n ++";\n"++
+  ccNodeRef e ++".resize("++ n ++");\n"++
+  (ccForLoop' is [("1",n)] $ "  cin >> "++ ccNodeRef e `ccIndex'` is ++";")
+  where n = ccNodeRef e ++"_length"
+        is = [Dummy l 1]
 ccRead' l e | UnionT tss <- typeRef e =
   ccRead (l+1) c ++"\n"++
   "switch("++ ccNodeRef c ++") {\n"++ indent (unlines $ do
@@ -197,9 +207,11 @@ ccRead' l e | UnionT tss <- typeRef e =
 
 ccPrint :: Int -> NodeRef -> String
 ccPrint _ e | isScalar (typeRef e) = "cout << "++ ccNodeRef e ++" << ' ';"
-ccPrint l e | (ArrayT _ sh _) <- typeRef e =
-  let is = Dummy l <$> [1..length sh] in ccForLoop is sh $
-    "  cout << "++ ccNodeRef e `ccIndex'` is ++" << ' ';"
+ccPrint l e | (ArrayT _ [_] _) <- typeRef e =
+  "cout << "++ n ++" << ' ';\n"++
+  (ccForLoop' is [("1",n)] $ "  cout << "++ ccNodeRef e `ccIndex'` is ++" << ' ';")
+  where n = ccNodeRef e ++".size()"
+        is = [Dummy l 1]
 ccPrint l e | UnionT tss <- typeRef e =
   "switch("++ ccNodeRef e ++".index()) {\n"++ indent (unlines $ do
     i  <- [0..length tss - 1]
@@ -212,7 +224,7 @@ ccPrint l e | UnionT tss <- typeRef e =
      "  break;",
      "}"]) ++"\n}"
 
-ccProgram :: (ExprTuple t) => State Block Type -> (Expr a -> Prog t) -> (String, [NodeRef])
+ccProgram :: (ExprTuple s, ExprTuple t) => State Block [Type] -> (s -> Prog t) -> (String, [NodeRef])
 ccProgram s prog = (,rets) $ unlines
   ["#include <cmath>"
   ,"#include <iostream>"
@@ -226,18 +238,20 @@ ccProgram s prog = (,rets) $ unlines
   ,"int main() {"
   ,"  random_device rd;"
   ,"  mt19937 gen(rd());"
-  ,   indent (ccRead 1 $ Var (Dummy 0 0) t)
+  ,   indent $ unlines [ccRead 1 $ Var (Dummy 0 i) t | (i,t) <- zip [0..] ts]
   ,   ccDAG (pnodes pb) (topDAG block)
   ,   indent $ unlines [ccPrint 1 ret ++" cout << endl;" | ret <- rets]
   ,"}"
   ]
-  where (rets, pb) = runProgExprs "cc" . prog . expr . return $ Var (Dummy 0 0) t
-        (t, block) = runState s $ definitions pb
+  where (rets, pb) = runProgExprs "cc" . prog $ toExprTuple
+          [DExpr . return $ Var (Dummy 0 i) t | (i,t) <- zip [0..] ts]
+        (ts, block) = runState s $ definitions pb
 
 printCC :: ConstVal -> String
 printCC (Tagged c ks) = unwords $ show c : map printCC ks
 printCC c | Const.isScalar c = show c
-          | otherwise = unwords . map printCC $ toList c
+          | otherwise = let cs = toList c in
+              unwords $ show (length cs) : map printCC cs
 
 readChain :: [s -> (c, s)] -> s -> ([c], s)
 readChain [] s = ([],s)
@@ -249,15 +263,15 @@ readCC :: Type -> [String] -> (ConstVal, [String])
 readCC IntT (x:s) = (fromInteger $ read x, s)
 readCC RealT (x:s) = (fromDouble $ read x, s)
 readCC (SubrangeT t _ _) s = readCC t s
-readCC (ArrayT _ [(Const 1 _,Const hi _)] t) s = (fromList cs, s')
-  where n = integer hi
+readCC (ArrayT _ [_] t) (x:s) = (fromList cs, s')
+  where n = fromInteger $ read x
         (cs,s') = readChain (replicate n $ readCC t) s
 readCC (UnionT tss) (x:s) = (Tagged c cs, s')
   where c = read x
         ts = tss !! c
         (cs,s') = readChain (map readCC ts) s
 
-runCC :: (ExprTuple t) => (Expr a -> Prog t) -> Expr a -> IO t
+runCC :: (ExprTuple s, ExprTuple t) => (s -> Prog t) -> s -> IO t
 runCC prog x = do
   pwd <- getCurrentDirectory
   let hash = toHex . SHA1.hash $ C.pack code
@@ -273,7 +287,8 @@ runCC prog x = do
     putStrLn' $ unwords (cxx:args)
     callProcess cxx args
 
-  output <- readProcess exename [] $ printCC (fromRight $ eval_ x)
+  let input = fromRight' (evalTuple emptyEnv x)
+  output <- readProcess exename [] . unlines $ printCC <$> input
   let (cs,[]) = readChain (readCC . typeRef <$> rets) $ words output
   return $ fromConstVals cs
-  where (code,rets) = ccProgram (typeExpr x) prog
+  where (code,rets) = ccProgram (typeExprTuple x) prog

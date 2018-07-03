@@ -308,6 +308,9 @@ lookupEEnv k (EEnv m) = Map.lookup (LVar k) m
 insertEEnv :: Id -> DExpr -> EEnv -> EEnv
 insertEEnv k v (EEnv m) = EEnv $ Map.insert (LVar k) v m
 
+bindInputs :: DAG -> [DExpr] -> EEnv
+bindInputs dag xs = EEnv . Map.fromList $ inputsL dag `zip` xs
+
 type Expression t = Expr t
 newtype Expr t = Expr { erase :: DExpr }
 expr :: State Block NodeRef -> Expr t
@@ -365,7 +368,7 @@ instance Show Type where
   show (SubrangeT t a b) = unwords ["Subrange", show t, show a, show b]
   show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
   --show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
-  show (ArrayT (Just name) _ _) = name
+  show (ArrayT (Just name) _ t) = name ++" "++ show t
   show (TupleT ts) = show ts
   show (UnionT ts) = "Union"++ show ts
   show UnknownType = "???"
@@ -581,7 +584,9 @@ runLambda ids s = do
       (ret, Block (dag:block')) = runState s $
           deriveBlock (DAG d ids Bimap.empty) block
   put $ Block block'
-  return (Lambda dag ret)
+  if ((d /=) . idLevel . fst) `any` ids
+  then error $ "runLambda "++ show ids ++" level "++ show d
+  else return (Lambda dag ret)
 
 -- does a list of expressions depend on the inputs to this block?
 varies :: DAG -> [NodeRef] -> Bool
@@ -757,8 +762,6 @@ simplify (Apply "||" [Const 1 _,_] t) = return $ Const 1 t
 simplify (Apply "||" [_,Const 1 _] t) = return $ Const 1 t
 simplify (Apply "#>" [_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "<#" [Const 0 _,_] t) = return $ Const 0 t
-simplify (Apply "det"     [i@BlockArray{}] t) | Just s <- simplifyDet False i t = s
-simplify (Apply "log_det" [i@BlockArray{}] t) | Just s <- simplifyDet True  i t = s
 simplify (Apply "replaceIndex" [Const 0 _,_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "+s" [a,b] t) = simplify (Apply "+" [a,b] t)
 simplify (Apply "+s" [a] _) = return a
@@ -829,6 +832,8 @@ simplify' block (Apply "log" [Var i@Internal{} _] _)
   | (Apply "exp" [j] _) <- lookupBlock i block = Right $ return j
 simplify' block (Apply "det" [Var i@Internal{} _] t)
   | (Apply "eye" _ _) <- lookupBlock i block = Right . return $ Const 1 t
+simplify' block (Apply "log_det" [Var i@Internal{} _] t)
+  | (Apply "eye" _ _) <- lookupBlock i block = Right . return $ Const 0 t
 simplify' block (Apply "not" [Var i@Internal{} _] _)
   | (Apply "not" [j] _) <- lookupBlock i block = Right $ return j
 simplify' block (Apply "*" [Var i@Internal{} t,_] _)
@@ -896,28 +901,6 @@ matrixRowsCols cols m@(Var i@Internal{} (ArrayT (Just "matrix") _ _)) = do
 matrixRowsCols cols m | ArrayT (Just "matrix") _ _ <- typeRef m =
   simplify $ Apply (if cols then "matrixCols" else "matrixRows") [m] IntT
 matrixRowsCols _ r = error $ "matrixRowsCols "++ show r
-
-simplifyDet :: Bool -> NodeRef -> Type -> Maybe (State Block NodeRef)
-simplifyDet lg i t
-  | isZ . sequence $ getConstVal <$> concat a =
-    Just . return $ Const (if lg then log 0 else 0) t
-  | isZ . sequence $ getConstVal <$> th, notNull tt, notNull `all` tt = Just $ do
-      x <- det' [[hh]]
-      y <- det' tt
-      simplify $ Apply (if lg then "+" else "*") [x,y] t
-  -- TODO: negate if matrix has even number of total rows
-  -- TODO: avoid infinite loop when first column is zero
-  -- | getConstVal hh == Just 0 = Just . det' $ tail a ++ [head a]
-  | otherwise = Nothing
-  where a = fromBlockMatrix i
-        hh = head $ head a
-        th = tail $ head a
-        tt = tail <$> tail a
-        isZ = maybe False $ all isZeros
-        det x | isScalarD x = if lg then log x else x
-              | lg        = AA.logDet x
-              | otherwise = AA.det x
-        det' = fromDExpr . det . DExpr . blockMatrix'
 
 simplifyConj :: [NodeRef] -> State Block NodeRef
 simplifyConj [r] = return r
@@ -1079,11 +1062,11 @@ foldscan fs dir f r xs = do
         (ArrayT _ [(Const 1 IntT,n)] _) = typeRef l
         s = typeIndex 1 $ typeRef l
         TypeIs t = typeOf :: TypeOf b
-        i = expr . return $ Var (Dummy d 1) s
-        j = expr . return $ Var (Dummy d 2) t
+        i = expr . return $ Var (Dummy d 11) s
+        j = expr . return $ Var (Dummy d 12) t
         -- TODO: runLambda
         (ret, Block (dag:block')) = runState (fromExpr $ f i j) $
-          deriveBlock (DAG d [(Dummy d 1,s), (Dummy d 2,t)] Bimap.empty) block
+          deriveBlock (DAG d [(Dummy d 11,s), (Dummy d 12,t)] Bimap.empty) block
     if varies (topDAG block) [seed,l] ||
        (not . null $ inputs (topDAG block) `intersect` externRefs dag)
       then do

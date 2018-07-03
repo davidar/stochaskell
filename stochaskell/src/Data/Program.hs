@@ -53,6 +53,7 @@ data PNode = Dist { dName :: String
                     , dArgs :: [NodeRef]
                     , typePNode :: Type
                     }
+{-
            | ITDist { dDefs :: DAG
                     , dBase :: [PNode]
                     , dRets :: [NodeRef]
@@ -60,6 +61,7 @@ data PNode = Dist { dName :: String
                     , dInvJ :: [[DExpr]] -- TODO: just the determinant
                     , typePNode :: Type
                     }
+-}
            | Switch { sHead :: NodeRef
                     , sAlts :: [(Lambda [NodeRef], [PNode])]
                     , sNS :: NS
@@ -83,8 +85,6 @@ instance Show PNode where
     "  | "++ intercalate ", " (zipWith g (inputs dag) sh) ++" ] :: "++ show t
     where g i (a,b) = show i ++" <- "++ show a ++"..."++ show b
   show (HODist d j0 js t) = unwords (d : ("("++ show j0 ++")") : map show js) ++" :: P "++ show t
-  show (ITDist defs base rets invf invj t) = "ITDist"++
-    show (defs, reverse base, rets, reverse invf, invj, t)
   show (Switch e alts ns _) = "switch "++ show e ++" of\n"++ indent cases
     where cases = unlines $ do
             (i, (Lambda dag ret, refs)) <- zip [0..] alts
@@ -157,11 +157,11 @@ modelSkeleton pb@(PBlock block _ given _) = tparams
           where g i = let n = fromJust $ Map.lookup i samples
                       in Set.filter isInternal $ dependsPNode block n
 
-evalProg :: (ExprTuple t) => Env -> Prog t -> Either String t
-evalProg env prog = do
+evalProg :: (ExprTuple t) => NS -> Env -> Prog t -> Either String t
+evalProg ns env prog = do
   xs <- sequence (evalNodeRef (Map.union given env) block <$> rets)
   return $ fromConstVals xs
-  where (rets, PBlock block _ given _) = runProgExprs "eval" prog
+  where (rets, PBlock block _ given _) = runProgExprs ns prog
 
 caseP :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
 caseP n e ps = Prog $ do
@@ -264,6 +264,7 @@ truncated a b p = Prog $ do
   put $ PBlock block (d':rhs) given ns
   return (expr $ return (Var name t'))
 
+{-
 transform :: (ExprTuple t) => Prog t -> Prog t
 transform prog = Prog $ do
   PBlock block acts given ns <- get
@@ -287,6 +288,7 @@ transform prog = Prog $ do
       name = Volatile ns (d-1) k
       v = Var name t
   return $ entuple (expr $ return v)
+-}
 
 instance Distribution Bernoulli R Prog B where
     sample (Bernoulli p) = dist $ do
@@ -609,6 +611,17 @@ pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
     PartiallyConstrained [(lo,hi)] [(id,t)] [([k],v)] _ -> fromExpr $
       pdfOrderStats r lg env block d n (lo,hi) (id,t) (k,v)
     _ -> error $ "pdfPNode orderedSample "++ show x
+pdfPNode _ lg env block (Switch hd alts ns _) x = Expr $
+  caseD hd' [\_ -> [erase e] | e <- alts']
+  where hd' = reDExpr env block hd
+        p (LVar (Volatile ns' _ _)) _ | ns' == ns = True
+        p _ _ = False
+        alts' = do
+          (Lambda ldag rets, pns) <- alts
+          let block' = deriveBlock ldag block
+              EEnv env' = solveTupleD block' rets (entupleD (length rets) x) emptyEEnv
+          return . subst (substEEnv . EEnv $ Map.filterWithKey p env') $
+            pdfPNodes undefined ns lg (env `unionEEnv` EEnv env') block' pns
 pdfPNode _ _ _ _ node x = error $ "pdfPNode "++ show node ++" "++ show x
 
 pdfOrderStats :: Map Id PNode -> Bool -> EEnv -> Block -> PNode -> NodeRef
@@ -921,7 +934,12 @@ rjmc target proposal x = do
   return $ ifB accept y x
 
 rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)
-rjmcC p = switchOf . rjmc p . fromCaseP
+rjmcC target proposal = switchOf $ \x -> do
+  y <- fromCaseP proposal x
+  accept <- bernoulli . min' 1 . exp $
+    f y - f x + optimiseE 2 (rjmcTransRatio' (fromCaseP proposal) x y)
+  return $ ifB accept y x
+  where f = lpdfAux target -- TODO: jacobian adjustment for transformed dist
 
 rjmcRatio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R
 rjmcRatio target proposal x y = exp $ f y - f x + rjmcTransRatio proposal x y

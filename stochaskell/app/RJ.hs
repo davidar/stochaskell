@@ -24,8 +24,8 @@ instance Constructor Model where
 instance ExprType Model where
   fromConcrete = fromConcreteC
   toConcrete = toConcreteC
-  constVal = fromRight . eval_ . fromConcrete
-  typeOf = TypeIs $ UnionT [[RealT, vecT RealT] ,[RealT, RealT, vecT RealT]]
+  constVal = fromRight' . eval_ . fromConcrete
+  typeOf = TypeIs $ UnionT [[RealT, vecT IntT] ,[RealT, RealT, vecT IntT]]
 
 model1 :: R -> ZVec -> Expr Model
 model1 lam y = fromConcrete (Model1 lam y)
@@ -75,7 +75,7 @@ pvnbStep :: Z -> Model -> IO Model
 pvnbStep n m = do
   m' <- pvnbHMC n m
   m'' <- pvnb n `rjmcC` pvnbJump `runCC` fromConcrete m'
-  return . fromRight $ eval' m''
+  return . fromRight' $ eval' m''
 
 mainPVNB :: IO ()
 mainPVNB = do

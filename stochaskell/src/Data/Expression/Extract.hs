@@ -1,8 +1,11 @@
+{-# LANGUAGE MultiWayIf #-}
 module Data.Expression.Extract where
 
 import Control.Monad.State
 import qualified Data.Array as A
+import qualified Data.Array.Abstract as AA
 import Data.Expression
+import Data.Expression.Const
 import Data.List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
@@ -10,7 +13,7 @@ import Debug.Trace
 import Util
 
 substEEnv :: EEnv -> EEnv
-substEEnv (EEnv env) = EEnv $ Map.map (substD $ EEnv env) `fixpt` env
+substEEnv (EEnv env) = EEnv $ Map.map (substD $ EEnv env) {-`fixpt`-} env
 
 subst :: EEnv -> Expr e -> Expr e
 subst env = Expr . substD env . erase
@@ -31,7 +34,11 @@ extractNodeRef fNodeRef fNode env block = go where
     Var i@Internal{} _->
       extractNode $ lookupBlock i block
     Var i t
-      | isJust val -> fromDExpr $ fromJust val
+      | isJust val -> do
+        let e = fromJust val
+        t' <- typeDExpr e
+        if t == t' then fromDExpr e else error $
+         "extractNodeRef: type mismatch "++ show r ++" -> "++ show e ++"; with env:\n"++ show env
       | Volatile{} <- i -> do
         t' <- extractType env block t
         _ <- simplify $ Apply "getExternal" [Var i t'] t'
@@ -122,11 +129,17 @@ extractNodeRef fNodeRef fNode env block = go where
     return $ Lambda dag ret
 
   extractLambda' :: Lambda [NodeRef] -> State Block (Lambda [NodeRef])
-  extractLambda' (Lambda body hds) =
-    runLambda (inputsT body) (sequence $ extractNodeRef fNodeRef fNode env' block' <$> hds)
+  extractLambda' (Lambda body hds) = do
+    d <- getNextLevel
+    let inps = do
+          (i,t) <- inputsT body
+          let i' = case i of
+                Dummy _ p -> Dummy d (p + 10) -- rename to avoid capture, and set correct level
+          return (i',t)
+        ids' = f <$> inps
+        env' = bindInputs body ids' `unionEEnv` env
+    runLambda inps (sequence $ extractNodeRef fNodeRef fNode env' block' <$> hds)
     where f (i,t) = DExpr . return $ Var i t
-          ids' = f <$> inputsT body
-          env' = (EEnv . Map.fromList $ inputsL body `zip` ids') `unionEEnv` env
           block' = deriveBlock body block
 
 extractType :: EEnv -> Block -> Type -> State Block Type
@@ -159,8 +172,9 @@ optimiseE :: Int -> Expr t -> Expr t
 optimiseE ol = Expr . optimiseD ol . erase
 
 optimiseD :: Int -> DExpr -> DExpr
-optimiseD ol e = DExpr $ extractNodeRef (optimiseNodeRef ol) (optimiseNode ol) emptyEEnv block ret
-  where (ret, block) = runDExpr e
+optimiseD ol = fixpt f
+  where f e = let (ret, block) = runDExpr e in DExpr $
+          extractNodeRef (optimiseNodeRef ol) (optimiseNode ol) emptyEEnv block ret
 
 flattenConds :: [(NodeRef,NodeRef)] -> State Block [(NodeRef,NodeRef)]
 flattenConds cvs = concat <$> (sequence $ flattenCond <$> cvs) where
@@ -224,7 +238,31 @@ optimiseNode _ (Apply "+" [a,b] _) | isBlockMatrix a, isBlockMatrix b = do
   blockMatrix' m
   where a' = fromBlockMatrix a
         b' = fromBlockMatrix b
+optimiseNode _ (Apply "log_det" [i@BlockArray{}] t) = optimiseDet True (fromBlockMatrix i) t
+optimiseNode ol (Case (Data c js _) alts _) | Lambda dag [ret] <- alts !! c = do
+  block <- get
+  let env' = bindInputs dag $ reDExpr emptyEEnv block <$> js
+      block' = deriveBlock dag block
+  extractNodeRef (optimiseNodeRef ol) (optimiseNode ol) env' block' ret
 optimiseNode _ n = simplify n
+
+optimiseDet :: Bool -> [[NodeRef]] -> Type -> State Block NodeRef
+optimiseDet lg a t = do
+  block <- get
+  let isZ (Const c _) = isZeros c
+      isZ (Var j@Internal{} _) | Apply "zeros" _ _ <- lookupBlock j block = True
+      isZ _ = False
+      z = map isZ <$> a
+  if | and (tail $ head z), notNull (tail <$> tail a), notNull `all` (tail <$> tail a) -> do
+        x <- det' [[head $ head a]]
+        y <- det' (tail <$> tail a)
+        simplify $ Apply (if lg then "+" else "*") [x,y] t
+     | head $ head z, or (not . head <$> tail z) ->
+        optimiseDet lg (tail a ++ [head a]) t
+  where det x | isScalarD x = if lg then log x else x
+              | lg        = AA.logDet x
+              | otherwise = AA.det x
+        det' = fromDExpr . det . DExpr . blockMatrix'
 
 extractIndex :: DExpr -> [DExpr] -> DExpr
 extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block)
@@ -233,7 +271,7 @@ extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block
 extractIndexNode :: EEnv -> Block -> Node -> [DExpr] -> State Block NodeRef
 extractIndexNode env block (Array _ (Lambda body hd) _) idx =
   extractNodeRef simplifyNodeRef simplify env' block' hd
-  where env' = (EEnv . Map.fromList $ inputsL body `zip` idx) `unionEEnv` env
+  where env' = bindInputs body idx `unionEEnv` env
         block' = deriveBlock body block
 extractIndexNode env block (Apply op [a,b] t) idx
   | op `elem` ["+","-","*","/"] = do
