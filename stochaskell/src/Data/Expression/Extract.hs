@@ -13,7 +13,7 @@ import Debug.Trace
 import Util
 
 substEEnv :: EEnv -> EEnv
-substEEnv (EEnv env) = EEnv $ Map.map (substD $ EEnv env) {-`fixpt`-} env
+substEEnv (EEnv env) = EEnv $ Map.map (substD $ EEnv env) `fixpt` env
 
 subst :: EEnv -> Expr e -> Expr e
 subst env = Expr . substD env . erase
@@ -37,7 +37,7 @@ extractNodeRef fNodeRef fNode env block = go where
       | isJust val -> do
         let e = fromJust val
         t' <- typeDExpr e
-        if t == t' then fromDExpr e else error $
+        if compatible t t' then fromDExpr e else error $
          "extractNodeRef: type mismatch "++ show r ++" -> "++ show e ++"; with env:\n"++ show env
       | Volatile{} <- i -> do
         t' <- extractType env block t
@@ -134,7 +134,8 @@ extractNodeRef fNodeRef fNode env block = go where
     let inps = do
           (i,t) <- inputsT body
           let i' = case i of
-                Dummy _ p -> Dummy d (p + 10) -- rename to avoid capture, and set correct level
+                -- TODO rename to avoid capture without breaking fixpt
+                Dummy _ p -> Dummy d p -- set correct level
           return (i',t)
         ids' = f <$> inps
         env' = bindInputs body ids' `unionEEnv` env

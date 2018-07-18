@@ -5,10 +5,11 @@ import Language.Stochaskell
 
 import Control.Monad hiding (guard)
 import Control.Monad.HT (iterateLimit)
-import Data.Either.Utils
-import qualified Data.Expression as E
 import Data.Expression.Eval
-import qualified Data.Map.Strict as Map
+import System.IO
+
+-- https://cran.r-project.org/web/packages/engsoccerdata/README.html
+totgoal = [5, 1, 3, 2, 3, 2, 2, 5, 3, 1, 0, 7, 2, 4, 4, 2, 4, 5, 6, 0, 4, 1, 4, 1, 2, 4, 0, 2, 1, 2, 5, 3, 1, 3, 2, 0, 3, 2, 2, 1, 3, 1, 1, 0, 1, 1, 4, 3, 4, 3, 0, 5, 1, 2, 2, 3, 2, 1, 2, 2, 0, 5, 1, 2, 3, 1, 2, 7, 5, 3, 3, 2, 0, 2, 5, 2, 2, 2, 1, 0, 5, 2, 1, 3, 4, 2, 3, 2, 2, 1, 2, 1, 2, 5, 2, 1, 0, 2, 2, 1, 2, 0, 2, 2, 7, 4, 3, 4, 3, 2, 5, 0, 2, 1, 1, 3, 2, 6, 6, 2, 3, 5, 2, 2, 3, 1, 3, 2, 2, 3, 4, 5, 1, 1, 5, 0, 1, 4, 4, 2, 4, 4, 1, 2, 1, 1, 1, 4, 1, 4, 3, 1, 4, 6, 0, 3, 3, 3, 1, 1, 2, 3, 5, 1, 1, 4, 3, 1, 7, 3, 1, 1, 4, 2, 1, 1, 0, 5, 4, 6, 1, 0, 2, 2, 3, 1, 1, 1, 2, 3, 4, 4, 5, 0, 1, 5, 1, 2, 3, 1, 4, 1, 3, 3, 3, 2, 0, 3, 1, 2, 1, 3, 3, 5, 4, 1, 2, 6, 1, 2, 0, 2, 3, 0, 2, 3, 1, 4, 3, 4, 1, 2, 7, 3, 3, 1, 5, 0, 0, 5, 3, 2, 2, 6, 4, 2, 5, 1, 2, 1, 1, 4, 0, 1, 2, 2, 4, 1, 2, 4, 2, 5, 4, 3, 0, 4, 2, 2, 2, 4, 2, 3, 2, 1, 1, 4, 3, 4, 1, 0, 3, 2, 1, 2, 2, 3, 4, 1, 1, 0, 4, 3, 1, 3, 2, 3, 4, 3, 5, 5, 2, 2, 2, 1, 2, 0, 2, 5, 1, 4, 2, 2, 1, 0, 3, 3, 2, 2, 4, 5, 3, 2, 4, 3, 3, 5, 2, 0, 3, 3, 4, 0, 2, 2, 3, 2, 3, 3, 1, 2, 1, 3, 0, 4, 3, 4, 3, 0, 4, 4, 3, 3, 1, 3, 3, 6, 6, 2, 3, 1, 2, 5, 5, 2, 3, 3, 3, 1, 2, 1, 1, 7, 3, 2, 1, 3, 1, 3, 1, 3, 2, 8, 3, 4, 2, 2, 4, 3, 4, 3, 2, 2, 4, 3, 3, 3, 3, 1, 3, 1, 2, 1, 2, 0, 2, 2, 0, 4, 3, 2, 2, 0, 3, 3, 2, 2, 1, 2, 2, 3, 1, 5, 2, 2, 2, 1, 6, 1, 3, 4, 3, 6, 3, 2, 4, 3, 3, 4, 4, 3, 2, 1, 2, 3, 2, 0, 4, 0, 3, 5, 4, 1, 2, 1, 4, 1, 3, 3, 1, 2, 1, 2, 4, 3, 1, 3, 4, 2, 1, 0, 2, 2, 0, 4, 1, 2, 2, 3, 4, 3, 2, 4, 1, 3, 0, 3, 1, 3, 4, 3, 1, 4, 1, 4, 1, 1, 1, 1, 3, 5, 5, 3, 2, 6, 0, 3, 3, 2, 2, 3, 3, 2, 4, 3, 2, 2, 2, 3, 2, 1, 1, 4, 3, 3, 3, 2, 1, 1, 2, 0, 0, 1, 5, 4, 2, 3, 4, 2, 0, 4, 1, 1, 2, 2, 0, 2, 4, 3, 2, 3, 2, 1, 2, 3, 2, 0, 1, 3, 4, 0, 1, 1, 0, 0, 2, 0, 3, 0, 2, 1, 1, 4, 5, 5, 2, 2, 3, 6, 2, 4, 2, 2, 3, 5, 2, 1, 4, 1, 4, 2, 4, 1, 6, 2, 3, 3, 4, 0, 2, 3, 1, 4, 3, 4, 5, 5, 1, 2, 0, 4, 2, 3, 0, 0, 2, 3, 3, 1, 4, 0, 1, 5, 1, 4, 3, 4, 3, 0, 4, 3, 1, 1, 2, 2, 2, 3, 3, 3, 0, 3, 4, 4, 2, 3, 2, 1, 4, 2, 3, 1, 2, 1, 2, 1, 3, 1, 2, 5, 1, 0, 4, 4, 2, 6, 5, 1, 4, 0, 4, 3, 2, 2, 2, 2, 1, 3, 3, 3, 2, 3, 3, 1, 3, 3, 4, 3, 2, 5, 6, 3, 2, 0, 1, 3, 4, 3, 5, 3, 1, 2, 4, 1, 4, 3, 0, 3, 1, 4, 1, 3, 6, 3, 2, 3, 2, 2, 6, 0, 1, 0, 2, 2, 1, 2, 3, 4, 4, 5, 1, 6, 3, 1, 1, 2, 2, 3, 1, 1, 7, 1, 2, 1, 0, 3, 4, 5, 5, 2, 0, 4, 4, 4, 1, 1, 1, 1, 1, 6, 2, 3, 2, 2, 2, 2, 1, 5, 1, 3, 2, 1, 4, 2, 3, 4, 2, 5, 3, 2, 2, 3, 6, 2, 4, 2, 2, 2, 3, 3, 2, 5, 2, 5, 4, 4, 1, 3, 1, 2, 4, 3, 5, 1, 1, 2, 2, 2, 4, 4, 1, 3, 2, 2, 2, 4, 5, 1, 5, 2, 4, 3, 5, 1, 4, 0, 2, 0, 1, 2, 2, 4, 1, 6, 1, 2, 1, 4, 5, 2, 3, 3, 1, 1, 3, 0, 4, 0, 1, 0, 4, 1, 3, 2, 2, 1, 5, 3, 8, 5, 0, 2, 7, 2, 0, 0, 6, 3, 1, 3, 1, 1, 2, 2, 1, 2, 8, 6, 3, 3, 2, 2, 2, 4, 3, 2, 1, 1, 1, 4, 4, 0, 3, 5, 1, 5, 4, 4, 2, 2, 1, 1, 3, 3, 1, 1, 2, 4, 4, 1, 8, 0, 2, 3, 3, 3, 2, 4, 3, 3, 0, 1, 2, 6, 3, 3, 1, 2, 4, 4, 6, 1, 2, 2, 4, 0, 4, 4, 2, 6, 1, 2, 1, 1, 5, 3, 5, 3, 3, 4, 4, 2, 4, 1, 1, 4, 6, 2, 1, 2, 5, 0, 1, 4, 4, 4, 3, 1, 3, 2, 0, 3, 4, 1, 2, 2, 2, 5, 3, 2, 3, 3, 5, 6, 2, 0, 1, 1, 5, 4, 3, 3, 2, 3, 1, 2, 1, 2, 1, 2, 9, 4, 4, 2, 1, 4, 2, 3, 1, 2, 0, 3, 1, 0, 2, 4, 5, 2, 3, 2, 6, 2, 5, 3, 2, 4, 4, 1, 0, 2, 6, 1, 4, 2, 4, 0, 1, 0, 0, 2, 1, 0, 11, 1, 1, 0, 2, 4, 3, 3, 0, 2, 3, 1, 1, 2, 4, 2, 2, 2, 3, 2, 3, 1, 3, 3, 1, 2, 2, 3, 4, 1, 1, 1, 2, 2, 3, 4, 5, 2, 2, 3, 1, 3, 2, 4, 8, 5, 3, 2, 8, 4, 4, 6, 2, 3, 2, 2, 5, 2, 10, 2, 4, 4, 1, 4, 2, 3, 2, 4, 3, 2, 3, 1, 2, 3, 3, 4, 1, 2, 4, 2, 2, 0, 3, 2, 8, 1, 2, 2, 3, 2, 1, 2, 2, 1, 1, 2, 0, 3, 2, 1]
 
 data Model = Model1 R ZVec
            | Model2 R R ZVec
@@ -72,16 +73,19 @@ pvnbHMC n (Model2 lam kap y) = do
   return (Model2 lam' kap' y)
 
 pvnbStep :: Z -> Model -> IO Model
-pvnbStep n m = do
+pvnbStep n = \m -> do
+  putStr "."
+  hFlush stdout
   m' <- pvnbHMC n m
-  m'' <- pvnb n `rjmcC` pvnbJump `runCC` fromConcrete m'
+  m'' <- kernel $ fromConcrete m'
   return . fromRight' $ eval' m''
+  where kernel = runCC $ pvnb n `rjmcC` pvnbJump
 
 mainPVNB :: IO ()
 mainPVNB = do
-  let n = 100
-  (_,y) <- simulate (pvnb1 n)
+  let y = list totgoal; n = integer (length totgoal)
   samples <- tail <$> iterateLimit 5000 (pvnbStep n) (Model1 1 y)
+  putStrLn "done"
   forM_ samples $ \m -> case m of
     Model1 lam _ -> putStrLn $ "q11 "++ show lam
     Model2 lam kap _ -> do
@@ -135,9 +139,10 @@ coalLikelihood :: R -> (Z,RVec,RVec) -> P RVec
 coalLikelihood t (n,s,g) = do
   let rate y = let j = findSortedInsertIndex y s in (g!j)
       widths = vector [(s!(i+1)) - (s!i) | i <- 1...(n-1)] :: RVec
-      w = blockVector [cast (s!1), widths, cast $ t - (s!n)] :: RVec
-      mean = E.foldl (+) 0 $ vector [(w!j) * (g!j) | j <- 1...(n+1) ]
-  y <- poissonProcess t rate mean
+      w = blockVector [cast (s!1), widths, cast (t - (s!n))] :: RVec
+      areas = vector [(w!j) * (g!j) | j <- 1...(n+1) ]
+      area = sum' areas
+  y <- poissonProcess t rate area
   return y
 
 type CoalModel = (Z,RVec,RVec,RVec)
@@ -233,22 +238,19 @@ coalMove' t m@(n,_,_,_) = do
            ,(d, coalMoveDeath' t m)
            ]
 
-main :: IO ()
-main = do
+mainCoal :: IO ()
+mainCoal = do
   let t = 40907
   (n0,s0,g0) <- simulate (coalPrior t)
   print (n0,s0,g0)
-  print $ coalLikelihood t (n0,s0,g0)
-  let ts = [IntT, vecT RealT, vecT RealT, vecT RealT]
-      step = coal t `rjmc` coalMove' t $ entuple . expr . return $
-        Data 0 [Var (Dummy 9 i) t | (i,t) <- zip [0..] ts] (TupleT ts)
-      (stepRets, stepPB) = runProgExprs "sim" step
-  putStrLn $ showPBlock stepPB $ show stepRets
-  let kernel m = do
-        let env = Map.fromList $ (LVar . Dummy 9 <$> [0..3]) `zip` fromRight (evalTuple emptyEnv m)
-        m'@(n,s,g,_) <- fromConstVals <$> samplePBlock env stepPB stepRets
+  let kernel = runStep $ coal t `rjmc` coalMove' t
+      kernel' = \m -> do
+        m'@(n,s,g,_) <- kernel m
         print (n,s,g)
         return m'
       yData = list coalData' :: RVec
-  _ <- chain 44000 kernel (n0,s0,g0,yData)
+  _ <- chain 44000 kernel' (n0,s0,g0,yData)
   return ()
+
+main :: IO ()
+main = mainCoal

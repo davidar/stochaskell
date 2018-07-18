@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ScopedTypeVariables, TupleSections #-}
 module Language.CC where
 
 import Control.Monad
@@ -224,8 +224,8 @@ ccPrint l e | UnionT tss <- typeRef e =
      "  break;",
      "}"]) ++"\n}"
 
-ccProgram :: (ExprTuple s, ExprTuple t) => State Block [Type] -> (s -> Prog t) -> (String, [NodeRef])
-ccProgram s prog = (,rets) $ unlines
+ccProgram :: (ExprTuple s, ExprTuple t) => [Type] -> (s -> Prog t) -> (String, [NodeRef])
+ccProgram ts prog = (,rets) $ unlines
   ["#include <cmath>"
   ,"#include <iostream>"
   ,"#include <random>"
@@ -239,13 +239,12 @@ ccProgram s prog = (,rets) $ unlines
   ,"  random_device rd;"
   ,"  mt19937 gen(rd());"
   ,   indent $ unlines [ccRead 1 $ Var (Dummy 0 i) t | (i,t) <- zip [0..] ts]
-  ,   ccDAG (pnodes pb) (topDAG block)
+  ,   ccDAG (pnodes pb) (topDAG $ definitions pb)
   ,   indent $ unlines [ccPrint 1 ret ++" cout << endl;" | ret <- rets]
   ,"}"
   ]
   where (rets, pb) = runProgExprs "cc" . prog $ toExprTuple
           [DExpr . return $ Var (Dummy 0 i) t | (i,t) <- zip [0..] ts]
-        (ts, block) = runState s $ definitions pb
 
 printCC :: ConstVal -> String
 printCC (Tagged c ks) = unwords $ show c : map printCC ks
@@ -271,8 +270,8 @@ readCC (UnionT tss) (x:s) = (Tagged c cs, s')
         ts = tss !! c
         (cs,s') = readChain (map readCC ts) s
 
-runCC :: (ExprTuple s, ExprTuple t) => (s -> Prog t) -> s -> IO t
-runCC prog x = do
+runCC :: forall s t. (ExprTuple s, ExprTuple t) => (s -> Prog t) -> s -> IO t
+runCC prog = \x -> do
   pwd <- getCurrentDirectory
   let hash = toHex . SHA1.hash $ C.pack code
       exename = pwd ++"/cache/cc/sampler_"++ hash
@@ -291,4 +290,5 @@ runCC prog x = do
   output <- readProcess exename [] . unlines $ printCC <$> input
   let (cs,[]) = readChain (readCC . typeRef <$> rets) $ words output
   return $ fromConstVals cs
-  where (code,rets) = ccProgram (typeExprTuple x) prog
+  where TypesIs ts = typesOf :: TypesOf s
+        (code,rets) = ccProgram ts prog

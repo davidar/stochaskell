@@ -173,7 +173,7 @@ hmcEdward numSamples numSteps stepSize prog init =
     let vals = zipWith reshape lShapes <$> read out
     return [let env = Map.fromList [(LVar i, x)
                                    | ((i,d),x) <- Map.toAscList latents `zip` xs]
-            in fromRight $ evalProg "ed" env prog
+            in fromRight $ evalPBlock pb rets env
            | xs <- vals]
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "ed" prog
         dump env = forM_ (Map.toList env) $ \(LVar i,c) -> do

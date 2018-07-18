@@ -157,11 +157,10 @@ modelSkeleton pb@(PBlock block _ given _) = tparams
           where g i = let n = fromJust $ Map.lookup i samples
                       in Set.filter isInternal $ dependsPNode block n
 
-evalProg :: (ExprTuple t) => NS -> Env -> Prog t -> Either String t
-evalProg ns env prog = do
+evalPBlock :: (ExprTuple t) => PBlock -> [NodeRef] -> Env -> Either String t
+evalPBlock (PBlock block _ given _) rets = \env -> do
   xs <- sequence (evalNodeRef (Map.union given env) block <$> rets)
   return $ fromConstVals xs
-  where (rets, PBlock block _ given _) = runProgExprs ns prog
 
 caseP :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
 caseP n e ps = Prog $ do
@@ -1000,3 +999,12 @@ rjmcTransRatio' q x y = lu' - lu + logDet jacobian
               | v <- Map.elems u']
         substAux = getAux "qx" x y True `unionEEnv` getAux "qy" y x True
         jacobian = Expr . optimiseD 2 . substD (substEEnv substAux) . optimiseD 1 $ blockMatrix (top:bot) :: RMat
+
+runStep :: forall t. (ExprTuple t) => (t -> P t) -> t -> IO t
+runStep step = trace (showPBlock stepPB $ show stepRets) $ \m ->
+  let env = Map.fromList $ (LVar . Dummy 9 <$> [0..]) `zip` fromRight' (evalTuple emptyEnv m)
+  in fromConstVals <$> samplePBlock env stepPB stepRets
+  where TypesIs ts = typesOf :: TypesOf t
+        dummy = entuple . expr . return $
+          Data 0 [Var (Dummy 9 i) t | (i,t) <- zip [0..] ts] (TupleT ts)
+        (stepRets, stepPB) = runProgExprs "sim" $ step dummy

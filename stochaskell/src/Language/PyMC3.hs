@@ -238,7 +238,7 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   let vals = zipWith reshape lShapes <$> read out
   return [let env = Map.fromList [(LVar i, x)
                                  | ((i,d),x) <- Map.toAscList latents `zip` xs]
-          in fromRight $ evalProg "pm" env prog
+          in fromRight $ evalPBlock pb rets env
          | xs <- vals]
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "pm" prog
         g i = "trace['"++ pmId i ++"'].tolist()"

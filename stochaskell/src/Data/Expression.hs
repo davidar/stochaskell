@@ -419,11 +419,13 @@ instance forall t. (ExprType t) => ExprType [t] where
     toConcrete   = map toConcrete . toList
     fromConcrete = constExpr . constVal
     constVal     = fromList . map constVal
-    constExpr c | isScalar t = expr . return . Const c $ ArrayT Nothing sh t
+    constExpr c  = expr . return . Const c $ ArrayT Nothing sh t
       where (lo,hi) = AA.bounds c
             f = flip Const IntT . fromInteger
             sh = map f lo `zip` map f hi
-            TypeIs t = typeOf :: TypeOf t
+            t = case typeOf :: TypeOf t of
+              TypeIs s | isScalar s -> s
+              TypeIs (ArrayT _ _ s) -> s
 
 instance forall a b. (ExprType a, ExprType b) => ExprType (Expr a, Expr b) where
     typeOf = TypeIs $ TupleT [ta,tb]
@@ -492,6 +494,7 @@ typeRef (Extract v c k) | UnknownType <- typeRef v = UnknownType
 typeRef i@Extract{} = error $ "cannot extract invalid tag "++ show i
 typeRef (Cond _ t) = t
 typeRef (Unconstrained t) = t
+typeRef (PartiallyConstrained _ _ _ t) = t
 
 typeArray :: ([Integer],[Integer]) -> Type -> Type
 typeArray ([],[]) = id
@@ -544,6 +547,13 @@ coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
 coerces :: [Type] -> Type
 coerces = foldr1 coerce
+
+compatible :: Type -> Type -> Bool
+compatible s t | s == t = True
+compatible (SubrangeT s _ _) t = compatible s t
+compatible s (SubrangeT t _ _) = compatible s t
+compatible (ArrayT _ sh s) (ArrayT _ sh' t) | length sh == length sh' = compatible s t
+compatible _ _ = False
 
 class    Cast a b                          where cast :: a -> b
 instance Cast Z R                          where cast = expr . fromExpr
@@ -737,10 +747,12 @@ simplify (Apply "*" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "*" [_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "*" [Const c _,x] t) | isZeros c, isScalar (typeRef x) = return $ Const c t
 simplify (Apply "*" [x,Const c _] t) | isZeros c, isScalar (typeRef x) = return $ Const c t
-simplify (Apply "/" [Const 0 _,_] t) = return $ Const 0 t
+simplify (Apply "/" [Const c _,_] t) | isZeros c = return $ Const c t
 simplify (Apply "*" [Const 1 _,x] _) = return x
 simplify (Apply "*" [x,Const 1 _] _) = return x
 simplify (Apply "/" [x,Const 1 _] _) = return x
+simplify (Apply "<>" [Const c _,_] t) | isZeros c = return $ Const c t
+simplify (Apply "<>" [_,Const c _] t) | isZeros c = return $ Const c t
 simplify (Apply "+" [Const 0 _,x] _) = return x
 simplify (Apply "+" [x,Const 0 _] _) = return x
 simplify (Apply "+" [Const c _,x] _) | isZeros c, not $ isScalar (typeRef x) = return x
@@ -834,6 +846,16 @@ simplify' block (Apply "det" [Var i@Internal{} _] t)
   | (Apply "eye" _ _) <- lookupBlock i block = Right . return $ Const 1 t
 simplify' block (Apply "log_det" [Var i@Internal{} _] t)
   | (Apply "eye" _ _) <- lookupBlock i block = Right . return $ Const 0 t
+simplify' block (Apply "log_det" [Var i@Internal{} _] t)
+  | (Apply "*" [a,b] _) <- lookupBlock i block, isScalar (typeRef a) = Right $ do
+      loga <- simplify $ Apply "log" [a] t
+      logb <- simplify $ Apply "log_det" [b] t
+      simplify $ Apply "+" [loga, logb] t
+simplify' block (Apply "log_det" [Var i@Internal{} _] t)
+  | (Apply "/" [a,b] _) <- lookupBlock i block, isScalar (typeRef b) = Right $ do
+      loga <- simplify $ Apply "log_det" [a] t
+      logb <- simplify $ Apply "log" [b] t
+      simplify $ Apply "-" [loga, logb] t
 simplify' block (Apply "not" [Var i@Internal{} _] _)
   | (Apply "not" [j] _) <- lookupBlock i block = Right $ return j
 simplify' block (Apply "*" [Var i@Internal{} t,_] _)
@@ -1087,9 +1109,13 @@ foldscan fs dir f r xs = do
 find' :: (ExprType e) => (Expr e -> B) -> Expr e -> Expr [e] -> Expr e
 find' p def v = foldr f def v where f i j = ifB (p i) i j
 
+sum' :: (ExprType a, Num a) => Expr [a] -> Expr a
+sum' = foldl (+) 0
+
 findSortedInsertIndex :: R -> RVec -> Z
 findSortedInsertIndex = apply2 "findSortedInsertIndex" IntT
 
+min' :: Expr a -> Expr a -> Expr a
 min' = applyClosed2 "min"
 
 
@@ -1477,11 +1503,13 @@ entupleD 1 e = [e]
 entupleD n e = extractD e 0 <$> [0..(n-1)]
 
 newtype TupleSize t = TupleSize Int
+newtype TypesOf t = TypesIs [Type]
 class ExprTuple t where
     tupleSize :: TupleSize t
     fromExprTuple :: t -> [DExpr]
     toExprTuple :: [DExpr] -> t
     fromConstVals :: [ConstVal] -> t
+    typesOf :: TypesOf t
 
 zipExprTuple :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]
 zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
@@ -1492,29 +1520,43 @@ constDExpr c = DExpr . return . Const c
 const :: (ExprType t) => ConstVal -> Expr t
 const = constExpr
 
-instance (ExprType a) => ExprTuple (Expr a) where
+instance forall a. (ExprType a) => ExprTuple (Expr a) where
     tupleSize = TupleSize 1
     fromExprTuple (a) = [erase a]
     toExprTuple [a] = (Expr a)
     fromConstVals [a] = (const a)
+    typesOf = TypesIs [t] where
+      TypeIs t = typeOf :: TypeOf a
 instance (ExprType a, ExprType b) =>
          ExprTuple (Expr a, Expr b) where
     tupleSize = TupleSize 2
     fromExprTuple (a,b) = [erase a, erase b]
     toExprTuple [a,b] = (Expr a, Expr b)
     fromConstVals [a,b] = (const a, const b)
+    typesOf = TypesIs [s,t] where
+      TypeIs s = typeOf :: TypeOf a
+      TypeIs t = typeOf :: TypeOf b
 instance (ExprType a, ExprType b, ExprType c) =>
          ExprTuple (Expr a, Expr b, Expr c) where
     tupleSize = TupleSize 3
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
     toExprTuple [a,b,c] = (Expr a, Expr b, Expr c)
     fromConstVals [a,b,c] = (const a, const b, const c)
+    typesOf = TypesIs [s,t,u] where
+      TypeIs s = typeOf :: TypeOf a
+      TypeIs t = typeOf :: TypeOf b
+      TypeIs u = typeOf :: TypeOf c
 instance (ExprType a, ExprType b, ExprType c, ExprType d) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d) where
     tupleSize = TupleSize 4
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
     toExprTuple [a,b,c,d] = (Expr a, Expr b, Expr c, Expr d)
     fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
+    typesOf = TypesIs [s,t,u,v] where
+      TypeIs s = typeOf :: TypeOf a
+      TypeIs t = typeOf :: TypeOf b
+      TypeIs u = typeOf :: TypeOf c
+      TypeIs v = typeOf :: TypeOf d
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
@@ -1525,6 +1567,12 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       (Expr a, Expr b, Expr c, Expr d, Expr e)
     fromConstVals [a,b,c,d,e] =
       (const a, const b, const c, const d, const e)
+    typesOf = TypesIs [s,t,u,v,w] where
+      TypeIs s = typeOf :: TypeOf a
+      TypeIs t = typeOf :: TypeOf b
+      TypeIs u = typeOf :: TypeOf c
+      TypeIs v = typeOf :: TypeOf d
+      TypeIs w = typeOf :: TypeOf e
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e, ExprType f) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
@@ -1535,6 +1583,13 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f)
     fromConstVals [a,b,c,d,e,f] =
       (const a, const b, const c, const d, const e, const f)
+    typesOf = TypesIs [s,t,u,v,w,x] where
+      TypeIs s = typeOf :: TypeOf a
+      TypeIs t = typeOf :: TypeOf b
+      TypeIs u = typeOf :: TypeOf c
+      TypeIs v = typeOf :: TypeOf d
+      TypeIs w = typeOf :: TypeOf e
+      TypeIs x = typeOf :: TypeOf f
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e, ExprType f, ExprType g) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
@@ -1545,6 +1600,14 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g)
     fromConstVals [a,b,c,d,e,f,g] =
       (const a, const b, const c, const d, const e, const f, const g)
+    typesOf = TypesIs [s,t,u,v,w,x,y] where
+      TypeIs s = typeOf :: TypeOf a
+      TypeIs t = typeOf :: TypeOf b
+      TypeIs u = typeOf :: TypeOf c
+      TypeIs v = typeOf :: TypeOf d
+      TypeIs w = typeOf :: TypeOf e
+      TypeIs x = typeOf :: TypeOf f
+      TypeIs y = typeOf :: TypeOf g
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e, ExprType f, ExprType g, ExprType h) =>
          ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
@@ -1555,3 +1618,12 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h)
     fromConstVals [a,b,c,d,e,f,g,h] =
       (const a, const b, const c, const d, const e, const f, const g, const h)
+    typesOf = TypesIs [s,t,u,v,w,x,y,z] where
+      TypeIs s = typeOf :: TypeOf a
+      TypeIs t = typeOf :: TypeOf b
+      TypeIs u = typeOf :: TypeOf c
+      TypeIs v = typeOf :: TypeOf d
+      TypeIs w = typeOf :: TypeOf e
+      TypeIs x = typeOf :: TypeOf f
+      TypeIs y = typeOf :: TypeOf g
+      TypeIs z = typeOf :: TypeOf h

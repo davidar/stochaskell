@@ -22,7 +22,7 @@ type Label = String
 fixpt :: (Eq a) => (a -> a) -> a -> a
 fixpt = fixpt' 0
 fixpt' :: (Eq a) => Int -> (a -> a) -> a -> a
-fixpt' n f x | n > 100 = error "infinite loop"
+fixpt' n f x | n > 10 = error "infinite loop"
              | f x == x  = x
              | otherwise = fixpt' (n+1) f (f x)
 
