@@ -10,7 +10,6 @@ import Data.Array.IArray (listArray)
 import Data.Array.Abstract
 import Data.Boolean
 import Data.Either
-import Data.Either.Utils
 import Data.Expression hiding (const)
 import Data.Expression.Case
 import Data.Expression.Const hiding (isScalar)
@@ -155,14 +154,14 @@ evalNodeRef env (Block dags) r = error . showBlock dags $ "evalNodeRef "++ show 
 evalRange :: Env -> Block -> [(NodeRef,NodeRef)] -> [[ConstVal]]
 evalRange env block sh = range (a,b)
   where (i,j) = unzip sh
-        a = fromRight . evalNodeRef env block <$> i
-        b = fromRight . evalNodeRef env block <$> j
+        a = fromRight' . evalNodeRef env block <$> i
+        b = fromRight' . evalNodeRef env block <$> j
 
 evalShape :: Env -> Block -> [(NodeRef,NodeRef)] -> [(Integer,Integer)]
 evalShape env block sh = zip a b
   where (i,j) = unzip sh
-        a = integer . fromRight . evalNodeRef env block <$> i
-        b = integer . fromRight . evalNodeRef env block <$> j
+        a = integer . fromRight' . evalNodeRef env block <$> i
+        b = integer . fromRight' . evalNodeRef env block <$> j
 
 evalNode :: Env -> Block -> Node -> Eval
 evalNode env block (Apply "log_det" [i] _)
@@ -259,29 +258,29 @@ unifyNode env block (Array sh (Lambda body hd) _) val = Map.unions $ do -- TODO 
     let env' = Map.fromList (inputsL body `zip` map fromInteger idx) `Map.union` env
     return $ unifyNodeRef env' (deriveBlock body block) hd (val ! idx)
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isRight c' =
-    unifyNodeRef env block (if toBool (fromRight c') then a else b) val
+    unifyNodeRef env block (if toBool (fromRight' c') then a else b) val
   where c' = evalNodeRef env block c
 unifyNode env block (Apply "ifThenElse" [c,a,b] _) val | isRight a' && isRight b' =
-    if fromRight a' == fromRight b' then emptyEnv
-    else if fromRight a' == val then unifyNodeRef env block c true
-    else if fromRight b' == val then unifyNodeRef env block c false
+    if fromRight' a' == fromRight' b' then emptyEnv
+    else if fromRight' a' == val then unifyNodeRef env block c true
+    else if fromRight' b' == val then unifyNodeRef env block c false
     else error "unification error in ifThenElse"
   where a' = evalNodeRef env block a
         b' = evalNodeRef env block b
 unifyNode env block (Apply "+" [a,b] _) val | isRight a' =
-    unifyNodeRef env block b (val - fromRight a')
+    unifyNodeRef env block b (val - fromRight' a')
   where a' = evalNodeRef env block a
 unifyNode env block (Apply "*" [a,b] _) val | isRight a' =
-    unifyNodeRef env block b (val / fromRight a')
+    unifyNodeRef env block b (val / fromRight' a')
   where a' = evalNodeRef env block a
 unifyNode env block (Apply "/" [a,b] _) val | isRight b' =
-    unifyNodeRef env block a (val * fromRight b')
+    unifyNodeRef env block a (val * fromRight' b')
   where b' = evalNodeRef env block b
 unifyNode env block (Apply "#>" [a,b] _) val | isRight a' =
-    unifyNodeRef env block b ((fromRight a') <\> val)
+    unifyNodeRef env block b ((fromRight' a') <\> val)
   where a' = evalNodeRef env block a
 unifyNode env block (Apply "<>" [a,b] _) val | isRight b' =
-    unifyNodeRef env block a (val <> inv (fromRight b'))
+    unifyNodeRef env block a (val <> inv (fromRight' b'))
   where b' = evalNodeRef env block b
 unifyNode env block (Apply "inv" [a] _) val =
     unifyNodeRef env block a (inv val)
@@ -295,17 +294,17 @@ unifyNode env block (Apply "quad_form_diag" [m,v] _) val
 unifyNode env block (Apply "deleteIndex" [a,i] _) val | isRight a' && dimension val == 1 =
     unifyNodeRef env block i (integer idx)
   where a' = evalNodeRef env block a
-        j = firstDiff (toList $ fromRight a') (toList val)
+        j = firstDiff (toList $ fromRight' a') (toList val)
         ([lo],_) = bounds val
         idx = lo + integer j
 unifyNode env block (Apply "insertIndex" [a,i,e] _) val | isRight a' && dimension val == 1 =
     unifyNodeRef env block i (integer idx) `Map.union` unifyNodeRef env block e elt
   where a' = evalNodeRef env block a
-        j = firstDiff (toList $ fromRight a') (toList val)
+        j = firstDiff (toList $ fromRight' a') (toList val)
         ([lo],_) = bounds val
         idx = lo + integer j
         elt = val![idx]
-unifyNode env block node val | isRight lhs && fromRight lhs == val = emptyEnv
+unifyNode env block node val | isRight lhs && fromRight' lhs == val = emptyEnv
   where lhs = evalNode env block node
 unifyNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
   unifyNodeRef env block seed seed' `Map.union` unifyNodeRef env block ls ls'
@@ -541,7 +540,7 @@ diffNode env block (Apply "+" [a,b] _) var t | isRight a' =
     diffNodeRef env block b var t
   where a' = evalNodeRef (Map.filterWithKey (const . not . (Just var ==) . getId') env) block a
 diffNode env block (Apply "#>" [a,b] _) var t | isRight a' =
-    fromRight a' <> diffNodeRef env block b var t
+    fromRight' a' <> diffNodeRef env block b var t
   where a' = evalNodeRef (Map.filterWithKey (const . not . (Just var ==) . getId') env) block a
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
@@ -663,31 +662,31 @@ derivNode _ block node var = error . showLet' (topDAG block) $
 instance (ExprType t, Enum t) => Enum (Expr t)
 
 instance (ExprType t, Real t) => Real (Expr t) where
-  toRational = real . fromRight . eval_
+  toRational = real . fromRight' . eval_
 
 instance (ExprType t, Integral t) => Integral (Expr t) where
-  toInteger = integer . fromRight . eval_
+  toInteger = integer . fromRight' . eval_
 
 instance IsList RVec where
     type Item RVec = Double
     fromList xs = expr . return $ Const c t
       where c = fromList $ map real xs
             t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] RealT
-    toList = map real . toList . fromRight . eval_
+    toList = map real . toList . fromRight' . eval_
 
 instance IsList ZVec where
     type Item ZVec = Integer
     fromList xs = expr . return $ Const c t
       where c = fromList $ map integer xs
             t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] IntT
-    toList = map integer . toList . fromRight . eval_
+    toList = map integer . toList . fromRight' . eval_
 
 instance IsList BVec where
     type Item BVec = Bool
     fromList xs = expr . return $ Const c t
       where c = fromList $ map fromBool xs
             t = ArrayT Nothing [(Const 1 IntT, Const (fromIntegral $ length xs) IntT)] boolT
-    toList = map toBool . toList . fromRight . eval_
+    toList = map toBool . toList . fromRight' . eval_
 
 instance IsList RMat where
     type Item RMat = [Double]
@@ -697,7 +696,7 @@ instance IsList RMat where
             c = Approx $ listArray ([1,1],[n,m]) (concat xs)
             t = ArrayT Nothing [(Const 1 IntT, Const (fromInteger n) IntT)
                                ,(Const 1 IntT, Const (fromInteger m) IntT)] RealT
-    toList = map (map real . toList) . toList . fromRight . eval_
+    toList = map (map real . toList) . toList . fromRight' . eval_
 
 instance forall t. (Show t, ExprType t) => Show (Expr t) where
   show x = case eval_ x of

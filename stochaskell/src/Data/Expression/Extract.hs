@@ -7,6 +7,7 @@ import qualified Data.Array.Abstract as AA
 import Data.Expression
 import Data.Expression.Const
 import Data.List
+import Data.List.Extra
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Debug.Trace

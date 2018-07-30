@@ -98,9 +98,6 @@ unreplicate xs = if replicated xs then head xs else error (show xs ++" is not re
 traceShow' :: (Show a) => String -> a -> a
 traceShow' s x = trace ("["++ s ++"] "++ show x) x
 
-notNull :: (Foldable t) => t a -> Bool
-notNull = not . null
-
 liftMaybe :: MonadPlus m => Maybe a -> m a
 liftMaybe = maybe mzero return
 

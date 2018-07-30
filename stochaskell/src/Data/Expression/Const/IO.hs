@@ -23,7 +23,7 @@ readRealMatrix fname (rlo,rhi) (clo,chi) = do
         forM_ (zip [clo..] row) $ \(j,x) ->
           writeArray a [i,j] $ read (LC.unpack x)
         when (i `mod` 1000 == 0) $
-          progressBar (msg $ "Reading "++ fname) percentage 80 (i-rlo) (rhi-rlo)
+          progressBar (msg $ "Reading "++ fname) percentage 80 (Progress (i-rlo) (rhi-rlo))
         go (i+1) rows
   go rlo $ take (fromInteger (rhi-rlo+1)) table
   a' <- freeze a
