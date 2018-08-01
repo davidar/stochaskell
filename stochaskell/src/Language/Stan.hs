@@ -396,7 +396,7 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
                ,"file="++ basename ++".csv"
                ]
     putStrLn' $ unwords (exename:args)
-    (_,_,_,pid) <- createProcess_ "stan" (proc exename args){std_out = UseHandle stderr}
+    (_,_,_,pid) <- createProcess_ "stan" (proc exename args)--{std_out = UseHandle stderr}
     _ <- waitForProcess pid
     content <- LC.lines <$> LC.readFile (basename ++".csv")
     let table = map (LC.split ',') $ filter noComment content

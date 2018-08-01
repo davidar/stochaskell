@@ -1,0 +1,12 @@
+.stack-work/
+*.png
+*.imports
+TAGS
+*_flymake.*
+*.prof
+*.bak
+*~
+*.tix
+/_scrap/
+
+.git/

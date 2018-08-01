@@ -71,7 +71,7 @@ system_ cmd = do
     return ()
 
 putStrLn' :: String -> IO ()
-putStrLn' = hPutStrLn stderr
+putStrLn' = hPutStrLn stdout --stderr
 
 mean :: (Foldable t, Fractional a) => t a -> a
 mean xs = sum xs / fromIntegral (length xs)

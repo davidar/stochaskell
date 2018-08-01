@@ -7,3 +7,6 @@
 [submodule "stochaskell/variant"]
 	path = stochaskell/variant
 	url = https://github.com/mpark/variant.git
+[submodule "stochaskell/IHaskell"]
+	path = stochaskell/ihaskell
+	url = https://github.com/gibiansky/IHaskell.git

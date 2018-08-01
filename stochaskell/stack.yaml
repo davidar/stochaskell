@@ -5,4 +5,4 @@ packages:
 system-ghc: false
 extra-deps:
 - lazy-csv-0.5.1
-resolver: lts-11.18
+resolver: lts-11.19
