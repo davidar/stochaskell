@@ -40,6 +40,9 @@ constFuns = Map.fromList
   ,("abs", abs . head)
   ,("exp", exp . head)
   ,("log", log . head)
+  ,("cos", cos . head)
+  ,("sin", sin . head)
+  ,("tan", tan . head)
   ,("sqrt", sqrt . head)
   ,("true", const true)
   ,("false", const false)
@@ -312,6 +315,9 @@ instance Fractional ConstVal where
 instance Floating ConstVal where
     exp = constUnOp' exp
     log = constUnOp' log
+    cos = constUnOp' cos
+    sin = constUnOp' sin
+    tan = constUnOp' tan
     pi = Approx (fromScalar pi)
     (**) = constBinOp' (**)
 

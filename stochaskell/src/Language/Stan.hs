@@ -111,6 +111,10 @@ stanBuiltinFunctions =
   ,("negate",      ["-"])
   ,("sqrt",        ["sqrt"])
   ,("exp",         ["exp"])
+  ,("log",         ["log"])
+  ,("cos",         ["cos"])
+  ,("sin",         ["sin"])
+  ,("tan",         ["tan"])
   ,("diag",        ["diag_matrix"])
   ,("asColumn",    ["to_matrix", "to_vector"])
   ,("asRow",       ["to_matrix", "to_row_vector"])
@@ -230,7 +234,8 @@ stanPNode name d@(Dist f args t)
     name ++" ~ "++ fromJust (lookup f stanBuiltinDistributions) ++
       "("++ stanNodeRef `commas` args ++")"++ suffix ++";"
   | otherwise = error $ "stanPNode "++ show d
-  where suffix | (SubrangeT _ a b) <- t =
+  where suffix | t == boolT = ""
+               | (SubrangeT _ a b) <- t =
                    " T["++ maybe "" stanNodeRef a ++
                      ","++ maybe "" stanNodeRef b ++"]"
                | otherwise = ""

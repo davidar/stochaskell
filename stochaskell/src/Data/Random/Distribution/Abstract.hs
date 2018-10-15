@@ -113,6 +113,7 @@ newtype Normal a = Normal a
 instance Distribution Normal (Double,Double) IO Double where
     sample (Normal (m,s)) = Rand.sample (Rand.Normal m s)
 normal m s = sample $ Normal (m,s)
+lpdfNormal x m s = - log (2*pi) / 2 - log s - (((x - m) / s) ** 2) / 2
 
 lognormal m s = do
   x <- normal m s

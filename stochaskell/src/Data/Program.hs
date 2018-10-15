@@ -72,6 +72,8 @@ data PNode = Dist { dName :: String
 dependsPNode :: Block -> PNode -> Set Id
 dependsPNode block (Dist _ args _) =
   Set.unions $ map (dependsNodeRef block) args
+dependsPNode block (HODist _ arg0 args _) =
+  Set.unions $ dependsPNode block arg0 : map (dependsNodeRef block) args
 dependsPNode block (Loop sh (Lambda defs dist) _) =
   Set.unions $ map (d . fst) sh ++ map (d . snd) sh ++ [ddeps]
   where d = dependsNodeRef block
