@@ -619,23 +619,27 @@ variesLambda dag (Lambda adag ret) = variesLambda' dag (Lambda adag [ret])
 variesLambda' :: DAG -> Lambda [NodeRef] -> Bool
 variesLambda' dag (Lambda adag rets) =
   varies dag (rets \\ inputs' adag) ||
-  (not . null $ inputs dag `intersect` externRefs adag)
+  (not . null $ inputs dag `intersect` collectIds adag)
 
--- collect external references
-externRefs :: DAG -> [Id]
-externRefs dag = concatMap (f . snd) (nodes dag) \\ inputs dag
-  where f (Apply _ args _) = mapMaybe extern args
+collectIds :: DAG -> [Id]
+collectIds dag = concatMap (f . snd) (nodes dag) \\ inputs dag
+  where f (Apply _ args _) = concatMap g args
         f (Array sh (Lambda dag' r) _) =
-          mapMaybe extern (r : map fst sh ++ map snd sh) ++ externRefs dag'
+          concatMap g (r : map fst sh ++ map snd sh) ++ collectIds dag'
         f (FoldScan _ _ (Lambda dag' r) sd ls _) =
-          mapMaybe extern [r,sd,ls] ++ externRefs dag'
+          concatMap g [r,sd,ls] ++ collectIds dag'
         f (Case hd alts _) =
-          mapMaybe extern [hd] ++ concat [mapMaybe extern rs ++ externRefs dag'
-                                         | Lambda dag' rs <- alts]
-        extern (Var (Internal _ _) _) = Nothing
-        extern (Var i _) = Just i
-        extern _ = Nothing
-        -- TODO Index
+          concatMap g [hd] ++ concat [concatMap g rs ++ collectIds dag'
+                                     | Lambda dag' rs <- alts]
+        g (Var i _) = [i]
+        g Const{} = []
+        g (Data _ refs _) = concatMap g refs
+        g (BlockArray a _) = concatMap g $ A.elems a
+        g (Index a i) = g a ++ concatMap g i
+        g (Extract d _ _) = g d
+        g (Cond cvs _) = concatMap (g . fst) cvs ++ concatMap (g . snd) cvs
+        g Unconstrained{} = []
+        g PartiallyConstrained{} = []
 
 -- recursive data dependencies
 dependsNodeRef :: Block -> NodeRef -> Set Id
@@ -988,22 +992,6 @@ applyClosed2' f x y = DExpr $ do
 -- ARRAY COMPREHENSIONS                                                     --
 ------------------------------------------------------------------------------
 
--- External references captured by this closure
-capture :: AA.AbstractArray DExpr DExpr -> [Id]
-capture ar = externRefs $ topDAG block
-  where (_,block) = runDExpr $ ar ! replicate (length $ AA.shape ar) x
-        x = DExpr . return $ Unconstrained IntT
-
-makeArray :: Maybe String -> AA.AbstractArray DExpr DExpr
-          -> [AA.Interval NodeRef] -> State Block NodeRef
-makeArray l ar sh = do
-    d <- getNextLevel
-    let ids = [(Dummy d i, IntT) | i <- [1..length sh]]
-        e = ar ! [DExpr . return $ Var i t | (i,t) <- ids]
-    lam <- runLambda ids (fromDExpr e)
-    t <- typeDExpr e
-    hashcons $ Array sh lam (ArrayT l sh t)
-
 -- constant floating
 floatArray :: Maybe String -> AA.AbstractArray DExpr DExpr
            -> State Block NodeRef
@@ -1014,10 +1002,19 @@ floatArray l ar = do
         i <- fromDExpr $ fst interval
         j <- fromDExpr $ snd interval
         return (i,j)
-    if varies dag (map fst sh ++ map snd sh) ||
-       (not . null $ inputs dag `intersect` capture ar)
-      then makeArray l ar sh
-      else liftBlock $ floatArray l ar
+    d <- getNextLevel
+    let ids = [(Dummy d i, IntT) | i <- [1..length sh]]
+        e = ar ! [DExpr . return $ Var i t | (i,t) <- ids]
+        slam = runLambda ids (fromDExpr e)
+        captured = collectIds . fDefs . fst $ runState slam block
+    if (not . varies dag $ map fst sh ++ map snd sh) &&
+       (null $ inputs dag `intersect` captured) &&
+       (null $ filter ((dagLevel dag ==) . idLevel)
+             $ filter isInternal captured)
+    then liftBlock $ floatArray l ar
+    else do
+      Lambda dag ret <- slam
+      hashcons . Array sh (Lambda dag ret) $ ArrayT l sh (typeRef ret)
 
 -- TODO: reduce code duplication
 floatNode :: Node -> State Block NodeRef
@@ -1090,7 +1087,7 @@ foldscan fs dir f r xs = do
         (ret, Block (dag:block')) = runState (fromExpr $ f i j) $
           deriveBlock (DAG d [(Dummy d 11,s), (Dummy d 12,t)] Bimap.empty) block
     if varies (topDAG block) [seed,l] ||
-       (not . null $ inputs (topDAG block) `intersect` externRefs dag)
+       (not . null $ inputs (topDAG block) `intersect` collectIds dag)
       then do
         put $ Block block'
         case fs of
