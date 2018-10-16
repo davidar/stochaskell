@@ -314,6 +314,13 @@ unifyNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
         [i,j] = inputsL dag
         f' x y = let env' = Map.insert j x env
                  in fromJust . Map.lookup i $ unifyNodeRef env' block' ret y
+unifyNode env block (Case hd alts _) val
+  | typeRef hd == IntT, isRight `all` vals, length js == 1 =
+    unifyNodeRef env block hd j
+  where vals = [evalNodeRef env (deriveBlock body block) ret
+               | Lambda body [ret] <- alts]
+        js = elemIndices val (fromRight' <$> vals)
+        j = integer $ head js + 1
 unifyNode _ _ FoldScan{} _ = trace "WARN not unifying fold/scan" emptyEnv
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val

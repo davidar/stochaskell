@@ -721,6 +721,11 @@ densityPNode env block (Dist "normal" [m,s] _) x =
     LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
   where m' = toDouble . fromRight' $ evalNodeRef env block m
         s' = toDouble . fromRight' $ evalNodeRef env block s
+densityPNode env block (Dist "normals" [m,s] _) x = product
+    [LF.logToLogFloat $ logPdf (Rand.Normal a b) c | (a,b,c) <- zip3 m' s' x']
+  where m' = map toDouble . toList . fromRight' $ evalNodeRef env block m
+        s' = map toDouble . toList . fromRight' $ evalNodeRef env block s
+        x' = map toDouble $ toList x
 densityPNode env block (Dist "multi_normal" [m,s] _) x =
     LF.logToLogFloat $ -0.5 * (real $ (x' <.> (s' <\> x')) + logDet s' + n * log (2*pi))
   where m' = fromRight' $ evalNodeRef env block m
