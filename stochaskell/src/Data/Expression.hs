@@ -307,6 +307,11 @@ lookupEEnv :: Id -> EEnv -> Maybe DExpr
 lookupEEnv k (EEnv m) = Map.lookup (LVar k) m
 insertEEnv :: Id -> DExpr -> EEnv -> EEnv
 insertEEnv k v (EEnv m) = EEnv $ Map.insert (LVar k) v m
+filterEEnv :: (LVal -> DExpr -> Bool) -> EEnv -> EEnv
+filterEEnv p (EEnv m) = EEnv $ Map.filterWithKey p m
+
+conditionEEnv :: DExpr -> EEnv -> EEnv
+conditionEEnv c (EEnv env) = EEnv $ Map.mapKeys (\k -> LCond k c) env
 
 bindInputs :: DAG -> [DExpr] -> EEnv
 bindInputs dag xs = EEnv . Map.fromList $ inputsL dag `zip` xs
@@ -428,9 +433,70 @@ instance forall t. (ExprType t) => ExprType [t] where
               TypeIs (ArrayT _ _ s) -> s
 
 instance forall a b. (ExprType a, ExprType b) => ExprType (Expr a, Expr b) where
-    typeOf = TypeIs $ TupleT [ta,tb]
-      where TypeIs ta = typeOf :: TypeOf a
-            TypeIs tb = typeOf :: TypeOf b
+  typeOf = TypeIs $ TupleT [a,b]
+    where TypeIs a = typeOf :: TypeOf a
+          TypeIs b = typeOf :: TypeOf b
+instance forall a b c.
+    (ExprType a, ExprType b, ExprType c) =>
+    ExprType (Expr a, Expr b, Expr c) where
+  typeOf = TypeIs $ TupleT [a,b,c]
+    where TypeIs a = typeOf :: TypeOf a
+          TypeIs b = typeOf :: TypeOf b
+          TypeIs c = typeOf :: TypeOf c
+instance forall a b c d.
+    (ExprType a, ExprType b, ExprType c, ExprType d) =>
+    ExprType (Expr a, Expr b, Expr c, Expr d) where
+  typeOf = TypeIs $ TupleT [a,b,c,d]
+    where TypeIs a = typeOf :: TypeOf a
+          TypeIs b = typeOf :: TypeOf b
+          TypeIs c = typeOf :: TypeOf c
+          TypeIs d = typeOf :: TypeOf d
+instance forall a b c d e.
+    (ExprType a, ExprType b, ExprType c, ExprType d,
+     ExprType e) =>
+    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e) where
+  typeOf = TypeIs $ TupleT [a,b,c,d,e]
+    where TypeIs a = typeOf :: TypeOf a
+          TypeIs b = typeOf :: TypeOf b
+          TypeIs c = typeOf :: TypeOf c
+          TypeIs d = typeOf :: TypeOf d
+          TypeIs e = typeOf :: TypeOf e
+instance forall a b c d e f.
+    (ExprType a, ExprType b, ExprType c, ExprType d,
+     ExprType e, ExprType f) =>
+    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
+  typeOf = TypeIs $ TupleT [a,b,c,d,e,f]
+    where TypeIs a = typeOf :: TypeOf a
+          TypeIs b = typeOf :: TypeOf b
+          TypeIs c = typeOf :: TypeOf c
+          TypeIs d = typeOf :: TypeOf d
+          TypeIs e = typeOf :: TypeOf e
+          TypeIs f = typeOf :: TypeOf f
+instance forall a b c d e f g.
+    (ExprType a, ExprType b, ExprType c, ExprType d,
+     ExprType e, ExprType f, ExprType g) =>
+    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
+  typeOf = TypeIs $ TupleT [a,b,c,d,e,f,g]
+    where TypeIs a = typeOf :: TypeOf a
+          TypeIs b = typeOf :: TypeOf b
+          TypeIs c = typeOf :: TypeOf c
+          TypeIs d = typeOf :: TypeOf d
+          TypeIs e = typeOf :: TypeOf e
+          TypeIs f = typeOf :: TypeOf f
+          TypeIs g = typeOf :: TypeOf g
+instance forall a b c d e f g h.
+    (ExprType a, ExprType b, ExprType c, ExprType d,
+     ExprType e, ExprType f, ExprType g, ExprType h) =>
+    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
+  typeOf = TypeIs $ TupleT [a,b,c,d,e,f,g,h]
+    where TypeIs a = typeOf :: TypeOf a
+          TypeIs b = typeOf :: TypeOf b
+          TypeIs c = typeOf :: TypeOf c
+          TypeIs d = typeOf :: TypeOf d
+          TypeIs e = typeOf :: TypeOf e
+          TypeIs f = typeOf :: TypeOf f
+          TypeIs g = typeOf :: TypeOf g
+          TypeIs h = typeOf :: TypeOf h
 
 newtype Tags t = Tags [Tag]
 class ExprType c => Constructor c where
@@ -654,19 +720,20 @@ dependsNodeRef _ Unconstrained{} = Set.empty
 dependsNodeRef _ r = error $ "dependsNodeRef "++ show r
 
 dependsNode :: Block -> Node -> Set Id
-dependsNode block (Apply _ args _) =
-  Set.unions $ map (dependsNodeRef block) args
-dependsNode block (Array sh (Lambda body hd) _) =
-  Set.unions $ map (d . fst) sh ++ map (d . snd) sh ++ [hdeps]
+dependsNode block node = Set.unions $ case node of
+  Apply _ args _ -> map (dependsNodeRef block) args
+  Array sh lam _ -> map (d . fst) sh ++ map (d . snd) sh ++ [dependsLambda block lam]
+  FoldScan _ _ lam seed ls _ -> [d seed, d ls, dependsLambda block lam]
+  Case hd alts _ -> d hd : (dependsLambda' block <$> alts)
+  _ -> error $ "dependsNode "++ show node
   where d = dependsNodeRef block
-        hdeps = Set.filter ((dagLevel body >) . idLevel) $
-          dependsNodeRef (deriveBlock body block) hd
-dependsNode block (FoldScan _ _ (Lambda body hd) seed ls _) =
-  d seed `Set.union` d ls `Set.union` hdeps
-  where d = dependsNodeRef block
-        hdeps = Set.filter ((dagLevel body >) . idLevel) $
-          dependsNodeRef (deriveBlock body block) hd
-dependsNode _ n = error $ "dependsNode "++ show n
+
+dependsLambda :: Block -> Lambda NodeRef -> Set Id
+dependsLambda block (Lambda body ret) = dependsLambda' block (Lambda body [ret])
+dependsLambda' :: Block -> Lambda [NodeRef] -> Set Id
+dependsLambda' block (Lambda body rets) =
+  Set.filter ((dagLevel body >) . idLevel) . Set.unions $
+  dependsNodeRef (deriveBlock body block) <$> rets
 
 dependsD :: DExpr -> Set Id
 dependsD e = Set.filter (not . isInternal) $ dependsNodeRef block ret
@@ -1375,6 +1442,11 @@ instance AA.LinearOperator DExpr DExpr where
         j <- fromDExpr m
         let (ArrayT _ [_,c] t) = typeRef j
         simplify $ Apply "<#" [i,j] (ArrayT (Just "row_vector") [c] t)
+    m <\> v = DExpr $ do
+        i <- fromDExpr m
+        j <- fromDExpr v
+        let (ArrayT _ [_,c] t) = typeRef i
+        simplify $ Apply "<\\>" [i,j] (ArrayT (Just "vector") [c] t)
     diag v = DExpr $ do
         i <- fromDExpr v
         let (ArrayT _ [n] t) = typeRef i
@@ -1404,8 +1476,9 @@ instance AA.LinearOperator DExpr DExpr where
       where asRow' x | isScalar (typeRef x) = return x
                      | otherwise = fromDExpr . AA.asRow . DExpr $ return x
 instance AA.LinearOperator (Expr [[e]]) (Expr [e]) where
-    m #> v = Expr $ erase m AA.#> erase v
-    v <# m = Expr $ erase v AA.<# erase m
+    m #> v   = Expr $ erase m AA.#>  erase v
+    v <# m   = Expr $ erase v AA.<#  erase m
+    m <\> v  = Expr $ erase m AA.<\> erase v
     diag     = Expr . AA.diag     . erase
     asColumn = Expr . AA.asColumn . erase
     asRow    = Expr . AA.asRow    . erase

@@ -88,11 +88,14 @@ constFuns = Map.fromList
   ,("quad_form_diag", \[m,v] -> diag v <> m <> diag v)
   ,("bernoulli_pdf",     \[b,p]   -> if toBool b then p else 1-p)
   ,("bernoulli_lpdf",    \[b,p]   -> log $ if toBool b then p else 1-p)
+  ,("bernoulliLogit_lpdf", \[b,l] -> let p = 1/(1 + exp (-l)) in
+                                     log $ if toBool b then p else 1-p)
   ,("categorical_lpdf",  \[k,ps]  -> log $ toList ps !! (integer k - 1))
   ,("gamma_lpdf",        \[g,a,b] -> real $ lpdfGamma (real g) (real a) (real b))
   ,("neg_binomial_lpdf", \[k,a,b] -> real $ lpdfNegBinomial (integer k) (real a) (real b))
   ,("poisson_lpdf",      \[k,l]   -> real $ lpdfPoisson (integer k) (real l))
   ,("normal_lpdf",       \[x,m,s] -> real $ logPdf (Rand.Normal (toDouble m) (toDouble s)) (real x))
+  ,("normals_lpdf",      \[x,m,s] -> real . sum $ zipWith3 lpdfNormal (list x) (list m) (list s))
   ,("uniform_lpdf",      \[x,a,b] -> real $ lpdfUniform (toDouble x) (toDouble a) (toDouble b))
   ,("uniform_cdf",       \[x,a,b] -> real $ cdfUniform (toDouble x) (toDouble a) (toDouble b))
   ,("discreteUniform_lpdf", \[x,a,b] -> real $

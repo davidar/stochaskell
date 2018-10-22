@@ -388,42 +388,43 @@ solveNodeRef env block (Extract (Var i@Internal{} _) 0 j) val
 solveNodeRef env block ref val = EEnv $ Map.singleton (LConstr $ reDExpr env block ref ==* val) true
   --trace ("WARN assuming "++ show ref ++" unifies with "++ show val) emptyEEnv
 
+toConstraints :: EEnv -> [DExpr]
+toConstraints (EEnv env) = do
+  (k,v) <- Map.toAscList env
+  case k of
+    LVar i@Symbol{} ->
+      let a = DExpr . return $ Var i UnknownType
+      in return $ a ==* v
+    LField i@Symbol{} t c j ->
+      let a = DExpr . return $ Extract (Var i t) c j
+      in return $ a ==* v
+    LConstr e | isSymbol `all` Set.toList (dependsD e)
+              , sizeD e < 3 -> return e -- TODO: sizeD limit is a hack
+    _ -> trace ("WARN ignoring constraint" {- ++ show k-}) mzero
+  where sizeD = length . nodes . topDAG . snd . runDExpr
+
+toConstraints' :: EEnv -> DExpr
+toConstraints' env = case toConstraints env of
+  [] -> true
+  cs -> List.foldl1 (&&*) cs
+
 solveCase :: EEnv -> Block -> NodeRef -> [Lambda NodeRef] -> DExpr -> EEnv
-solveCase env block hd alts val = unionsEEnv $ do
-  (k,env') <- zip [1..] envs
-  let env'' = condEnv (reDExpr env block hd ==* integer k) env'
-      EEnv kenv = solveNodeRef env block hd $ integer k
-  case but (k-1) conds of
-    _ | (conds !! (k-1)) == true -> return env''
-    Nothing -> mzero
-    Just c -> return . unionEEnv env'' . EEnv $ Map.fromList
-      [(LCond l c, v) | (l,v) <- Map.toAscList kenv]
-  where given :: EEnv -> [DExpr]
-        given (EEnv env') = do
-          (k,v) <- Map.toAscList env'
-          case k of
-            LVar i@Symbol{} ->
-              let a = DExpr . return $ Var i UnknownType
-              in return $ a ==* v
-            LField i@Symbol{} t c j ->
-              let a = DExpr . return $ Extract (Var i t) c j
-              in return $ a ==* v
-            LConstr e | isSymbol `all` Set.toList (dependsD e)
-                      , sizeD e < 3 -> return e -- TODO: sizeD limit is a hack
-            _ -> trace ("WARN ignoring constraint" {- ++ show k-}) mzero
-        sizeD = length . nodes . topDAG . snd . runDExpr
-        but k bs = case filter (true /=) $ take k bs ++ drop (k+1) bs of
-          [] -> Just (bs !! k)
-          bs' | ((bs !! k) ==) `any` bs' -> Nothing
-              | otherwise -> Just $ (bs !! k) &&* List.foldl1 (&&*) (notB <$> bs')
-        (conds,envs) = unzip $ do
-          Lambda dag ret <- alts
-          let block' = deriveBlock dag block
-              env' = solveNodeRef env block' ret val
-          case given env' of
-            [] -> return (true, env')
-            cs -> return (List.foldl1 (&&*) cs, env')
-        condEnv c (EEnv env) = EEnv $ Map.mapKeys (\k -> LCond k c) env
+solveCase env block hd alts val = solveCase' 1 env block hd envs
+  where envs = [solveNodeRef env (deriveBlock dag block) ret val
+               | Lambda dag ret <- alts]
+
+solveCase' :: Int -> EEnv -> Block -> NodeRef -> [EEnv] -> EEnv
+solveCase' offset env block hd envs = unionsEEnv $ do
+  (k,env') <- zip [0..] envs
+  let h = integer $ k + offset
+      cenv = conditionEEnv (reDExpr env block hd ==* h) env'
+      kenv = solveNodeRef env block hd h
+      condk = conds !! k
+      bs = filter (true /=) $ take k conds ++ drop (k+1) conds
+      c = if null bs then condk else condk &&* List.foldl1 (&&*) (notB <$> bs)
+  if condk == true then return cenv else if (condk ==) `any` bs then mzero else
+    return $ cenv `unionEEnv` conditionEEnv c kenv
+  where conds = toConstraints' <$> envs
 
 firstDiffD :: Z -> Z -> DExpr -> DExpr -> Z
 firstDiffD n def a b = find' p def $ vector (1...n)
@@ -468,6 +469,8 @@ solveNode env block (Apply "*" [a,b] _) val =
   trace ("WARN assuming "++ show a ++" * "++ show b ++" = "++ "[...]" {-show val-}) emptyEEnv
 solveNode env block (Apply "**" [a,b] _) val =
   trace ("WARN assuming "++ show a ++" ** "++ show b ++" = "++ "[...]" {-show val-}) emptyEEnv
+solveNode env block (Apply "#>" [a,b] _) val | evaluable env block a =
+  solveNodeRef env block b (reDExpr env block a <\> val)
 solveNode env block (Apply "ifThenElse" [c,(Data 0 as _),(Data 1 bs _)] _) val =
   solveNodeRefs env block $ (c,c') : zip as as' ++ zip bs bs'
   where c' = caseD val [const [true], const [false]]
@@ -475,6 +478,8 @@ solveNode env block (Apply "ifThenElse" [c,(Data 0 as _),(Data 1 bs _)] _) val =
               | (i,a) <- zip [0..] as, let t = typeRef a]
         bs' = [caseD val [const [unconstrained t], const [extractD val 1 i]]
               | (i,b) <- zip [0..] bs, let t = typeRef b]
+solveNode env block (Apply "ifThenElse" [c,e1,e0] _) val = solveCase' 0 env block c envs
+  where envs = [solveNodeRef env block e0 val, solveNodeRef env block e1 val]
 solveNode env block (Apply "replaceIndex" [a,e,d] _) val =
   trace ("WARN assuming "++ show a ++" = "++ show val ++" except at index "++ show e) $
   solveNodeRefs env block [(e,j), (d, val!j)]
@@ -637,8 +642,10 @@ derivNode env block (Apply "exp" [a] _) var =
   exp (reDExpr env block a) * derivNodeRef env block a var
 derivNode env block (Apply "log" [a] _) var =
   derivNodeRef env block a var / reDExpr env block a
-derivNode env block (Apply "+" [a,b] _) var =
-  derivNodeRef env block a var + derivNodeRef env block b var
+derivNode env block (Apply "+" [a,b] _) var
+  | evaluable env' block a = derivNodeRef env block b var
+  | otherwise = derivNodeRef env block a var + derivNodeRef env block b var
+  where env' = filterEEnv (const . not . (getId var ==) . getId') env
 derivNode env block (Apply "-" [a,b] _) var =
   derivNodeRef env block a var - derivNodeRef env block b var
 derivNode env block (Apply op [a,b] _) var
@@ -649,6 +656,9 @@ derivNode env block (Apply op [a,b] _) var
         f' = derivNodeRef env block a var
         g = reDExpr env block b
         g' = derivNodeRef env block b var
+derivNode env block (Apply "#>" [a,b] _) var | evaluable env' block a =
+  reDExpr env block a <> derivNodeRef env block b var
+  where env' = filterEEnv (const . not . (getId var ==) . getId') env
 derivNode env block (Apply "deleteIndex" [a,j] _) var =
   deleteIndex (derivNodeRef env block a var) (reDExpr env block j)
 derivNode env block (Apply "insertIndex" [a,j,e] _) var | isScalar (typeRef e) =

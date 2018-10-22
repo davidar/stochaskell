@@ -135,6 +135,9 @@ runProg ns p = runState (fromProg p) $ emptyPBlock ns
 instance (ExprTuple t) => Show (Prog t) where
   show p = showPBlock pb $ show rets
     where (rets, pb) = runProgExprs "show" p
+instance (ExprType a, ExprTuple a, ExprTuple b) => Show (a -> Prog b) where
+  show p = "\\input ->\n"++ (indent . showPBlock pb $ show rets)
+    where (rets, pb) = runProgExprs "show" . p . entuple $ symbol "input"
 
 fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NodeRef]
 fromProgExprs p = do
@@ -221,6 +224,13 @@ mixture' qps = do
   return $ caseZ k rs
   where (qs,progs) = unzip qps
         qv = blockVector [cast q | q <- qs] :: RVec
+
+type instance BooleanOf (P t) = B
+instance (IfB t, BooleanOf t ~ B) => IfB (P t) where
+  ifB c p q = do
+    x <- p
+    y <- q
+    return $ ifB c x y
 
 
 ------------------------------------------------------------------------------
@@ -597,21 +607,23 @@ pdfPNode _ lg env block (Dist f args _) x = expr $ do
     _ -> do
       js <- sequence $ extractNodeRef simplifyNodeRef simplify env block <$> args
       simplify $ Apply (f ++ if lg then "_lpdf" else "_pdf") (i:js) RealT
-pdfPNode r lg env block (Loop _ (Lambda ldag body) _) a
+pdfPNode r lg env block (Loop _ lam _) a
   | (Unconstrained _,_) <- runDExpr a = if lg then 0 else 1
   | (PartiallyConstrained{},_) <- runDExpr a = error "TODO: partially constrained"
-  | lg        = E.foldl g 0 (Expr a)
-  | otherwise = E.foldl f 1 (Expr a)
-  where block' = deriveBlock ldag block
-        f p x = p * pdfPNode r lg env block' body (erase x) -- TODO only works for iid
-        g l x = l + pdfPNode r lg env block' body (erase x)
+  | lg        = E.foldl (\l e -> l + f e) 0 idxs
+  | otherwise = E.foldl (\p e -> p * f e) 1 idxs
+  where n = Expr $ vectorSize a
+        idxs = vector [ i | i <- 1...n ]
+        f e = let j = erase e in pdfJoint r lg env block lam [j] (a!j)
 pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
   i <- fromDExpr x
   case i of
     Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
     PartiallyConstrained [(lo,hi)] [(id,t)] [([k],v)] _ -> fromExpr $
       pdfOrderStats r lg env block d n (lo,hi) (id,t) (k,v)
-    _ -> error $ "pdfPNode orderedSample "++ show x
+    _ | lg -> fromExpr $ E.foldl g (logFactorial' n') (Expr x)
+  where n' = Expr $ reDExpr env block n
+        g l z = l + pdfPNode r lg env block d (erase z)
 pdfPNode _ lg env block (Switch hd alts ns _) x = Expr $
   caseD hd' [\_ -> [erase e] | e <- alts']
   where hd' = reDExpr env block hd
@@ -624,6 +636,11 @@ pdfPNode _ lg env block (Switch hd alts ns _) x = Expr $
           return . subst (substEEnv . EEnv $ Map.filterWithKey p env') $
             pdfPNodes undefined ns lg (env `unionEEnv` EEnv env') block' pns
 pdfPNode _ _ _ _ node x = error $ "pdfPNode "++ show node ++" "++ show x
+
+pdfJoint :: Map Id PNode -> Bool -> EEnv -> Block -> Lambda PNode -> [DExpr] -> DExpr -> R
+pdfJoint r lg env block (Lambda body pn) js x = pdfPNode r lg env' block' pn x
+  where block' = deriveBlock body block
+        env' = bindInputs body js `unionEEnv` env
 
 pdfOrderStats :: Map Id PNode -> Bool -> EEnv -> Block -> PNode -> NodeRef
               -> Interval DExpr -> (Id,Type) -> (DExpr,DExpr) -> R
