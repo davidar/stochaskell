@@ -312,3 +312,9 @@ collapseArray e | (ArrayT _ [(lo,hi)] (ArrayT _ [(lo',hi')] t)) <- typeRef ret =
   hashcons $ Array sh lam (ArrayT Nothing sh t')
   where (ret, block) = runDExpr e
 collapseArray e = substD emptyEEnv e
+
+constSymbolLike :: (ExprTuple t) => String -> t -> t
+constSymbolLike name val = entuple . expr $ do
+  t <- extractType emptyEEnv block (typeRef ret)
+  return $ Var (Symbol name True) t
+  where (ret, block) = runExpr (detuple val)

@@ -326,7 +326,7 @@ unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
 
 aggregateLVals :: EEnv -> EEnv
-aggregateLVals = aggregateFields . aggregateConds
+aggregateLVals = aggregateFields . aggregateConds . aggregateConds'
 
 aggregateFields :: EEnv -> EEnv
 aggregateFields (EEnv env) = EEnv $ Map.union env' env
@@ -345,15 +345,32 @@ aggregateFields (EEnv env) = EEnv $ Map.union env' env
 
 aggregateConds :: EEnv -> EEnv
 aggregateConds (EEnv env) = EEnv $ Map.union env' env
-  where kvss = groupBy f [(k,v) | (k@LCond{},v) <- Map.toAscList env]
-        f (LCond a _,_) (LCond b _,_) = a == b
+  where kvss = groupBy f [(k,v) | (k@(LCond True _ _),v) <- Map.toAscList env]
+        f (LCond _ a _,_) (LCond _ b _,_) = a == b
         env' = Map.fromList $ do
           kvs <- kvss
-          let lval = unreplicate [l | (LCond l _,_) <- kvs]
-              conds = [(c,val) | (LCond _ c,val) <- kvs]
-              cond' = (foldr1 (&&*) $ notB . fst <$> conds
-                      ,unconstrainedLike $ snd <$> conds)
+          let lval = unreplicate [l | (LCond _ l _,_) <- kvs]
+              conds = [(c,val) | (LCond _ _ c,val) <- kvs]
           return (lval, substD emptyEEnv . condD $ conds)
+
+aggregateConds' :: EEnv -> EEnv
+aggregateConds' (EEnv env) = EEnv $ Map.union env' env
+  where kvss = groupBy f [(k,v) | (k@(LCond False _ _),v) <- Map.toAscList env]
+        f (LCond _ a _,_) (LCond _ b _,_) = a == b
+        env' = Map.fromList $ do
+          kvs <- kvss
+          let lval = unreplicate [l | (LCond _ l _,_) <- kvs]
+              conds = do
+                kvs' <- groupBy (\a b -> snd a == snd b) kvs
+                let val = unreplicate $ snd <$> kvs'
+                    cs = [c | (LCond _ _ c,_) <- kvs']
+                return (foldr1 (&&*) cs, val)
+              conds' = do
+                (i,(c,v)) <- zip [0..] conds
+                let c' = foldr1 (&&*) $ notB . fst <$>
+                      take i conds ++ drop (i+1) conds
+                return (c &&* c',v)
+          return (lval, substD emptyEEnv . condD $ conds')
 
 solve :: Expr t -> Expr t -> EEnv -> EEnv
 solve e val = solveD (erase e) (erase val)
@@ -388,20 +405,25 @@ solveNodeRef env block (Extract (Var i@Internal{} _) 0 j) val
 solveNodeRef env block ref val = EEnv $ Map.singleton (LConstr $ reDExpr env block ref ==* val) true
   --trace ("WARN assuming "++ show ref ++" unifies with "++ show val) emptyEEnv
 
-toConstraints :: EEnv -> [DExpr]
-toConstraints (EEnv env) = do
-  (k,v) <- Map.toAscList env
-  case k of
-    LVar i@Symbol{} ->
-      let a = DExpr . return $ Var i UnknownType
-      in return $ a ==* v
-    LField i@Symbol{} t c j ->
-      let a = DExpr . return $ Extract (Var i t) c j
-      in return $ a ==* v
-    LConstr e | isSymbol `all` Set.toList (dependsD e)
-              , sizeD e < 3 -> return e -- TODO: sizeD limit is a hack
-    _ -> trace ("WARN ignoring constraint" {- ++ show k-}) mzero
+toConstraint :: (MonadPlus m) => (LVal,DExpr) -> m DExpr
+toConstraint (k,v) = case k of
+  LVar i | p i ->
+    let a = DExpr . return $ Var i UnknownType
+    in return $ a ==* v
+  LField i t c j | p i ->
+    let a = DExpr . return $ Extract (Var i t) c j
+    in return $ a ==* v
+  LCond True l c -> do
+    e <- toConstraint (l,v)
+    return $ (notB c) ||* e
+  LConstr e | p `all` Set.toList (dependsD e)
+            , sizeD e < 3 -> return e -- TODO: sizeD limit is a hack
+  _ -> trace ("WARN ignoring constraint " ++ show k) mzero
   where sizeD = length . nodes . topDAG . snd . runDExpr
+        p = isSymbol
+
+toConstraints :: EEnv -> [DExpr]
+toConstraints (EEnv env) = Map.toAscList env >>= toConstraint
 
 toConstraints' :: EEnv -> DExpr
 toConstraints' env = case toConstraints env of
@@ -417,13 +439,12 @@ solveCase' :: Int -> EEnv -> Block -> NodeRef -> [EEnv] -> EEnv
 solveCase' offset env block hd envs = unionsEEnv $ do
   (k,env') <- zip [0..] envs
   let h = integer $ k + offset
-      cenv = conditionEEnv (reDExpr env block hd ==* h) env'
+      cenv = conditionEEnv True (reDExpr env block hd ==* h) $ aggregateLVals env'
       kenv = solveNodeRef env block hd h
       condk = conds !! k
       bs = filter (true /=) $ take k conds ++ drop (k+1) conds
-      c = if null bs then condk else condk &&* List.foldl1 (&&*) (notB <$> bs)
   if condk == true then return cenv else if (condk ==) `any` bs then mzero else
-    return $ cenv `unionEEnv` conditionEEnv c kenv
+    return $ cenv `unionEEnv` conditionEEnv False condk kenv
   where conds = toConstraints' <$> envs
 
 firstDiffD :: Z -> Z -> DExpr -> DExpr -> Z
@@ -471,6 +492,14 @@ solveNode env block (Apply "**" [a,b] _) val =
   trace ("WARN assuming "++ show a ++" ** "++ show b ++" = "++ "[...]" {-show val-}) emptyEEnv
 solveNode env block (Apply "#>" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (reDExpr env block a <\> val)
+solveNode env block (Apply "==" [a,b] _) val = EEnv $
+  Map.singleton (LConstr $ ifB val (a' ==* b') (a' /=* b')) true
+  where a' = reDExpr env block a
+        b' = reDExpr env block b
+solveNode env block (Apply "ifThenElse" [c,a,b] _) val | evaluable env block c =
+  (conditionEEnv True c' $ solveNodeRef env block a val) `unionEEnv`
+  (conditionEEnv True (notB c') $ solveNodeRef env block b val)
+  where c' = reDExpr env block c
 solveNode env block (Apply "ifThenElse" [c,(Data 0 as _),(Data 1 bs _)] _) val =
   solveNodeRefs env block $ (c,c') : zip as as' ++ zip bs bs'
   where c' = caseD val [const [true], const [false]]

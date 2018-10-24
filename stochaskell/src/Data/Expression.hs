@@ -280,7 +280,7 @@ fromDExprs = sequence . map fromDExpr
 data LVal = LVar Id
           | LSub Id [DExpr]
           | LField Id Type Tag Int
-          | LCond LVal DExpr
+          | LCond Bool LVal DExpr
           | LConstr DExpr
           deriving (Eq, Ord, Show)
 
@@ -288,7 +288,7 @@ getId' :: LVal -> Maybe Id
 getId' (LVar i ) = Just i
 getId' (LSub i _) = Just i
 getId' (LField i _ _ _) = Just i
-getId' (LCond l _) = getId' l
+getId' (LCond _ l _) = getId' l
 getId' LConstr{} = Nothing
 
 newtype EEnv = EEnv (Map LVal DExpr)
@@ -296,7 +296,9 @@ emptyEEnv :: EEnv
 emptyEEnv = EEnv Map.empty
 
 instance Show EEnv where
-  show (EEnv m) = unlines [show i ++" :=\n"++ indent (show v) | (LVar i, v) <- Map.toAscList m]
+  show (EEnv m) = unlines $
+    [show i ++" :=\n"++ indent (show v) | (LVar i, v) <- Map.toAscList m] ++
+    ["{"++ show c ++"} "++ show l ++" :=\n"++ indent (show v) | (LCond _ l c, v) <- Map.toAscList m]
 
 unionEEnv :: EEnv -> EEnv -> EEnv
 unionEEnv (EEnv a) (EEnv b) = EEnv $ Map.union a b
@@ -310,8 +312,9 @@ insertEEnv k v (EEnv m) = EEnv $ Map.insert (LVar k) v m
 filterEEnv :: (LVal -> DExpr -> Bool) -> EEnv -> EEnv
 filterEEnv p (EEnv m) = EEnv $ Map.filterWithKey p m
 
-conditionEEnv :: DExpr -> EEnv -> EEnv
-conditionEEnv c (EEnv env) = EEnv $ Map.mapKeys (\k -> LCond k c) env
+conditionEEnv :: Bool -> DExpr -> EEnv -> EEnv
+conditionEEnv sufficient c (EEnv env) =
+  EEnv $ Map.mapKeys (\k -> LCond sufficient k c) env
 
 bindInputs :: DAG -> [DExpr] -> EEnv
 bindInputs dag xs = EEnv . Map.fromList $ inputsL dag `zip` xs

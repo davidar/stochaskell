@@ -564,16 +564,26 @@ pdf :: (ExprTuple t, Show t) => Prog t -> t -> R
 pdf p = exp . lpdf p
 
 lpdf :: (ExprTuple t, Show t) => Prog t -> t -> R
-lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - logDet jacobian
+lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "lpdf" prog
         EEnv env = solveTuple block rets vals emptyEEnv
         env' = EEnv $ Map.filterWithKey p env
         p (LVar (Volatile "lpdf" _ _)) _ = True
         p _ _ = False
-        jacobian = Expr $ blockMatrix
+        jacobian =
           [ [ derivNodeRef env' block r (Var (Volatile ns 0 i) (typePNode d))
             | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
-          | r <- rets, typeRef r /= IntT ] :: RMat
+          | r <- rets, typeRef r /= IntT ]
+        isLowerTri = and [ isZ `all` drop i row | (i,row) <- zip [1..] jacobian ]
+        diagonal = [ row !! i | (i,row) <- zip [0..] jacobian ]
+        adjust | isLowerTri = Expr $ sum (logDet <$> diagonal)
+               | otherwise = trace "WARN: jacobian is not block triangular" $
+                    Expr $ logDet (blockMatrix jacobian)
+        isZ e = case ret of
+          Const c _ -> isZeros c
+          Var i@Internal{} _ | Apply "zeros" _ _ <- lookupBlock i block -> True
+          _ -> False
+          where (ret,block) = runDExpr e
 
 -- compute joint pdf of primitive random variables within the given program
 lpdfAux :: (ExprTuple t, Show t) => Prog t -> t -> R
@@ -949,6 +959,25 @@ mhAdjust adjust target proposal x = do
   accept <- bernoulli $ if a > 1 then 1 else a
   return $ if accept then y else x
 
+mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => P t -> (t -> P t) -> t -> P t
+mh' target proposal x = trace ("mh proposal: "++ show proposal) $ do
+  let a = mhRatio target proposal
+  y <- proposal x
+  accept <- bernoulli (min' 1 (a x y))
+  return $ ifB accept y x
+
+mhRatio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R
+mhRatio target proposal x y = optimiseE 2 . subst (substEEnv substEnv) $
+  exp $ f y - f x + q y' x' - q x' y'
+  where f = lpdf target
+        q = lpdfAux . proposal
+        x' = constSymbolLike "mhx" x
+        y' = constSymbolLike "mhy" y
+        substEnv = EEnv $ Map.fromList
+          [(LVar $ Symbol "mhx" True, erase $ detuple x)
+          ,(LVar $ Symbol "mhy" True, erase $ detuple y)
+          ]
+
 rjmc :: (ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => P t -> (t -> P t) -> t -> P t
 rjmc target proposal x = do
   let a = rjmcRatio target proposal
@@ -969,14 +998,9 @@ rjmcRatio target proposal x y = exp $ f y - f x + rjmcTransRatio proposal x y
   where f = lpdfAux target -- TODO: jacobian adjustment for transformed dist
 
 rjmcTransRatio :: (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
-rjmcTransRatio q x y =
-  optimiseE 2 . subst (substEEnv substEnv) $ rjmcTransRatio' q (sym "rjx" x) (sym "rjy" y)
-  where sym :: (ExprTuple t) => String -> t -> t
-        sym name val = entuple . expr $ do
-          t <- extractType emptyEEnv block (typeRef ret)
-          return $ Var (Symbol name True) t
-          where (ret, block) = runExpr (detuple val)
-        substEnv = EEnv $ Map.fromList
+rjmcTransRatio q x y = optimiseE 2 . subst (substEEnv substEnv) $
+  rjmcTransRatio' q (constSymbolLike "rjx" x) (constSymbolLike "rjy" y)
+  where substEnv = EEnv $ Map.fromList
           [(LVar $ Symbol "rjx" True, erase $ detuple x)
           ,(LVar $ Symbol "rjy" True, erase $ detuple y)
           ]

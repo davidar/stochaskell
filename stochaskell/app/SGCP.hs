@@ -61,22 +61,19 @@ stepUp t k n' (lsv,lls2,cap,n,s,g,phi) = do
   return (lsv,lls2,cap,n',s',g',phi')
 
 stepN :: R -> Z -> State -> P State
-stepN t k state@(lsv,lls2,cap,n,s,g,phi) = do
-  n' <- mixture' [(1/2, return (n + 1))
-                 ,(1/2, return (if n > k then n - 1 else n))]
-  stateUp   <- stepUp t k n' state
-  stateDown <- stepDown k n' state
-  return $ if n' == (n + 1) then stateUp
-      else if n' == (n - 1) then stateDown
-      else (lsv,lls2,cap,n',s,g,phi)
+stepN t k state@(lsv,lls2,cap,n,s,g,phi) = mixture'
+  [(1/2, stepUp t k (n + 1) state)
+  ,(1/2, if n == k then return state
+                   else stepDown k (n - 1) state)
+  ]
 
 stepS :: Z -> State -> P State
 stepS idx (lsv, lls2, cap, n, s, g, phi) = do
   x <- normal (s!idx) (exp (lls2/2))
   let kernel = kernelSE lsv lls2
   z <- normalCond n kernel s g x
-  let s' = vector [ if i == idx then x else s!i | i <- 1...n ]
-      g' = vector [ if i == idx then z else g!i | i <- 1...n ]
+  let s' = s `replaceAt` (idx, x)
+      g' = g `replaceAt` (idx, z)
   return (lsv, lls2, cap, n, s', g', phi)
 
 stepCap :: R -> State -> P State
@@ -94,10 +91,10 @@ stepGP t (lsv,lls2,cap,n,s,g,phi) = do
 
 step :: R -> Z -> State -> IO State
 step t k state = do
-  state <- chain 10 (sgcp t `mh` stepN t k) state
+  state <- chain 10 (sgcp t `mh'` stepN t k `runStep`) state
   state <- chainRange (integer k + 1, dim state)
-                      (\i -> sgcp t `mh` stepS i) state
-  state <- (sgcp t `mh` stepCap t) state
+                      (\i s -> sgcp t `mh'` stepS i `runStep` s) state
+  state <- sgcp t `mh'` stepCap t `runStep` state
   state <- stepGP t state
   return state
 
