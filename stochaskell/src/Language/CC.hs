@@ -10,6 +10,7 @@ import Data.Expression hiding (const)
 import Data.Expression.Const hiding (isScalar)
 import qualified Data.Expression.Const as Const
 import Data.Expression.Eval
+import Data.List
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
@@ -28,10 +29,10 @@ ccForLoop :: [Id] -> [Interval NodeRef] -> String -> String
 ccForLoop is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
   where f i (a,b) = "for(int "++ ccId i ++" = " ++ ccNodeRef a ++"; "++
                                  ccId i ++" <= "++ ccNodeRef b ++"; "++ ccId i ++"++) "
-ccForLoop' :: [Id] -> [Interval String] -> String -> String
+ccForLoop' :: [String] -> [Interval String] -> String -> String
 ccForLoop' is sh body = concat (zipWith f is sh) ++"{\n"++ body ++"\n}"
-  where f i (a,b) = "for(int "++ ccId i ++" = " ++ a ++"; "++
-                                 ccId i ++" <= "++ b ++"; "++ ccId i ++"++) "
+  where f i (a,b) = "for(int "++ i ++" = " ++ a ++"; "++
+                                 i ++" <= "++ b ++"; "++ i ++"++) "
 
 
 ------------------------------------------------------------------------------
@@ -49,9 +50,9 @@ ccNodeRef (Data _ js _) = "make_tuple("++ ccNodeRef `commas` js ++")"
 ccNodeRef r = error $ "ccNodeRef "++ show r
 
 ccIndex :: String -> [NodeRef] -> String
-ccIndex  a js = a ++ concat ["["++ ccNodeRef j ++"-1]" | j <- js]
-ccIndex' :: String -> [Id] -> String
-ccIndex' a js = a ++ concat ["["++ ccId      j ++"-1]" | j <- js]
+ccIndex a js = a ++"("++ intercalate ", " [ccNodeRef j ++"-1" | j <- js] ++")"
+ccIndex' :: String -> [String] -> String
+ccIndex' a js = a ++"("++ intercalate ", " [j ++"-1" | j <- js] ++")"
 
 
 ------------------------------------------------------------------------------
@@ -62,7 +63,8 @@ ccType :: Type -> String
 ccType IntT = "int"
 ccType RealT = "double"
 ccType (SubrangeT t _ _) = ccType t
-ccType (ArrayT _ [_] t) = "vector<"++ ccType t ++">"
+ccType (ArrayT (Just "vector") _ t) = "Matrix<"++ ccType t ++", Dynamic, 1>"
+ccType (ArrayT (Just "matrix") _ t) = "Matrix<"++ ccType t ++", Dynamic, Dynamic>"
 ccType (TupleT ts) = "tuple<"++ ccType `commas` ts ++">"
 ccType (UnionT ts) = "variant<"++ (ccType . TupleT) `commas` ts ++">"
 ccType t = error $ "ccType "++ show t
@@ -81,6 +83,8 @@ ccOperators =
   ,("-",   "-")
   ,("*",   "*")
   ,("/",   "/")
+  ,("<>",  "*")
+  ,("#>",  "*")
   ,("==",  "==")
   ,(">",   ">")
   ,(">=",  ">=")
@@ -94,6 +98,10 @@ ccNode r _ (Apply "getExternal" [Var i _] _) =
 ccNode _ name (Apply "ifThenElse" [a,b,c] _) =
   "if("++ ccNodeRef a ++") "++ name ++" = "++ ccNodeRef b ++"; "++
   "else "++ name ++" = "++ ccNodeRef c ++";"
+ccNode _ name (Apply "vectorSize" [v] _) =
+  name ++" = "++ ccNodeRef v ++".size();"
+ccNode _ name (Apply "eye" [i] t) =
+  name ++" = "++ ccType t ++"::Identity("++ ccNodeRef i ++", "++ ccNodeRef i ++");"
 ccNode _ name (Apply "min" js t) =
   name ++" = min<"++ ccType t ++">("++ ccNodeRef `commas` js ++");"
 ccNode _ name (Apply "negate" [i] _) =
@@ -101,6 +109,17 @@ ccNode _ name (Apply "negate" [i] _) =
 ccNode _ name (Apply op [i,j] _) | isJust s =
   name ++" = "++ ccNodeRef i ++" "++ fromJust s ++" "++ ccNodeRef j ++";"
   where s = lookup op ccOperators
+ccNode _ name (Apply "<\\>" [a,b] _) =
+  name ++" = "++ ccNodeRef a ++".colPivHouseholderQr().solve("++ ccNodeRef b ++");"
+ccNode _ name (Apply "chol" [m] _) =
+  name ++" = "++ ccNodeRef m ++".llt().matrixL();"
+ccNode _ name (Apply "log_det" [m] _) =
+  name ++" = log("++ ccNodeRef m ++".determinant());"
+ccNode _ name (Apply "logFactorial" [i] _) =
+  name ++" = log(boost::math::factorial<double>("++ ccNodeRef i ++"));"
+ccNode _ name (Apply "bernoulliLogit_lpdf" [i,l] _) =
+  name ++" = "++ ccNodeRef i ++" ? "++ p ++" : 1. - "++ p ++";"
+  where p = "1./(1. + exp(-"++ ccNodeRef l ++"))"
 ccNode _ name (Apply "gamma_lpdf" [i,a,b] _) =
   name ++" = log(boost::math::pdf(boost::math::gamma_distribution<>("++
     ccNodeRef a ++", "++ q ++"), "++ ccNodeRef i ++"));"
@@ -109,18 +128,26 @@ ccNode _ name (Apply "neg_binomial_lpdf" [i,a,b] _) =
   name ++" = log(boost::math::pdf(boost::math::negative_binomial_distribution<>("++
     ccNodeRef a ++", "++ p ++"), "++ ccNodeRef i ++"));"
   where p = ccNodeRef b ++" / ("++ ccNodeRef b ++" + 1)"
+ccNode _ name (Apply "normals_lpdf" [x,m,s] _) =
+  name ++" = 0.; "++ (ccForLoop' i [("1",n)] $ "  "++
+    name ++" += log(boost::math::pdf(boost::math::normal_distribution<>("++
+      ccNodeRef m `ccIndex'` i ++", "++ ccNodeRef s `ccIndex'` i ++"), "++
+      ccNodeRef x `ccIndex'` i ++"));")
+  where i = ["i_"++ name]
+        n = ccNodeRef x ++".size()"
 ccNode _ name (Apply f (i:js) _) | (d,"_lpdf") <- splitAt (length f - 5) f =
   name ++" = log(boost::math::pdf(boost::math::"++ d ++ "_distribution<>("++
     ccNodeRef `commas` js ++"), "++ ccNodeRef i ++"));"
 ccNode _ name (Apply f js _) =
   name ++" = "++ f ++ "("++ ccNodeRef `commas` js ++");"
 ccNode _ name (Array sh (Lambda dag ret) _) =
-  ccForLoop (inputs dag) sh $
+  name ++".resize("++ (ccNodeRef . snd) `commas` sh ++");\n"++
+  (ccForLoop (inputs dag) sh $
     ccDAG Map.empty dag ++"\n  "++
-    name `ccIndex'` inputs dag ++" = "++ ccNodeRef ret ++";"
+    name `ccIndex'` (ccId <$> inputs dag) ++" = "++ ccNodeRef ret ++";")
 ccNode _ name (FoldScan fs lr (Lambda dag ret) seed (Var ls s) t) =
   name ++ sloc ++" = "++ ccNodeRef seed ++";\n"++
-  ccForLoop' [idx] [("1",n)] (unlines
+  ccForLoop' [ccId idx] [("1",n)] (unlines
     ["  "++ ccType (typeIndex 1 s) ++" "++ ccId i ++" = "++ ccId ls ++"["++ loc ++"];"
     ,"  "++ ccType (if fs == Fold then t else typeIndex 1 t) ++" "++
               ccId j ++" = "++ name ++ ploc ++";"
@@ -156,7 +183,7 @@ ccPNode name (Dist f args _) =
   name ++" = std::"++ f ++"_distribution<>("++ ccNodeRef `commas` args ++")(gen);"
 ccPNode name (Loop sh (Lambda ldag body) _) =
   ccForLoop (inputs ldag) sh $
-    let lval = name `ccIndex'` inputs ldag
+    let lval = name `ccIndex'` (ccId <$> inputs ldag)
     in ccDAG Map.empty ldag ++ indent (ccPNode lval body)
 ccPNode name (Switch e alts ns _) =
   "switch("++ ccNodeRef e ++".index()) {\n"++ indent (unlines $ do
@@ -189,7 +216,8 @@ ccRead' _ e | isScalar (typeRef e) = "cin >> "++ ccNodeRef e ++";"
 ccRead' l e | (ArrayT _ [_] t) <- typeRef e =
   "int "++ n ++"; cin >> "++ n ++";\n"++
   ccNodeRef e ++".resize("++ n ++");\n"++
-  (ccForLoop' is [("1",n)] $ "  cin >> "++ ccNodeRef e `ccIndex'` is ++";")
+  (ccForLoop' (ccId <$> is) [("1",n)] $
+    "  cin >> "++ ccNodeRef e `ccIndex'` (ccId <$> is) ++";")
   where n = ccNodeRef e ++"_length"
         is = [Dummy l 1]
 ccRead' l e | UnionT tss <- typeRef e =
@@ -209,7 +237,8 @@ ccPrint :: Int -> NodeRef -> String
 ccPrint _ e | isScalar (typeRef e) = "cout << "++ ccNodeRef e ++" << ' ';"
 ccPrint l e | (ArrayT _ [_] _) <- typeRef e =
   "cout << "++ n ++" << ' ';\n"++
-  (ccForLoop' is [("1",n)] $ "  cout << "++ ccNodeRef e `ccIndex'` is ++" << ' ';")
+  (ccForLoop' (ccId <$> is) [("1",n)] $
+    "  cout << "++ ccNodeRef e `ccIndex'` (ccId <$> is) ++" << ' ';")
   where n = ccNodeRef e ++".size()"
         is = [Dummy l 1]
 ccPrint l e | UnionT tss <- typeRef e =
@@ -231,9 +260,14 @@ ccProgram ts prog = (,rets) $ unlines
   ,"#include <random>"
   ,"#include <tuple>"
   ,"#include <boost/math/distributions.hpp>"
+  ,"#include <boost/math/special_functions/factorials.hpp>"
+  ,"#include <Eigen/Dense>"
   ,"#include <mpark/variant.hpp>"
+  ,"#include <backward.hpp>"
   ,"using namespace std;"
+  ,"using namespace Eigen;"
   ,"using namespace mpark;"
+  ,"namespace backward { backward::SignalHandling sh; }"
   ,""
   ,"int main() {"
   ,"  random_device rd;"
@@ -282,7 +316,14 @@ runCC prog = \x -> do
     putStrLn' code
     writeFile srcname code
     let cxx = "g++"
-        args = ["-std=c++11", "-Ivariant/include", "-o", exename, srcname]
+        args = ["-std=c++11"
+               ,"-Ibackward-cpp", "-Ieigen", "-Ivariant/include"
+               ,"-DBACKWARD_HAS_BFD=1"
+               ,"-g", "-rdynamic"
+               ,srcname
+               ,"-lbfd", "-ldl"
+               ,"-o", exename
+               ]
     putStrLn' $ unwords (cxx:args)
     callProcess cxx args
 

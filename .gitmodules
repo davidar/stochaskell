@@ -10,3 +10,6 @@
 [submodule "stochaskell/IHaskell"]
 	path = stochaskell/ihaskell
 	url = https://github.com/gibiansky/IHaskell.git
+[submodule "stochaskell/backward-cpp"]
+	path = stochaskell/backward-cpp
+	url = https://github.com/bombela/backward-cpp.git
