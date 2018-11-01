@@ -93,7 +93,7 @@ step :: R -> Z -> State -> IO State
 step t k state = do
   state <- chain 10 (sgcp t `mh'` stepN t k `runStep`) state
   state <- chainRange (integer k + 1, dim state)
-                      (\i s -> sgcp t `mh'` stepS i `runStep` s) state
+                      (\i s -> sgcp t `mh'` stepS i `runCC` s) state
   state <- sgcp t `mh'` stepCap t `runCC` state
   state <- stepGP t state
   return state

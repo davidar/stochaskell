@@ -86,6 +86,7 @@ ccOperators =
   ,("<>",  "*")
   ,("#>",  "*")
   ,("==",  "==")
+  ,("/=",  "!=")
   ,(">",   ">")
   ,(">=",  ">=")
   ,("<",   "<")
@@ -109,14 +110,20 @@ ccNode _ name (Apply "negate" [i] _) =
 ccNode _ name (Apply op [i,j] _) | isJust s =
   name ++" = "++ ccNodeRef i ++" "++ fromJust s ++" "++ ccNodeRef j ++";"
   where s = lookup op ccOperators
+ccNode _ name (Apply "<.>" [u,v] _) =
+  name ++" = "++ ccNodeRef u ++".dot("++ ccNodeRef v ++");"
 ccNode _ name (Apply "<\\>" [a,b] _) =
   name ++" = "++ ccNodeRef a ++".colPivHouseholderQr().solve("++ ccNodeRef b ++");"
 ccNode _ name (Apply "chol" [m] _) =
   name ++" = "++ ccNodeRef m ++".llt().matrixL();"
+ccNode _ name (Apply "inv" [m] _) =
+  name ++" = "++ ccNodeRef m ++".inverse();"
 ccNode _ name (Apply "log_det" [m] _) =
   name ++" = log("++ ccNodeRef m ++".determinant());"
 ccNode _ name (Apply "logFactorial" [i] _) =
   name ++" = log(boost::math::factorial<double>("++ ccNodeRef i ++"));"
+ccNode _ name (Apply "replaceIndex" [v,i,e] _) =
+  name ++" = "++ ccNodeRef v ++"; "++ name `ccIndex` [i] ++" = "++ ccNodeRef e ++";"
 ccNode _ name (Apply "bernoulliLogit_lpdf" [i,l] _) =
   name ++" = "++ ccNodeRef i ++" ? "++ p ++" : 1. - "++ p ++";"
   where p = "1./(1. + exp(-"++ ccNodeRef l ++"))"
