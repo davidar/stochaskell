@@ -67,6 +67,13 @@ data PNode = Dist { dName :: String
                     , sNS :: NS
                     , typePNode :: Type
                     }
+           | Chain  { cRange :: Interval NodeRef
+                    , cAux :: [PNode]
+                    , cFunc :: Lambda NodeRef
+                    , cInit :: NodeRef
+                    , cNS :: NS
+                    , typePNode :: Type
+                    }
            deriving (Eq)
 
 dependsPNode :: Block -> PNode -> Set Id
@@ -94,6 +101,10 @@ instance Show PNode where
                     | otherwise = "C"++ show i ++" "++ intercalate " " (map show $ inputs dag)
                 rhs = indent . showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret
             return $ lhs ++" ->\n"++ rhs
+  show (Chain range refs (Lambda dag ret) x ns _) =
+    "chain "++ show range ++" "++ show x ++" $ \\"++ show i ++" "++ show j ++" ->\n"++
+      (indent . showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret)
+    where [i,j] = inputs' dag
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
@@ -207,6 +218,27 @@ fromCaseP p e = toExprTuple <$> caseP n (erase e)
 
 switchOf :: (Constructor c, ExprTuple t) => (Expr c -> P t) -> Expr c -> P t
 switchOf f = fromCaseP (f . fromConcrete)
+
+chainRange' :: forall t. (ExprTuple t) => Interval Z -> (Z -> t -> P t) -> t -> P t
+chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
+  block <- get
+  let d = nextLevel block
+      TypeIs t = typeOf :: TypeOf t
+      ids = [(Dummy 99 0, IntT), (Dummy 99 1, t)]
+      args = [DExpr . return $ Var i t | (i,t) <- ids]
+      s = do
+        r <- fromProg $ p (Expr $ args !! 0) (entuple . Expr $ args !! 1)
+        liftExprBlock . fromExpr $ detuple r
+      (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
+        PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv ns
+  put $ Block block'
+  lo' <- fromExpr lo
+  hi' <- fromExpr hi
+  x' <- fromExpr $ detuple x
+  return $ Chain (lo',hi') (reverse acts) (Lambda dag ret) x' ns t
+
+chain' :: (ExprTuple t) => Z -> (t -> P t) -> t -> P t
+chain' n p = chainRange' (1,n) (\_ -> p)
 
 mixture :: forall t. (ExprTuple t) => [(R, P t)] -> P t
 mixture qps = do

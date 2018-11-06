@@ -272,6 +272,13 @@ ccPNode name (Switch e alts ns _) =
   where UnionT tss = typeRef e
         f [j] = ccNodeRef j
         f js = "make_tuple("++ ccNodeRef `commas` js ++")"
+ccPNode name (Chain (lo,hi) refs (Lambda dag ret) x ns _) =
+  name ++" = "++ ccNodeRef x ++";\n"++
+  (ccForLoop' [ccNodeRef i] [(ccNodeRef lo, ccNodeRef hi)] $
+    "  "++ ccType (typeRef j) ++" "++ ccNodeRef j ++" = "++ name ++";\n"++
+    ccDAG (pnodes' ns (dagLevel dag) refs) dag ++"\n"++
+    "  "++ name ++" = "++ ccNodeRef ret ++";")
+  where [i,j] = inputs' dag
 ccPNode _ pn = error $ "ccPNode "++ show pn
 
 ccDAG :: Map Id PNode -> DAG -> String

@@ -435,6 +435,8 @@ instance forall t. (ExprType t) => ExprType [t] where
               TypeIs s | isScalar s -> s
               TypeIs (ArrayT _ _ s) -> s
 
+instance forall a. (ExprType a) => ExprType (Expr a) where
+  typeOf = TypeIs a where TypeIs a = typeOf :: TypeOf a
 instance forall a b. (ExprType a, ExprType b) => ExprType (Expr a, Expr b) where
   typeOf = TypeIs $ TupleT [a,b]
     where TypeIs a = typeOf :: TypeOf a
@@ -1577,7 +1579,7 @@ entupleD n e = extractD e 0 <$> [0..(n-1)]
 
 newtype TupleSize t = TupleSize Int
 newtype TypesOf t = TypesIs [Type]
-class ExprTuple t where
+class ExprType t => ExprTuple t where
     tupleSize :: TupleSize t
     fromExprTuple :: t -> [DExpr]
     toExprTuple :: [DExpr] -> t

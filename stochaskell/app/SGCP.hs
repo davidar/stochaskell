@@ -27,8 +27,8 @@ poissonProcess' rate t = do
 
 type State = (R,R,R,Z,RVec,RVec,BVec)
 
-dim :: State -> Int
-dim (_,_,_,n,_,_,_) = integer n
+dim :: State -> Z
+dim (_,_,_,n,_,_,_) = n
 
 sgcp :: R -> P State
 sgcp t = do
@@ -81,6 +81,13 @@ stepCap t (lsv, lls2, cap, n, s, g, phi) = do
   cap' <- gamma a (1 + t)
   return (lsv, lls2, cap', n, s, g, phi)
 
+stepMH :: R -> Z -> State -> P State
+stepMH t k state = do
+  state <- chain' 10 (sgcp t `mh'` stepN t k) state
+  state <- chainRange' (k + 1, dim state) (\i -> sgcp t `mh'` stepS i) state
+  state <- (sgcp t `mh'` stepCap t) state
+  return state
+
 stepGP :: R -> State -> IO State
 stepGP t (lsv,lls2,cap,n,s,g,phi) = do
   samples <- hmcStanInit 10 [ (lsv',lls2',g') | (lsv',lls2',cap',n',s',g',phi') <- sgcp t,
@@ -90,10 +97,7 @@ stepGP t (lsv,lls2,cap,n,s,g,phi) = do
 
 step :: R -> Z -> State -> IO State
 step t k state = do
-  state <- chain 10 (sgcp t `mh'` stepN t k `runCC`) state
-  state <- chainRange (integer k + 1, dim state)
-                      (\i s -> sgcp t `mh'` stepS i `runCC` s) state
-  state <- sgcp t `mh'` stepCap t `runCC` state
+  state <- stepMH t k `runCC` state
   state <- stepGP t state
   return state
 
