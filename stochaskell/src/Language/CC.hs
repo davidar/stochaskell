@@ -45,8 +45,16 @@ ccId = show
 ccNodeRef :: NodeRef -> String
 ccNodeRef (Var s _) = ccId s
 ccNodeRef (Const c _) | dimension c == 0 = show c
+ccNodeRef (Const c _) | dimension c == 1 = "{"++ show `commas` toList c ++"}"
 ccNodeRef (Index f js) = ccNodeRef f `ccIndex` reverse js
 ccNodeRef (Data _ js _) = "make_tuple("++ ccNodeRef `commas` js ++")"
+ccNodeRef (Extract r 0 i) = "get<"++ show i ++">("++ ccNodeRef r ++")"
+ccNodeRef (Cond cvs _)
+  | replicated vs = ccNodeRef $ unreplicate vs
+  | otherwise = intercalate " : " $
+    [ccNodeRef c ++" ? "++ ccNodeRef v | (c,v) <- init cvs]
+    ++ [ccNodeRef . snd $ last cvs]
+  where vs = snd <$> cvs
 ccNodeRef r = error $ "ccNodeRef "++ show r
 
 ccIndex :: String -> [NodeRef] -> String
@@ -91,11 +99,21 @@ ccOperators =
   ,(">=",  ">=")
   ,("<",   "<")
   ,("<=",  "<=")
+  ,("&&",  "&&")
+  ,("||",  "||")
   ]
 
 ccNode :: Map Id PNode -> Label -> Node -> String
 ccNode r _ (Apply "getExternal" [Var i _] _) =
   ccPNode (ccId i) . fromJust $ Map.lookup i r
+ccNode _ name (Apply "id" [i] _) =
+  name ++" = "++ ccNodeRef i ++";"
+ccNode _ name (Apply "&&s" js _) =
+  name ++" = "++ intercalate " && " (ccNodeRef <$> js) ++";"
+ccNode _ name (Apply "==" [u,v] _) | ArrayT{} <- typeRef u =
+  name ++" = "++ ccNodeRef u ++".rows() == "++ ccNodeRef v ++".rows() && "++
+                 ccNodeRef u ++".cols() == "++ ccNodeRef v ++".cols() && "++
+                 ccNodeRef u ++" == "++ ccNodeRef v ++";"
 ccNode _ name (Apply "ifThenElse" [a,b,c] _) =
   "if("++ ccNodeRef a ++") "++ name ++" = "++ ccNodeRef b ++"; "++
   "else "++ name ++" = "++ ccNodeRef c ++";"
@@ -122,11 +140,43 @@ ccNode _ name (Apply "log_det" [m] _) =
   name ++" = log("++ ccNodeRef m ++".determinant());"
 ccNode _ name (Apply "logFactorial" [i] _) =
   name ++" = log(boost::math::factorial<double>("++ ccNodeRef i ++"));"
-ccNode _ name (Apply "replaceIndex" [v,i,e] _) =
-  name ++" = "++ ccNodeRef v ++"; "++ name `ccIndex` [i] ++" = "++ ccNodeRef e ++";"
+ccNode _ name (Apply "replaceIndex" [v,j,e] _) =
+  name ++" = "++ ccNodeRef v ++"; "++ name `ccIndex` [j] ++" = "++ ccNodeRef e ++";"
+ccNode _ name (Apply "insertIndex" [v,j,e] _) =
+  name ++".resize("++ n ++");\n"++
+  (ccForLoop' [i] [("1",n)] $
+    "  if("++ i ++" < "++ ccNodeRef j ++") "++
+      name `ccIndex'` [i] ++" = "++ ccNodeRef v `ccIndex'` [i] ++";\n"++
+    "  else if("++ i ++" == "++ ccNodeRef j ++") "++
+      name `ccIndex'` [i] ++" = "++ ccNodeRef e ++";\n"++
+    "  else "++
+      name `ccIndex'` [i] ++" = "++ ccNodeRef v `ccIndex'` [i ++"-1"] ++";")
+  where i = "i_"++ name
+        n = "("++ ccNodeRef v ++".size() + 1)"
+ccNode _ name (Apply "deleteIndex" [v,j] _) =
+  name ++".resize("++ n ++");\n"++
+  (ccForLoop' [i] [("1",n)] $
+    "  if("++ i ++" < "++ ccNodeRef j ++") "++
+      name `ccIndex'` [i] ++" = "++ ccNodeRef v `ccIndex'` [i] ++";\n"++
+    "  else "++
+      name `ccIndex'` [i] ++" = "++ ccNodeRef v `ccIndex'` [i ++"+1"] ++";")
+  where i = "i_"++ name
+        n = "("++ ccNodeRef v ++".size() - 1)"
+ccNode _ name (Apply "findSortedInsertIndex" [e,v] _) =
+  name ++" = "++ n ++" + 1;\n"++
+  (ccForLoop' [j] [("1",n)] $
+    "  if("++ ccNodeRef e ++" < "++ ccNodeRef v `ccIndex'` [j] ++") { "++
+      name ++" = "++ j ++"; break; }")
+  where j = "i_"++ name
+        n = ccNodeRef v ++".size()"
 ccNode _ name (Apply "bernoulliLogit_lpdf" [i,l] _) =
   name ++" = "++ ccNodeRef i ++" ? "++ p ++" : 1. - "++ p ++";"
   where p = "1./(1. + exp(-"++ ccNodeRef l ++"))"
+ccNode _ name (Apply "discreteUniform_lpdf" [i,a,b] _) =
+  name ++" = log("++ c ++" ? "++ p ++" : 0.);"
+  where c = "("++ ccNodeRef a ++" <= "++ ccNodeRef i ++" && "++
+                  ccNodeRef i ++" <= "++ ccNodeRef b ++")"
+        p = "1./("++ ccNodeRef b ++" - "++ ccNodeRef a ++" + 1)"
 ccNode _ name (Apply "gamma_lpdf" [i,a,b] _) =
   name ++" = log(boost::math::pdf(boost::math::gamma_distribution<>("++
     ccNodeRef a ++", "++ q ++"), "++ ccNodeRef i ++"));"
@@ -152,19 +202,20 @@ ccNode _ name (Array sh (Lambda dag ret) _) =
   (ccForLoop (inputs dag) sh $
     ccDAG Map.empty dag ++"\n  "++
     name `ccIndex'` (ccId <$> inputs dag) ++" = "++ ccNodeRef ret ++";")
-ccNode _ name (FoldScan fs lr (Lambda dag ret) seed (Var ls s) t) =
+ccNode _ name (FoldScan fs lr (Lambda dag ret) seed ls t) =
   name ++ sloc ++" = "++ ccNodeRef seed ++";\n"++
   ccForLoop' [ccId idx] [("1",n)] (unlines
-    ["  "++ ccType (typeIndex 1 s) ++" "++ ccId i ++" = "++ ccId ls ++"["++ loc ++"];"
+    ["  "++ ccType (typeIndex 1 s) ++" "++ ccId i ++" = "++ ccNodeRef ls ++"["++ loc ++"];"
     ,"  "++ ccType (if fs == Fold then t else typeIndex 1 t) ++" "++
               ccId j ++" = "++ name ++ ploc ++";"
     ,       ccDAG Map.empty dag
     ,"  "++ name ++ rloc ++" = "++ ccNodeRef ret ++";"
     ])
-  where d = dagLevel dag
+  where s = typeRef ls
+        d = dagLevel dag
         idx = Dummy d 0
         [i,j] = inputs dag
-        n = ccId ls ++".size()"
+        n = ccNodeRef ls ++".size()"
         loc = case lr of
           Left_  -> ccId idx ++"-1"
           Right_ -> n ++"-"++ ccId idx
@@ -178,16 +229,34 @@ ccNode _ name (FoldScan fs lr (Lambda dag ret) seed (Var ls s) t) =
           Scan -> case lr of
             Left_  -> ("["++ loc ++"-1]", "["++ loc ++"]")
             Right_ -> ("["++ loc ++"]", "["++ loc ++"-1]")
-ccNode _ _ node = error $ "unable to codegen node "++ show node
+ccNode _ name (Case e alts t) =
+  "switch("++ ccNodeRef e ++") {\n"++ cases ++"\n}"
+  where cases = unlines $ do
+          (i, Lambda dag ret) <- zip [0..] alts
+          let lhs | typeRef e == IntT = show (i+1)
+              rhs = unlines
+                [ccDAG Map.empty dag
+                ,name ++" = "++ ccNodeRef (Data 0 ret t) ++";"
+                ,"break;"]
+          return $ "case "++ lhs ++":\n"++ indent rhs
+ccNode _ _ node = error $ "ccNode "++ show node
+
+ccDistributions =
+  [("discreteUniform", "uniform_int")
+  ,("normal",          "normal")
+  ,("poisson",         "poisson")
+  ,("uniform",         "uniform_real")]
 
 ccPNode :: Label -> PNode -> String
 ccPNode name (Dist "bernoulli" [p] _) =
   name ++" = std::bernoulli_distribution("++ ccNodeRef p ++")(gen);"
+ccPNode name (Dist "categorical" [ps] _) =
+  name ++" = 1 + std::discrete_distribution<>("++ ccNodeRef ps ++")(gen);"
 ccPNode name (Dist "gamma" [a,b] _) =
   name ++" = std::gamma_distribution<>("++ ccNodeRef a ++", "++ q ++")(gen);"
   where q = "1./"++ ccNodeRef b
-ccPNode name (Dist f args _) =
-  name ++" = std::"++ f ++"_distribution<>("++ ccNodeRef `commas` args ++")(gen);"
+ccPNode name (Dist f args _) | Just s <- lookup f ccDistributions =
+  name ++" = std::"++ s ++"_distribution<>("++ ccNodeRef `commas` args ++")(gen);"
 ccPNode name (Loop sh (Lambda ldag body) _) =
   ccForLoop (inputs ldag) sh $
     let lval = name `ccIndex'` (ccId <$> inputs ldag)
@@ -203,11 +272,17 @@ ccPNode name (Switch e alts ns _) =
   where UnionT tss = typeRef e
         f [j] = ccNodeRef j
         f js = "make_tuple("++ ccNodeRef `commas` js ++")"
+ccPNode _ pn = error $ "ccPNode "++ show pn
 
 ccDAG :: Map Id PNode -> DAG -> String
-ccDAG r dag = indent. unlines . flip map (nodes dag) $ \(i,n) ->
+ccDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = ccId $ Internal (dagLevel dag) i
-  in decl name n ++ ccNode r name n
+      wrapTry s 
+        | dagLevel dag == 0 =
+          "try { "++ s ++" } catch(const std::runtime_error& e) "++
+            "{ cerr << \""++ name ++": \" << e.what() << endl; }"
+        | otherwise = s
+  in decl name n ++ wrapTry (ccNode r name n)
   where decl _ (Apply "getExternal" [i] t) = ccType t ++" "++ (ccNodeRef i) ++"; "
         decl name node = ccType (typeNode node) ++" "++ name ++"; "
 
@@ -268,6 +343,7 @@ ccProgram ts prog = (,rets) $ unlines
   ,"#include <tuple>"
   ,"#include <boost/math/distributions.hpp>"
   ,"#include <boost/math/special_functions/factorials.hpp>"
+  ,"#define eigen_assert(X) do { if(!(X)) throw std::runtime_error(#X); } while(false);"
   ,"#include <Eigen/Dense>"
   ,"#include <mpark/variant.hpp>"
   ,"#include <backward.hpp>"

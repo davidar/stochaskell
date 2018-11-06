@@ -53,8 +53,7 @@ stepUp t k n' (lsv,lls2,cap,n,s,g,phi) = do
   x <- uniform 0 t
   let kernel = kernelSE lsv lls2
   z <- normalCond n kernel s g x
-  let f i j = if x <= (s!i) then i else j
-      i = foldr f n' $ vector [ i | i <- (k+1)...n ]
+  let i = findSortedInsertIndex x s
       s'   = insertIndex s i x
       g'   = insertIndex g i z
       phi' = insertIndex phi i false
@@ -91,7 +90,7 @@ stepGP t (lsv,lls2,cap,n,s,g,phi) = do
 
 step :: R -> Z -> State -> IO State
 step t k state = do
-  state <- chain 10 (sgcp t `mh'` stepN t k `runStep`) state
+  state <- chain 10 (sgcp t `mh'` stepN t k `runCC`) state
   state <- chainRange (integer k + 1, dim state)
                       (\i s -> sgcp t `mh'` stepS i `runCC` s) state
   state <- sgcp t `mh'` stepCap t `runCC` state
