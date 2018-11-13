@@ -994,8 +994,8 @@ mhAdjust adjust target proposal x = do
 mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => P t -> (t -> P t) -> t -> P t
 mh' target proposal x = trace ("mh proposal: "++ show proposal) $ do
   let a = mhRatio target proposal
-  y <- proposal x
-  accept <- bernoulli (min' 1 (a x y))
+  y <- debug "proposing" <$> proposal x
+  accept <- bernoulli (min' 1 (debug "MH acceptance ratio" $ a x y))
   return $ ifB accept y x
 
 mhRatio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R

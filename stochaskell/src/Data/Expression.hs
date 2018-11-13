@@ -1187,6 +1187,13 @@ findSortedInsertIndex = apply2 "findSortedInsertIndex" IntT
 min' :: Expr a -> Expr a -> Expr a
 min' = applyClosed2 "min"
 
+debug :: (ExprTuple t) => String -> t -> t
+debug msg t = toExprTuple $ do
+  e <- fromExprTuple t
+  return . DExpr $ do
+    _ <- fromDExpr $ apply' ("debug$"++ msg) (TupleT []) (fromExprTuple t)
+    fromDExpr e
+
 
 ------------------------------------------------------------------------------
 -- INSTANCES                                                                --

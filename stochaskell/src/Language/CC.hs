@@ -106,6 +106,13 @@ ccOperators =
 ccNode :: Map Id PNode -> Label -> Node -> String
 ccNode r _ (Apply "getExternal" [Var i _] _) =
   ccPNode (ccId i) . fromJust $ Map.lookup i r
+ccNode _ _ (Apply f js _) | ("debug$",msg) <- splitAt 6 f =
+  "cerr << \"[DEBUG] "++ msg ++": \" << "++ s ++" << endl;"
+  where s = case js of
+          [j] -> ccNodeRef j
+          _ -> "'(' << "++ intercalate " << ',' << " (g <$> js) ++" << ')'"
+        g j | ArrayT{} <- typeRef j = ccNodeRef j ++".format(eigenFormat)"
+            | otherwise = ccNodeRef j
 ccNode _ name (Apply "id" [i] _) =
   name ++" = "++ ccNodeRef i ++";"
 ccNode _ name (Apply "&&s" js _) =
@@ -358,6 +365,8 @@ ccProgram ts prog = (,rets) $ unlines
   ,"using namespace Eigen;"
   ,"using namespace mpark;"
   ,"namespace backward { backward::SignalHandling sh; }"
+  ,"IOFormat eigenFormat(StreamPrecision, DontAlignCols, "++
+    "\",\", \";\", \"\", \"\", \"[\", \"]\");"
   ,""
   ,"int main() {"
   ,"  random_device rd;"
