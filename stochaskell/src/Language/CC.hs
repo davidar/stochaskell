@@ -292,7 +292,7 @@ ccDAG :: Map Id PNode -> DAG -> String
 ccDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = ccId $ Internal (dagLevel dag) i
       wrapTry s 
-        | dagLevel dag == 0 =
+        | dagLevel dag == 0 || length (nodes dag) > 10 =
           "try { "++ s ++" } catch(const std::runtime_error& e) "++
             "{ cerr << \""++ name ++": \" << e.what() << endl; }"
         | otherwise = s

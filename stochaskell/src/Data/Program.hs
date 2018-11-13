@@ -953,6 +953,22 @@ samplePNode env block (Switch hd alts ns _) = do
         p Nothing = False
         p _ = True
 
+samplePNode env block (Chain (lo,hi) refs (Lambda dag ret) x ns _) =
+  chainRange (lo',hi') f x'
+  where lo' = integer . fromRight' $ evalNodeRef env block lo
+        hi' = integer . fromRight' $ evalNodeRef env block hi
+        x' = fromRight' $ evalNodeRef env block x
+        block' = deriveBlock dag block
+        idents = [ (Volatile ns (dagLevel dag) i, d) | (i,d) <- zip [0..] refs ]
+        p (Just Internal{}) = False
+        p Nothing = False
+        p _ = True
+        f i x = do
+          let env' = Map.fromList (inputsL dag `zip` [i,x]) `Map.union` env
+          env'' <- samplePNodes env' block' idents
+          let env''' = Map.filterWithKey (const . p . getId') env''
+          return . fromRight' $ evalNodeRef env''' block' ret
+
 samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
 
 
