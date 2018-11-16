@@ -332,6 +332,10 @@ instance (Eq t) => Eq (Expr t) where
 instance (Ord t) => Ord (Expr t) where
   e `compare` f = runExpr e `compare` runExpr f
 
+instance (ExprTuple a, ExprTuple b, ExprType t) => Show (a -> b -> Expr t) where
+  show f = "\\input_a input_b ->\n"++ (indent . show . erase $
+    f (entuple $ symbol "input_a") (entuple $ symbol "input_b"))
+
 type B = Expression Bool
 type R = Expression Double
 type Z = Expression Integer
@@ -851,8 +855,19 @@ simplify (Apply "||" [_,Const 1 _] t) = return $ Const 1 t
 simplify (Apply "#>" [_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "<#" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "replaceIndex" [Const 0 _,_,Const 0 _] t) = return $ Const 0 t
-simplify (Apply "+s" [a,b] t) = simplify (Apply "+" [a,b] t)
-simplify (Apply "+s" [a] _) = return a
+simplify (Apply s js t) | s == "+" || s == "+s" = do
+  block <- get
+  case simplifySum block js of
+    [a] -> return a
+    [a,b] -> liftcons (Apply "+" [a,b] t)
+    js' -> liftcons (Apply "+s" js' t)
+  where simplifySum block refs = sort $ do
+          ref <- refs
+          case ref of
+            Const 0 _ -> mzero
+            Var i@Internal{} _ | Apply f js _ <- lookupBlock i block
+                              , f `elem` ["+","+s"] -> simplifySum block js
+            _ -> return ref
 simplify (Apply f args t)
   | Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)

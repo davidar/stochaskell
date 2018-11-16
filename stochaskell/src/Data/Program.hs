@@ -146,7 +146,7 @@ runProg ns p = runState (fromProg p) $ emptyPBlock ns
 instance (ExprTuple t) => Show (Prog t) where
   show p = showPBlock pb $ show rets
     where (rets, pb) = runProgExprs "show" p
-instance (ExprType a, ExprTuple a, ExprTuple b) => Show (a -> Prog b) where
+instance (ExprTuple a, ExprTuple b) => Show (a -> Prog b) where
   show p = "\\input ->\n"++ (indent . showPBlock pb $ show rets)
     where (rets, pb) = runProgExprs "show" . p . entuple $ symbol "input"
 
@@ -1007,11 +1007,11 @@ mhAdjust adjust target proposal x = do
   accept <- bernoulli $ if a > 1 then 1 else a
   return $ if accept then y else x
 
-mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => P t -> (t -> P t) -> t -> P t
-mh' target proposal x = trace ("mh proposal: "++ show proposal) $ do
+mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => String -> P t -> (t -> P t) -> t -> P t
+mh' msg target proposal x = do
   let a = mhRatio target proposal
-  y <- debug "proposing" <$> proposal x
-  accept <- bernoulli (min' 1 (debug "MH acceptance ratio" $ a x y))
+  y <- debug (msg ++" proposing") <$> proposal x
+  accept <- bernoulli (min' 1 (debug (msg ++" acceptance ratio") $ a x y))
   return $ ifB accept y x
 
 mhRatio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R

@@ -83,9 +83,9 @@ stepCap t (lsv, lls2, cap, n, s, g, phi) = do
 
 stepMH :: R -> Z -> State -> P State
 stepMH t k state = do
-  state <- chain' 10 (sgcp t `mh'` stepN t k) state
-  state <- chainRange' (k + 1, dim state) (\i -> sgcp t `mh'` stepS i) state
-  state <- (sgcp t `mh'` stepCap t) state
+  state <- chain' 10 (mh' "stepN" (sgcp t) (stepN t k)) state
+  state <- chainRange' (k + 1, dim state) (\i -> mh' "stepS" (sgcp t) (stepS i)) state
+  state <- (mh' "stepCap" (sgcp t) (stepCap t)) state
   return state
 
 stepGP :: R -> State -> IO State

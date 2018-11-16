@@ -117,6 +117,8 @@ ccNode _ name (Apply "id" [i] _) =
   name ++" = "++ ccNodeRef i ++";"
 ccNode _ name (Apply "&&s" js _) =
   name ++" = "++ intercalate " && " (ccNodeRef <$> js) ++";"
+ccNode _ name (Apply "+s" js _) =
+  name ++" = "++ intercalate " + " (ccNodeRef <$> js) ++";"
 ccNode _ name (Apply "==" [u,v] _) | ArrayT{} <- typeRef u =
   name ++" = "++ ccNodeRef u ++".rows() == "++ ccNodeRef v ++".rows() && "++
                  ccNodeRef u ++".cols() == "++ ccNodeRef v ++".cols() && "++
@@ -376,7 +378,7 @@ ccProgram ts prog = (,rets) $ unlines
   ,   indent $ unlines [ccPrint 1 ret ++" cout << endl;" | ret <- rets]
   ,"}"
   ]
-  where (rets, pb) = runProgExprs "cc" . prog $ toExprTuple
+  where (rets, pb) = runProgExprs "cc" . traceShow' "ccProgram" . prog $ toExprTuple
           [DExpr . return $ Var (Dummy 0 i) t | (i,t) <- zip [0..] ts]
 
 printCC :: ConstVal -> String
