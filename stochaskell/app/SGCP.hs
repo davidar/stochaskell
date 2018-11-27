@@ -55,7 +55,7 @@ stepUp t k n' (lsv,lls2,cap,n,s,g,phi) = do
   z <- normalCond n kernel s g x
   let -- i = findSortedInsertIndex x s -- but with restriction i > k
       f i j = if x <= (s!i) then i else j
-      i = foldr f n' $ vector [ i | i <- (k+1)...n ]
+      i = foldr f n' $ vector [ k + i | i <- 1...(n-k) ]
       s'   = insertIndex s i x
       g'   = insertIndex g i z
       phi' = insertIndex phi i false
