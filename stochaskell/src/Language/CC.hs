@@ -103,16 +103,23 @@ ccOperators =
   ,("||",  "||")
   ]
 
+ccDebug :: String -> [NodeRef] -> String
+ccDebug msg js = "cerr << \"[DEBUG] "++ msg ++"\" << "++ s ++" << endl;"
+  where s = case js of
+          [j] -> g j
+          _ -> printTuple js
+        g j = case typeRef j of
+          ArrayT{}  -> ccNodeRef j ++".format(eigenFormat)"
+          TupleT [] -> "\"()\""
+          TupleT ts -> printTuple [Extract j 0 i | (i,t) <- zip [0..] ts]
+          _ -> ccNodeRef j
+        printTuple js =
+          "'(' << "++ intercalate " << ',' << " (g <$> js) ++" << ')'"
+
 ccNode :: Map Id PNode -> Label -> Node -> String
 ccNode r _ (Apply "getExternal" [Var i _] _) =
   ccPNode (ccId i) . fromJust $ Map.lookup i r
-ccNode _ _ (Apply f js _) | ("debug$",msg) <- splitAt 6 f =
-  "cerr << \"[DEBUG] "++ msg ++": \" << "++ s ++" << endl;"
-  where s = case js of
-          [j] -> ccNodeRef j
-          _ -> "'(' << "++ intercalate " << ',' << " (g <$> js) ++" << ')'"
-        g j | ArrayT{} <- typeRef j = ccNodeRef j ++".format(eigenFormat)"
-            | otherwise = ccNodeRef j
+ccNode _ _ (Apply f js _) | ("debug$",msg) <- splitAt 6 f = ccDebug (msg ++": ") js
 ccNode _ name (Apply "id" [i] _) =
   name ++" = "++ ccNodeRef i ++";"
 ccNode _ name (Apply "&&s" js _) =
@@ -292,10 +299,18 @@ ccPNode _ pn = error $ "ccPNode "++ show pn
 
 ccDAG :: Map Id PNode -> DAG -> String
 ccDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
-  let name = ccId $ Internal (dagLevel dag) i
+  let ref = case n of
+        Apply "getExternal" [v] _ -> v
+        _ -> Var (Internal (dagLevel dag) i) (typeNode n)
+      name = ccNodeRef ref
       wrapTry s 
         | dagLevel dag == 0 || length (nodes dag) > 10 =
-          "try { "++ s ++" } catch(const std::runtime_error& e) "++
+          "try { "++
+            s ++" "++
+            (if isScalar (typeRef ref)
+              then ccDebug (name ++" = ") [ref] ++" "
+              else "")++
+            "} catch(const std::runtime_error& e) "++
             "{ cerr << \""++ name ++": \" << e.what() << endl; }"
         | otherwise = s
   in decl name n ++ wrapTry (ccNode r name n)
@@ -353,7 +368,11 @@ ccPrint l e | UnionT tss <- typeRef e =
 
 ccProgram :: (ExprTuple s, ExprTuple t) => [Type] -> (s -> Prog t) -> (String, [NodeRef])
 ccProgram ts prog = (,rets) $ unlines
-  ["#include <cmath>"
+  ["/*"
+  ,showPBlock pb $ show rets
+  ,"*/"
+  ,""
+  ,"#include <cmath>"
   ,"#include <iostream>"
   ,"#include <random>"
   ,"#include <tuple>"
@@ -378,7 +397,7 @@ ccProgram ts prog = (,rets) $ unlines
   ,   indent $ unlines [ccPrint 1 ret ++" cout << endl;" | ret <- rets]
   ,"}"
   ]
-  where (rets, pb) = runProgExprs "cc" . traceShow' "ccProgram" . prog $ toExprTuple
+  where (rets, pb) = runProgExprs "cc" . prog $ toExprTuple
           [DExpr . return $ Var (Dummy 0 i) t | (i,t) <- zip [0..] ts]
 
 printCC :: ConstVal -> String
@@ -406,7 +425,16 @@ readCC (UnionT tss) (x:s) = (Tagged c cs, s')
         (cs,s') = readChain (map readCC ts) s
 
 runCC :: forall s t. (ExprTuple s, ExprTuple t) => (s -> Prog t) -> s -> IO t
-runCC prog = \x -> do
+runCC prog x = do
+  p <- compileCC prog
+  p x
+
+compileCC :: forall s t. (ExprTuple s, ExprTuple t)
+          => (s -> Prog t) -> IO (s -> IO t)
+compileCC prog = do
+  let TypesIs ts = typesOf :: TypesOf s
+      (code,rets) = ccProgram ts prog
+
   pwd <- getCurrentDirectory
   let hash = toHex . SHA1.hash $ C.pack code
       exename = pwd ++"/cache/cc/sampler_"++ hash
@@ -428,9 +456,8 @@ runCC prog = \x -> do
     putStrLn' $ unwords (cxx:args)
     callProcess cxx args
 
-  let input = fromRight' (evalTuple emptyEnv x)
-  output <- readProcess exename [] . unlines $ printCC <$> input
-  let (cs,[]) = readChain (readCC . typeRef <$> rets) $ words output
-  return $ fromConstVals cs
-  where TypesIs ts = typesOf :: TypesOf s
-        (code,rets) = ccProgram ts prog
+  return $ \x -> do
+    let input = fromRight' (evalTuple emptyEnv x)
+    output <- readProcess exename [] . unlines $ printCC <$> input
+    let (cs,[]) = readChain (readCC . typeRef <$> rets) $ words output
+    return $ fromConstVals cs

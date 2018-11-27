@@ -2,6 +2,7 @@
 
 module Main where
 
+import Control.Monad hiding (guard)
 import Data.List (sort)
 import Graphics.Rendering.Chart.Easy (plot,line,points,def)
 import Graphics.Rendering.Chart.Backend.Cairo (toFile)
@@ -97,11 +98,13 @@ stepGP t (lsv,lls2,cap,n,s,g,phi) = do
   let (lsv',lls2',g') = last samples
   return (lsv',lls2',cap,n,s,g',phi)
 
+{-
 step :: R -> Z -> State -> IO State
 step t k state = do
   state <- stepMH t k `runCC` state
   state <- stepGP t state
   return state
+-}
 
 genData :: R -> IO [Double]
 genData t = do
@@ -144,9 +147,20 @@ main = do
   dat <- genData' t
   let k = integer (length dat)
   state <- initialise t dat
+  stepMH' <- compileCC $ stepMH t k
   flip (chain 300) (0,state) $ \(iter,state) -> do
     putStrLn $ "*** CURRENT STATE: "++ show state
-    (lsv,lls2,cap,n,s,g,phi) <- step t k state
+
+    state <- stepMH' state
+    let (lsv,lls2,cap,n,s,g,phi) = state
+    let s' = real <$> list s :: [Double]
+        phi' = toBool <$> list phi :: [Bool]
+    unless (all (\x -> 0 <= x && x <= t) s') $ error ("s = "++ show s)
+    unless (and $ take (integer k) phi') $ error ("phi = "++ show phi)
+
+    state <- stepGP t state
+    let (lsv,lls2,cap,n,s,g,phi) = state
+
     toFile def ("sgcp-figs/"++ show iter ++".png") $ do
       plot $ line "rate" [sort $ zip (list s) (list g)]
       plot . points "data" $ zip (list s) [if y then 2.5 else (-2.5) | y <- toList phi]
