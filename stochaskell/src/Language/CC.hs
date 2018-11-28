@@ -153,9 +153,9 @@ ccNode _ name (Apply "chol" [m] _) =
 ccNode _ name (Apply "inv" [m] _) =
   name ++" = "++ ccNodeRef m ++".inverse();"
 ccNode _ name (Apply "log_det" [m] _) =
-  name ++" = log("++ ccNodeRef m ++".determinant());"
+  name ++" = "++ ccNodeRef m ++".llt().matrixL().toDenseMatrix().diagonal().array().log().sum() * 2;"
 ccNode _ name (Apply "logFactorial" [i] _) =
-  name ++" = log(boost::math::factorial<double>("++ ccNodeRef i ++"));"
+  name ++" = boost::math::lgamma<double>(1 + "++ ccNodeRef i ++");"
 ccNode _ name (Apply "replaceIndex" [v,j,e] _) =
   name ++" = "++ ccNodeRef v ++"; "++ name `ccIndex` [j] ++" = "++ ccNodeRef e ++";"
 ccNode _ name (Apply "insertIndex" [v,j,e] _) =
