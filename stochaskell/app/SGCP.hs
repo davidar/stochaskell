@@ -10,12 +10,12 @@ import Language.Stochaskell
 
 kernelSE lsv lls2 a b =
   exp (lsv - (a - b)^2 / (2 * exp lls2))
-  + if a == b then 1e-6 else 0
 
 gpClassifier :: (R -> R -> R) -> Z -> RVec -> P (RVec,BVec)
 gpClassifier kernel n s = do
   let mu  = vector [ 0 | _ <- 1...n ]
-      cov = matrix [ kernel (s!i) (s!j) | i <- 1...n, j <- 1...n ]
+      cov = matrix [ kernel (s!i) (s!j) + if i == j then 1e-6 else 0
+                   | i <- 1...n, j <- 1...n ]
   g <- normalChol n mu cov
   phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
   return (g,phi)
@@ -53,7 +53,7 @@ stepUp :: R -> Z -> Z -> State -> P State
 stepUp t k n' (lsv,lls2,cap,n,s,g,phi) = do
   x <- uniform 0 t
   let kernel = kernelSE lsv lls2
-  z <- normalCond n kernel s g x
+  z <- normalCond n kernel 1e-6 s g x
   let -- i = findSortedInsertIndex x s -- but with restriction i > k
       f i j = if x <= (s!i) then i else j
       i = foldr f n' $ vector [ k + i | i <- 1...(n-k) ]
@@ -73,7 +73,7 @@ stepS :: Z -> State -> P State
 stepS idx (lsv, lls2, cap, n, s, g, phi) = do
   x <- normal (s!idx) (exp (lls2/2))
   let kernel = kernelSE lsv lls2
-  z <- normalCond n kernel s g x
+  z <- normalCond n kernel 1e-6 s g x
   let s' = s `replaceAt` (idx, x)
       g' = g `replaceAt` (idx, z)
   return (lsv, lls2, cap, n, s', g', phi)
@@ -125,6 +125,7 @@ genData' t = do
   toFile def "sgcp_data.png" $ do
     plot $ line "truth" [sort $ zip s f]
     plot . points "data" $ zip dat (repeat 1.9)
+    plot . points "rejections" $ zip (s `selectItems` map not phi) (repeat 0.1)
   return $ sort dat
 
 initialise :: R -> [Double] -> IO State

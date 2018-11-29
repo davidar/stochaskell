@@ -516,12 +516,13 @@ normalsChol n k mu cov = do
                (matrix [ 1 | i <- 1...n, j <- 1...k ])
   return $ asRow mu + (w <> tr' (chol cov))
 
-normalCond :: Z -> (Expr t -> Expr t -> R) -> Expr [t] -> RVec -> Expr t -> P R
-normalCond n cov s y x = normal m (sqrt v)
-  where c = matrix [ cov (s!i) (s!j) | i <- 1...n, j <- 1...n ] :: RMat
-        k = vector [ cov (s!i) x     | i <- 1...n ] :: RVec
+normalCond :: Z -> (Expr t -> Expr t -> R) -> R -> Expr [t] -> RVec -> Expr t -> P R
+normalCond n cov noise s y x = normal m (sqrt v)
+  where c = matrix [ cov (s!i) (s!j) + ifB (i ==* j) noise 0
+                   | i <- 1...n, j <- 1...n ] :: RMat
+        k = vector [ cov (s!i) x | i <- 1...n ] :: RVec
         m = y <.> (inv c #> k)
-        v = cov x x - k <.> (inv c #> k)
+        v = cov x x + noise - k <.> (inv c #> k)
 
 
 ------------------------------------------------------------------------------

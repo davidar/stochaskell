@@ -372,6 +372,9 @@ tupleT ts = TupleT ts
 
 vecT :: Type -> Type
 vecT t | isScalar t = ArrayT (Just "vector") [(Const 1 IntT, Unconstrained IntT)] t
+matT :: Type -> Type
+matT t | isScalar t = ArrayT (Just "matrix") [(Const 1 IntT, Unconstrained IntT)
+                                             ,(Const 1 IntT, Unconstrained IntT)] t
 
 instance Show Type where
   show IntT = "Z"
@@ -426,7 +429,9 @@ instance ExprType Double where
     constVal     = fromRational . toRational
     constExpr c  = expr . return $ Const c RealT
 instance forall t. (ExprType t) => ExprType [t] where
-    typeOf | isScalar t = TypeIs (vecT t)
+    typeOf = TypeIs $ case t of
+      _ | isScalar t -> vecT t
+      ArrayT (Just "vector") [(Const 1 IntT, Unconstrained IntT)] t -> matT t
       where TypeIs t = typeOf :: TypeOf t
     toConcrete   = map toConcrete . toList
     fromConcrete = constExpr . constVal
@@ -1359,6 +1364,9 @@ blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent
 
 instance (ExprType e) => AA.Matrix (Expr [[e]]) Z (Expr e) where
     matrix = array (Just "matrix") 2
+    blockMatrix m = Expr $ AA.blockMatrix (fmap erase <$> m)
+    eye = Expr . AA.eye . erase
+    zeros m n = Expr $ AA.zeros (erase m) (erase n)
 instance AA.Matrix DExpr DExpr DExpr where
     matrix = array' (Just "matrix") 2
     blockMatrix m = DExpr $ do
