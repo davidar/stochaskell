@@ -15,6 +15,7 @@ import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
 import Data.Program
+import Data.String.Utils
 import GHC.Exts
 import qualified Crypto.Hash.SHA1 as SHA1
 import System.Directory
@@ -118,7 +119,7 @@ ccDebug msg js = "cerr << \"[DEBUG] "++ msg ++"\" << "++ s ++" << endl;"
 
 ccNode :: Map Id PNode -> Label -> Node -> String
 ccNode r _ (Apply "getExternal" [Var i _] _) =
-  ccPNode (ccId i) . fromJust $ Map.lookup i r
+  ccPNode' (ccId i) . fromJust $ Map.lookup i r
 ccNode _ _ (Apply f js _) | ("debug$",msg) <- splitAt 6 f = ccDebug (msg ++": ") js
 ccNode _ name (Apply "id" [i] _) =
   name ++" = "++ ccNodeRef i ++";"
@@ -153,7 +154,7 @@ ccNode _ name (Apply "chol" [m] _) =
 ccNode _ name (Apply "inv" [m] _) =
   name ++" = "++ ccNodeRef m ++".inverse();"
 ccNode _ name (Apply "log_det" [m] _) =
-  name ++" = "++ ccNodeRef m ++".llt().matrixL().toDenseMatrix().diagonal().array().log().sum() * 2;"
+  name ++" = LOG_DET("++ ccNodeRef m ++");"
 ccNode _ name (Apply "logFactorial" [i] _) =
   name ++" = boost::math::lgamma<double>(1 + "++ ccNodeRef i ++");"
 ccNode _ name (Apply "replaceIndex" [v,j,e] _) =
@@ -208,6 +209,11 @@ ccNode _ name (Apply "normals_lpdf" [x,m,s] _) =
       ccNodeRef x `ccIndex'` i ++"));")
   where i = ["i_"++ name]
         n = ccNodeRef x ++".size()"
+ccNode _ name (Apply "multi_normal_lpdf" [z,m,c] _) =
+  name ++" = -0.5 * ("++
+    ccNodeRef c ++".llt().matrixL().solve("++ z' ++").squaredNorm()"++
+    " + log(2*M_PI) * "++ ccNodeRef z ++".size() + LOG_DET("++ ccNodeRef c ++"));"
+  where z' = "("++ ccNodeRef z ++" - "++ ccNodeRef m ++")"
 ccNode _ name (Apply f (i:js) _) | (d,"_lpdf") <- splitAt (length f - 5) f =
   name ++" = log(boost::math::pdf(boost::math::"++ d ++ "_distribution<>("++
     ccNodeRef `commas` js ++"), "++ ccNodeRef i ++"));"
@@ -263,6 +269,13 @@ ccDistributions =
   ,("poisson",         "poisson")
   ,("uniform",         "uniform_real")]
 
+ccPNode' :: Label -> PNode -> String
+ccPNode' name pn | (SubrangeT _ a b) <- typePNode pn =
+  "do { "++ ccPNode name pn ++" } while("++
+    maybe "false" (\a -> name ++" < "++ ccNodeRef a) a ++" || "++
+    maybe "false" (\b -> name ++" > "++ ccNodeRef b) b ++");"
+ccPNode' name pn = ccPNode name pn
+
 ccPNode :: Label -> PNode -> String
 ccPNode name (Dist "bernoulli" [p] _) =
   name ++" = std::bernoulli_distribution("++ ccNodeRef p ++")(gen);"
@@ -276,7 +289,7 @@ ccPNode name (Dist f args _) | Just s <- lookup f ccDistributions =
 ccPNode name (Loop sh (Lambda ldag body) _) =
   ccForLoop (inputs ldag) sh $
     let lval = name `ccIndex'` (ccId <$> inputs ldag)
-    in ccDAG Map.empty ldag ++ indent (ccPNode lval body)
+    in ccDAG Map.empty ldag ++ indent (ccPNode' lval body)
 ccPNode name (Switch e alts ns _) =
   "switch("++ ccNodeRef e ++".index()) {\n"++ indent (unlines $ do
     (i, (Lambda dag ret, refs)) <- zip [0..] alts
@@ -297,19 +310,21 @@ ccPNode name (Chain (lo,hi) refs (Lambda dag ret) x ns _) =
   where [i,j] = inputs' dag
 ccPNode _ pn = error $ "ccPNode "++ show pn
 
+debugRef :: NodeRef -> Bool
+debugRef = isScalar . typeRef
+--debugRef = const False
+
 ccDAG :: Map Id PNode -> DAG -> String
 ccDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let ref = case n of
         Apply "getExternal" [v] _ -> v
         _ -> Var (Internal (dagLevel dag) i) (typeNode n)
       name = ccNodeRef ref
+      msg = name ++" = "++ (replace "\n" "\\n" . replace "\\" "\\\\" $ show n) ++" = "
       wrapTry s 
         | dagLevel dag == 0 || length (nodes dag) > 10 =
           "try { "++
-            s ++" "++
-            (if isScalar (typeRef ref)
-              then ccDebug (name ++" = ") [ref] ++" "
-              else "")++
+            s ++" "++ (if debugRef ref then ccDebug msg [ref] ++" " else "") ++
             "} catch(const std::runtime_error& e) "++
             "{ cerr << \""++ name ++": \" << e.what() << endl; }"
         | otherwise = s
@@ -388,6 +403,7 @@ ccProgram ts prog = (,rets) $ unlines
   ,"namespace backward { backward::SignalHandling sh; }"
   ,"IOFormat eigenFormat(StreamPrecision, DontAlignCols, "++
     "\",\", \";\", \"\", \"\", \"[\", \"]\");"
+  ,"#define LOG_DET(m) ((m).llt().matrixL().toDenseMatrix().diagonal().array().log().sum() * 2)"
   ,""
   ,"int main() {"
   ,"  random_device rd;"
