@@ -115,6 +115,13 @@ unsafeCatch' f x = System.IO.Unsafe.unsafePerformIO $
   where handler :: Control.Exception.ErrorCall -> IO (Either String a)
         handler = return . Left . show
 
+interpolate :: (Ord a, Fractional a) => [(a,a)] -> a -> a
+interpolate ((x0,y0):(x1,y1):xys) x
+  | x < x0 = y0
+  | x < x1 = y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+  | otherwise = interpolate ((x1,y1):xys) x
+interpolate [(_,y)] _ = y
+
 instance (Num t) => Num [t] where
     (+) = zipWith (+)
     (-) = zipWith (-)
