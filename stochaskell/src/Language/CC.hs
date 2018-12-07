@@ -74,6 +74,7 @@ ccType RealT = "double"
 ccType (SubrangeT t _ _) = ccType t
 ccType (ArrayT (Just "vector") _ t) = "Matrix<"++ ccType t ++", Dynamic, 1>"
 ccType (ArrayT (Just "matrix") _ t) = "Matrix<"++ ccType t ++", Dynamic, Dynamic>"
+ccType (TupleT []) = "void"
 ccType (TupleT ts) = "tuple<"++ ccType `commas` ts ++">"
 ccType (UnionT ts) = "variant<"++ (ccType . TupleT) `commas` ts ++">"
 ccType t = error $ "ccType "++ show t
@@ -311,8 +312,8 @@ ccPNode name (Chain (lo,hi) refs (Lambda dag ret) x ns _) =
 ccPNode _ pn = error $ "ccPNode "++ show pn
 
 debugRef :: NodeRef -> Bool
-debugRef = isScalar . typeRef
---debugRef = const False
+--debugRef = isScalar . typeRef
+debugRef = const False
 
 ccDAG :: Map Id PNode -> DAG -> String
 ccDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
@@ -329,8 +330,11 @@ ccDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
             "{ cerr << \""++ name ++": \" << e.what() << endl; }"
         | otherwise = s
   in decl name n ++ wrapTry (ccNode r name n)
-  where decl _ (Apply "getExternal" [i] t) = ccType t ++" "++ (ccNodeRef i) ++"; "
-        decl name node = ccType (typeNode node) ++" "++ name ++"; "
+  where decl name node = case node of
+          Apply "getExternal" [i] _ ->
+            ccType (typeRef i) ++" "++ (ccNodeRef i) ++"; "
+          Apply _ _ (TupleT []) -> ""
+          _ -> ccType (typeNode node) ++" "++ name ++"; "
 
 
 ------------------------------------------------------------------------------

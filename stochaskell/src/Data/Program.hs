@@ -304,7 +304,12 @@ truncated a b p = Prog $ do
           | otherwise = Just k
       t' = SubrangeT t (g i) (g j)
       d' = d { typePNode = t' }
-  put $ PBlock block (d':rhs) given ns
+      Block (dag:par) = block
+      Just ptr = Apply "getExternal" [Var name t] t `Bimap.lookup` bimap dag
+      dag' = dag {bimap =
+        Apply "getExternal" [Var name t'] t' `Bimap.insert` ptr $ bimap dag}
+      block' = Block (dag':par)
+  put $ PBlock block' (d':rhs) given ns
   return (expr $ return (Var name t'))
 
 {-
