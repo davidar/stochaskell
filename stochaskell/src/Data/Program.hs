@@ -526,8 +526,8 @@ normalCond n cov noise s y x = normal m (sqrt v)
   where c = matrix [ cov (s!i) (s!j) + ifB (i ==* j) noise 0
                    | i <- 1...n, j <- 1...n ] :: RMat
         k = vector [ cov (s!i) x | i <- 1...n ] :: RVec
-        m = y <.> (inv c #> k)
-        v = cov x x + noise - k <.> (inv c #> k)
+        m = y <.> (c <\> k)
+        v = cov x x + noise - k <.> (c <\> k)
 
 
 ------------------------------------------------------------------------------

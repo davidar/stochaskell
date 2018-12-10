@@ -149,7 +149,9 @@ ccNode _ name (Apply op [i,j] _) | isJust s =
 ccNode _ name (Apply "<.>" [u,v] _) =
   name ++" = "++ ccNodeRef u ++".dot("++ ccNodeRef v ++");"
 ccNode _ name (Apply "<\\>" [a,b] _) =
-  name ++" = "++ ccNodeRef a ++".colPivHouseholderQr().solve("++ ccNodeRef b ++");"
+  "if("++ ccNodeRef a ++".isLowerTriangular()) "++
+  name ++" = "++ ccNodeRef a ++".triangularView<Lower>().solve("++ ccNodeRef b ++");"++
+  " else "++ name ++" = "++ ccNodeRef a ++".llt().solve("++ ccNodeRef b ++");"
 ccNode _ name (Apply "chol" [m] _) =
   name ++" = "++ ccNodeRef m ++".llt().matrixL();"
 ccNode _ name (Apply "inv" [m] _) =
