@@ -165,7 +165,7 @@ pmProgram prog =
   --"@profile(stream=sys.stderr)\n"++
   "def main():\n"++
   " with pm.Model() as model:\n"++
-    pmDAG (pn, given) (topDAG block)
+    pmDAG (pn, Map.map fst given) (topDAG block)
   where pb@(PBlock block _ given _) = snd $ runProgExprs "pm" prog
         skel = modelSkeleton pb
         pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb
@@ -225,7 +225,7 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   setCurrentDirectory tmpDir
   let initEnv | isJust init = unifyTuple block rets (fromJust init) given
-              | otherwise = given
+              | otherwise = Map.map fst given
   forM_ (Map.toList initEnv) $ \(LVar i,c) -> do
     writeNPy (pmId i ++".npy") c
   writeFile "main.py" $
@@ -243,4 +243,4 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "pm" prog
         g i = "trace['"++ pmId i ++"'].tolist()"
         latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
-        lShapes = evalShape given block . typeDims . typePNode <$> Map.elems latents
+        lShapes = evalShape (Map.map fst given) block . typeDims . typePNode <$> Map.elems latents

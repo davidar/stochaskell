@@ -232,6 +232,13 @@ evalDAG block dag = compose
   | (ptr,node) <- nodes dag ]
   where level = dagLevel dag
 
+unifyTuple :: (ExprTuple t) => Block -> [NodeRef] -> t
+           -> Map LVal (ConstVal, Type) -> Map LVal ConstVal
+unifyTuple block rets vals env = Map.map (fromRight' . evalD (Map.map fst env)) eenv' 
+  where eenv = EEnv $ Map.map (uncurry constDExpr) env
+        EEnv eenv' = solveTuple block rets vals eenv
+
+{-
 unify :: Expr t -> ConstVal -> Env -> Env
 unify e c env = env `Map.union` unifyNodeRef env block ret c
   where (ret, block) = runExpr e
@@ -324,6 +331,7 @@ unifyNode env block (Case hd alts _) val
 unifyNode _ _ FoldScan{} _ = trace "WARN not unifying fold/scan" emptyEnv
 unifyNode _ _ node val = error $
   "unable to unify node "++ show node ++" with value "++ show val
+-}
 
 aggregateLVals :: EEnv -> EEnv
 aggregateLVals = aggregateFields . aggregateConds . aggregateConds'

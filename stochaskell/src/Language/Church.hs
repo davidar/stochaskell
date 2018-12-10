@@ -116,7 +116,7 @@ churchProgram prog
                     | otherwise = "(list "++ churchNodeRef `spaced` rets ++")"
         finalLine | length rets == 1 = churchResult "(model)" $ typeRef (head rets)
                   | otherwise = "(model)"
-        printedConds = [churchConstraint k v | (k,v) <- Map.toList given]
+        printedConds = [churchConstraint k v | (k,(v,t)) <- Map.toList given]
 
 simChurchVec :: (Read t, ExprType t) => Prog (Expr [t]) -> IO [t]
 simChurchVec prog = withSystemTempDirectory "church" $ \tmpDir -> do

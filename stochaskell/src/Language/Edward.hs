@@ -164,7 +164,7 @@ hmcEdward numSamples numSteps stepSize prog init =
     setCurrentDirectory tmpDir
     when (isJust init) $
       dump $ unifyTuple block rets (fromJust init) given
-    dump given
+    dump (Map.map fst given)
     let python = pwd ++"/edward/env/bin/python"
     --callProcess python []
     out <- readProcess python [] $
@@ -179,4 +179,4 @@ hmcEdward numSamples numSteps stepSize prog init =
         dump env = forM_ (Map.toList env) $ \(LVar i,c) -> do
                      writeNPy (edId i ++".npy") c
         latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
-        lShapes = evalShape given block . typeDims . typePNode <$> Map.elems latents
+        lShapes = evalShape (Map.map fst given) block . typeDims . typePNode <$> Map.elems latents

@@ -108,12 +108,12 @@ instance Show PNode where
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
-                     , constraints :: Env
+                     , constraints :: Map LVal (ConstVal, Type)
                      , namespace   :: String
                      }
             deriving (Eq)
 emptyPBlock :: NS -> PBlock
-emptyPBlock = PBlock emptyBlock [] emptyEnv
+emptyPBlock = PBlock emptyBlock [] Map.empty
 
 pnodes :: PBlock -> Map Id PNode
 pnodes (PBlock _ refs _ ns) = pnodes' ns 0 $ reverse refs
@@ -175,7 +175,7 @@ modelSkeleton pb@(PBlock block _ given _) = tparams
 
 evalPBlock :: (ExprTuple t) => PBlock -> [NodeRef] -> Env -> Either String t
 evalPBlock (PBlock block _ given _) rets = \env -> do
-  xs <- sequence (evalNodeRef (Map.union given env) block <$> rets)
+  xs <- sequence (evalNodeRef (Map.union (Map.map fst given) env) block <$> rets)
   return $ fromConstVals xs
 
 caseP :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
@@ -205,7 +205,7 @@ caseP' n k ps = distDs n $ \ns -> do
             r <- fromProg $ p args
             liftExprBlock . sequence $ fromDExpr <$> r
           (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
-            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv ns
+            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
       put $ Block block'
       return (Lambda dag ret, reverse acts)
   return $ Switch k cases ns (tupleT . foldr1 (zipWith E.coerce) $ map typeRef . fHead . fst <$> cases)
@@ -230,7 +230,7 @@ chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
         r <- fromProg $ p (Expr $ args !! 0) (entuple . Expr $ args !! 1)
         liftExprBlock . fromExpr $ detuple r
       (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
-        PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv ns
+        PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
   put $ Block block'
   lo' <- fromExpr lo
   hi' <- fromExpr hi
@@ -438,7 +438,7 @@ instance (ExprType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (Exp
         i <- liftExprBlock $ fromExpr n
         PBlock block rhs given ns <- get
         let (_, PBlock block' [act] _ _) =
-              runState (head <$> fromProgExprs prog) $ PBlock block [] emptyEnv ns
+              runState (head <$> fromProgExprs prog) $ PBlock block [] Map.empty ns
             d = HODist "orderedSample" act [i] (ArrayT Nothing [(Const 1 IntT,i)] (typePNode act))
         put $ PBlock block' (d:rhs) given ns
         let depth = dagLevel $ topDAG block
@@ -547,7 +547,7 @@ instance forall r f. ExprType r =>
         p = ar ! [expr . return $ Var i t | (i,t) <- ids]
         (ret, PBlock (Block (dag:block')) [act] _ _) =
           runState (head <$> fromProgExprs p) $
-            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] emptyEnv ns
+            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
         TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
         loopType = ArrayT Nothing sh t
         loop = Loop sh (Lambda dag act) loopType
@@ -578,7 +578,8 @@ instance MonadGuard Prog where
         let (Just (Apply "==" [Var j t, Const a _] _)) =
               lookup i $ nodes dag
             dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
-        put $ PBlock (deriveBlock dag' block) dists (Map.insert (LVar j) a given) ns
+        put $ PBlock (deriveBlock dag' block) dists
+                     (Map.insert (LVar j) (a,t) given) ns
 
 dirac :: (Expr t) -> Prog (Expr t)
 dirac c = do
@@ -725,7 +726,7 @@ cdfPNode env block (Dist f args _) x = expr $ do
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env' pb / adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "density" prog
-        env = unifyTuple block rets vals emptyEnv
+        env = unifyTuple block rets vals Map.empty
         env' = evalBlock block env
         jacobian = [ [ diffNodeRef env' block r (Volatile ns 0 i) (typePNode d)
                      | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
@@ -739,7 +740,7 @@ density prog vals = densityPBlock env' pb / adjust
 density' :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density' prog vals = densityPBlock env' pb
   where (rets, pb) = runProgExprs "density'" prog
-        env = unifyTuple (definitions pb) rets vals emptyEnv
+        env = unifyTuple (definitions pb) rets vals Map.empty
         env' = evalBlock (definitions pb) env
 
 densityPBlock :: Env -> PBlock -> LF.LogFloat

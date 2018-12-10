@@ -392,7 +392,7 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
         stanDump $ unifyTuple block rets (fromJust init) given
 
     putStrLn' "--- Sampling Stan model ---"
-    LC.writeFile (basename ++".data") $ stanDump given
+    LC.writeFile (basename ++".data") . stanDump $ Map.map fst given
     let args = words (show method) ++
                ["data"
                ,"file="++ basename ++".data"
