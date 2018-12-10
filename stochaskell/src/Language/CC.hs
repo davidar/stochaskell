@@ -407,7 +407,8 @@ ccProgram ts prog = (,rets) $ unlines
   ,"namespace backward { backward::SignalHandling sh; }"
   ,"IOFormat eigenFormat(StreamPrecision, DontAlignCols, "++
     "\",\", \";\", \"\", \"\", \"[\", \"]\");"
-  ,"#define LOG_DET(m) ((m).llt().matrixL().toDenseMatrix().diagonal().array().log().sum() * 2)"
+  ,"#define LOG_DET(m) ((m).isLowerTriangular() ? (m).diagonal().array().log().sum()"++
+              " : (m).llt().matrixL().toDenseMatrix().diagonal().array().log().sum() * 2)"
   ,""
   ,"int main() {"
   ,"  random_device rd;"

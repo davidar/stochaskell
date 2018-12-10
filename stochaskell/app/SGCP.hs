@@ -19,15 +19,6 @@ gpClassifier kernel n s = do
   let mu  = vector [ 0 | _ <- 1...n ] :: RVec
       cov = matrix [ kernel (s!i) (s!j) + if i == j then noise else 0
                    | i <- 1...n, j <- 1...n ] :: RMat
-  g <- normal mu cov
-  phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
-  return (g,phi)
-
-gpClassifier' :: (R -> R -> R) -> Z -> RVec -> P (RVec,BVec)
-gpClassifier' kernel n s = do
-  let mu  = vector [ 0 | _ <- 1...n ] :: RVec
-      cov = matrix [ kernel (s!i) (s!j) + if i == j then noise else 0
-                   | i <- 1...n, j <- 1...n ] :: RMat
   g <- normalChol n mu cov
   phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
   return (g,phi)
@@ -59,16 +50,6 @@ sgcp t = do
   (n,s) <- poissonProcess' cap t
   let kernel = kernelSE lsv lls2
   (g,phi) <- gpClassifier kernel n s
-  return (lsv, lls2, cap, n, s, g, phi)
-
-sgcp' :: R -> P State
-sgcp' t = do
-  lsv <- normal 0 1
-  lls2 <- normal (log 100) 2
-  cap <- gamma 1 1
-  (n,s) <- poissonProcess' cap t
-  let kernel = kernelSE lsv lls2
-  (g,phi) <- gpClassifier' kernel n s
   return (lsv, lls2, cap, n, s, g, phi)
 
 stepDown' :: Z -> State -> P (Z,Z,RVec,RVec,BVec)
@@ -176,7 +157,7 @@ stepMH t k state = do
 
 stepGP :: R -> State -> IO State
 stepGP t (lsv,lls2,cap,n,s,g,phi) = do
-  samples <- hmcStanInit 10 [ (lsv',lls2',g') | (lsv',lls2',cap',n',s',g',phi') <- sgcp' t,
+  samples <- hmcStanInit 10 [ (lsv',lls2',g') | (lsv',lls2',cap',n',s',g',phi') <- sgcp t,
                               cap' == cap, n' == n, s' == s, phi' == phi ] (lsv,lls2,g)
   let (lsv',lls2',g') = last samples
   return (lsv',lls2',cap,n,s,g',phi)
@@ -220,7 +201,7 @@ initialise t dat = do
       phi = fromList $ replicate k True ++ replicate m False :: BVec
   rej <- sequence [ uniform 0 (real t) | _ <- [1..m] ]
   let s = fromList $ dat ++ sort rej :: RVec
-  samples <- hmcStan 1000 [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp' t,
+  samples <- hmcStan 1000 [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
                             cap' == real cap, n' == integer n, s' == s, phi' == phi ]
   let (lsv,lls2,g) = last samples
   return (lsv,lls2,cap,n,s,g,phi)
