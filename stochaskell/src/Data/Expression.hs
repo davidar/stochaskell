@@ -695,9 +695,7 @@ runLambda ids s = do
 -- does a list of expressions depend on the inputs to this block?
 varies :: DAG -> [NodeRef] -> Bool
 varies (DAG level inp _) xs = level == 0 || any p xs
-  where p (Var i@Internal{} _) = idLevel i == level
-        p (Var i@Volatile{} _) = idLevel i == level
-        p (Var i@Dummy{} _) = i `elem` map fst inp
+  where p (Var i _) = i `elem` map fst inp || idLevel i == level
         p (Var Symbol{} _) = False
         p (Const _ _) = False
         p (Data _ is _) = any p is
@@ -713,7 +711,10 @@ variesLambda dag (Lambda adag ret) = variesLambda' dag (Lambda adag [ret])
 variesLambda' :: DAG -> Lambda [NodeRef] -> Bool
 variesLambda' dag (Lambda adag rets) =
   varies dag (rets \\ inputs' adag) ||
-  (not . null $ inputs dag `intersect` collectIds adag)
+  (not . null $ inputs dag `intersect` collectIds adag) ||
+  (not . null . filter p $ collectIds adag)
+  where p (Internal l _) = l == dagLevel dag
+        p _ = False
 
 collectIds :: DAG -> [Id]
 collectIds dag = concatMap (f . snd) (nodes dag) \\ inputs dag
@@ -1112,29 +1113,30 @@ floatArray l ar = do
     let ids = [(Dummy d i, IntT) | i <- [1..length sh]]
         e = ar ! [DExpr . return $ Var i t | (i,t) <- ids]
         slam = runLambda ids (fromDExpr e)
-        captured = collectIds . fDefs . fst $ runState slam block
-    if (not . varies dag $ map fst sh ++ map snd sh) &&
-       (null $ inputs dag `intersect` captured) &&
-       (null $ filter ((dagLevel dag ==) . idLevel)
-             $ filter isInternal captured)
+    if not $ stickNode dag (Array sh (fst $ runState slam block) UnknownType)
     then liftBlock $ floatArray l ar
     else do
       Lambda dag ret <- slam
       hashcons . Array sh (Lambda dag ret) $ ArrayT l sh (typeRef ret)
 
--- TODO: reduce code duplication
+stickNode :: DAG -> Node -> Bool
+stickNode dag a = case a of
+  Apply{} -> True
+  Array sh lam _ ->
+    varies dag (map fst sh ++ map snd sh) || variesLambda dag lam
+  FoldScan _ _ lam sd ls _ ->
+    varies dag [sd,ls] || variesLambda dag lam
+  Case hd alts _ ->
+    varies dag [hd] || variesLambda' dag `any` alts
+  Function lam _ ->
+    variesLambda dag lam
+
 floatNode :: Node -> State Block NodeRef
+floatNode Apply{} = error "floatNode Apply"
 floatNode a = do
     block <- get
     let dag = topDAG block
-        stick = case a of
-          Array sh lam _ ->
-            varies dag (map fst sh ++ map snd sh) || variesLambda dag lam
-          FoldScan _ _ lam sd ls _ ->
-            varies dag [sd,ls] || variesLambda dag lam
-          Case hd alts _ ->
-            varies dag [hd] || variesLambda' dag `any` alts
-    if stick then hashcons a
+    if stickNode dag a then hashcons a
     else liftBlock $ floatNode a
 
 array' :: Maybe String -> Int -> AA.AbstractArray DExpr DExpr -> DExpr

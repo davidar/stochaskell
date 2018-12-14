@@ -83,11 +83,17 @@ extractNodeRef fNodeRef fNode env block = go where
     PartiallyConstrained{} -> return r
 
   extractNode :: Node -> State Block NodeRef
-  extractNode n = case n of
+  extractNode n = do
+    node <- extractNode' n
+    dag <- topDAG <$> get
+    if stickNode dag node then fNode node else liftBlock $ extractNode n
+
+  extractNode' :: Node -> State Block Node
+  extractNode' n = case n of
     Apply f args t -> do
       js <- sequence $ go <$> args
       t' <- extractType env block t
-      fNode $ Apply f js t'
+      return $ Apply f js t'
     Array sh lam t -> do
       let (lo,hi) = unzip sh
       lo' <- sequence $ go <$> lo
@@ -95,34 +101,22 @@ extractNodeRef fNodeRef fNode env block = go where
       let sh' = zip lo' hi'
       lam' <- extractLambda lam
       t' <- extractType env block t
-      dag <- topDAG <$> get
-      if varies dag (map fst sh' ++ map snd sh') || variesLambda dag lam'
-      then fNode $ Array sh' lam' t'
-      else liftBlock $ extractNode n
+      return $ Array sh' lam' t'
     FoldScan fs lr lam sd ls t -> do
       lam' <- extractLambda lam
       sd' <- go sd
       ls' <- go ls
       t' <- extractType env block t
-      dag <- topDAG <$> get
-      if varies dag [sd',ls'] || variesLambda dag lam'
-      then fNode $ FoldScan fs lr lam' sd' ls' t'
-      else liftBlock $ extractNode n
+      return $ FoldScan fs lr lam' sd' ls' t'
     Case hd lams t -> do
       hd' <- go hd
       lams' <- sequence $ extractLambda' <$> lams
       t' <- extractType env block t
-      dag <- topDAG <$> get
-      if varies dag [hd'] || variesLambda' dag `any` lams'
-      then fNode $ Case hd' lams' t'
-      else liftBlock $ extractNode n
+      return $ Case hd' lams' t'
     Function lam t -> do
       lam' <- extractLambda lam
       t' <- extractType env block t
-      dag <- topDAG <$> get
-      if variesLambda dag lam'
-      then fNode $ Function lam' t'
-      else liftBlock $ extractNode n
+      return $ Function lam' t'
 
   extractLambda :: Lambda NodeRef -> State Block (Lambda NodeRef)
   extractLambda (Lambda body hd) = do
