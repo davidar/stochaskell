@@ -511,6 +511,20 @@ instance forall a b c d e f g h.
           TypeIs f = typeOf :: TypeOf f
           TypeIs g = typeOf :: TypeOf g
           TypeIs h = typeOf :: TypeOf h
+instance forall a b c d e f g h i.
+    (ExprType a, ExprType b, ExprType c, ExprType d,
+     ExprType e, ExprType f, ExprType g, ExprType h, ExprType i) =>
+    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h, Expr i) where
+  typeOf = TypeIs $ TupleT [a,b,c,d,e,f,g,h,i]
+    where TypeIs a = typeOf :: TypeOf a
+          TypeIs b = typeOf :: TypeOf b
+          TypeIs c = typeOf :: TypeOf c
+          TypeIs d = typeOf :: TypeOf d
+          TypeIs e = typeOf :: TypeOf e
+          TypeIs f = typeOf :: TypeOf f
+          TypeIs g = typeOf :: TypeOf g
+          TypeIs h = typeOf :: TypeOf h
+          TypeIs i = typeOf :: TypeOf i
 
 newtype Tags t = Tags [Tag]
 class ExprType c => Constructor c where
@@ -1732,3 +1746,23 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       TypeIs x = typeOf :: TypeOf f
       TypeIs y = typeOf :: TypeOf g
       TypeIs z = typeOf :: TypeOf h
+instance (ExprType a, ExprType b, ExprType c, ExprType d,
+          ExprType e, ExprType f, ExprType g, ExprType h, ExprType i) =>
+         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h, Expr i) where
+    tupleSize = TupleSize 9
+    fromExprTuple (a,b,c,d,e,f,g,h,i) =
+      [erase a, erase b, erase c, erase d, erase e, erase f, erase g, erase h, erase i]
+    toExprTuple [a,b,c,d,e,f,g,h,i] =
+      (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h, Expr i)
+    fromConstVals [a,b,c,d,e,f,g,h,i] =
+      (const a, const b, const c, const d, const e, const f, const g, const h, const i)
+    typesOf = TypesIs [r,s,t,u,v,w,x,y,z] where
+      TypeIs r = typeOf :: TypeOf a
+      TypeIs s = typeOf :: TypeOf b
+      TypeIs t = typeOf :: TypeOf c
+      TypeIs u = typeOf :: TypeOf d
+      TypeIs v = typeOf :: TypeOf e
+      TypeIs w = typeOf :: TypeOf f
+      TypeIs x = typeOf :: TypeOf g
+      TypeIs y = typeOf :: TypeOf h
+      TypeIs z = typeOf :: TypeOf i

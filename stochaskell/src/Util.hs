@@ -157,8 +157,40 @@ instance (Floating t) => Floating [t] where
 type instance BooleanOf (IO a) = Bool
 instance IfB (IO a) where ifB a b c = if a then b else c
 
+type instance BooleanOf (a,b,c,d,e) = BooleanOf a
+type instance BooleanOf (a,b,c,d,e,f) = BooleanOf a
 type instance BooleanOf (a,b,c,d,e,f,g) = BooleanOf a
+type instance BooleanOf (a,b,c,d,e,f,g,h) = BooleanOf a
+type instance BooleanOf (a,b,c,d,e,f,g,h,i) = BooleanOf a
 
+instance ( bool ~ BooleanOf a, IfB a
+         , bool ~ BooleanOf b, IfB b
+         , bool ~ BooleanOf c, IfB c
+         , bool ~ BooleanOf d, IfB d
+         , bool ~ BooleanOf e, IfB e
+         ) => IfB (a,b,c,d,e) where
+  ifB cond (a,b,c,d,e) (a',b',c',d',e') =
+    ( ifB cond a a'
+    , ifB cond b b'
+    , ifB cond c c'
+    , ifB cond d d'
+    , ifB cond e e'
+    )
+instance ( bool ~ BooleanOf a, IfB a
+         , bool ~ BooleanOf b, IfB b
+         , bool ~ BooleanOf c, IfB c
+         , bool ~ BooleanOf d, IfB d
+         , bool ~ BooleanOf e, IfB e
+         , bool ~ BooleanOf f, IfB f
+         ) => IfB (a,b,c,d,e,f) where
+  ifB cond (a,b,c,d,e,f) (a',b',c',d',e',f') =
+    ( ifB cond a a'
+    , ifB cond b b'
+    , ifB cond c c'
+    , ifB cond d d'
+    , ifB cond e e'
+    , ifB cond f f'
+    )
 instance ( bool ~ BooleanOf a, IfB a
          , bool ~ BooleanOf b, IfB b
          , bool ~ BooleanOf c, IfB c
@@ -175,4 +207,44 @@ instance ( bool ~ BooleanOf a, IfB a
     , ifB cond e e'
     , ifB cond f f'
     , ifB cond g g'
+    )
+instance ( bool ~ BooleanOf a, IfB a
+         , bool ~ BooleanOf b, IfB b
+         , bool ~ BooleanOf c, IfB c
+         , bool ~ BooleanOf d, IfB d
+         , bool ~ BooleanOf e, IfB e
+         , bool ~ BooleanOf f, IfB f
+         , bool ~ BooleanOf g, IfB g
+         , bool ~ BooleanOf h, IfB h
+         ) => IfB (a,b,c,d,e,f,g,h) where
+  ifB cond (a,b,c,d,e,f,g,h) (a',b',c',d',e',f',g',h') =
+    ( ifB cond a a'
+    , ifB cond b b'
+    , ifB cond c c'
+    , ifB cond d d'
+    , ifB cond e e'
+    , ifB cond f f'
+    , ifB cond g g'
+    , ifB cond h h'
+    )
+instance ( bool ~ BooleanOf a, IfB a
+         , bool ~ BooleanOf b, IfB b
+         , bool ~ BooleanOf c, IfB c
+         , bool ~ BooleanOf d, IfB d
+         , bool ~ BooleanOf e, IfB e
+         , bool ~ BooleanOf f, IfB f
+         , bool ~ BooleanOf g, IfB g
+         , bool ~ BooleanOf h, IfB h
+         , bool ~ BooleanOf i, IfB i
+         ) => IfB (a,b,c,d,e,f,g,h,i) where
+  ifB cond (a,b,c,d,e,f,g,h,i) (a',b',c',d',e',f',g',h',i') =
+    ( ifB cond a a'
+    , ifB cond b b'
+    , ifB cond c c'
+    , ifB cond d d'
+    , ifB cond e e'
+    , ifB cond f f'
+    , ifB cond g g'
+    , ifB cond h h'
+    , ifB cond i i'
     )
