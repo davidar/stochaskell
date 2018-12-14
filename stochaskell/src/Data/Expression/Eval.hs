@@ -480,6 +480,8 @@ solveNode env block (Array sh (Lambda body hd) t) val = EEnv . Map.fromList $ do
         f (LSub i _,_) (LSub j _,_) = i == j
 solveNode env block (Apply "exp" [a] _) val =
   solveNodeRef env block a (log val)
+solveNode env block (Apply "log" [a] _) val =
+  solveNodeRef env block a (exp val)
 solveNode env block (Apply "negate" [a] _) val =
   solveNodeRef env block a (negate val)
 solveNode env block (Apply "+" [a,b] _) val | evaluable env block a =
@@ -496,6 +498,10 @@ solveNode env block (Apply "*" [a,b] _) val | evaluable env block b =
   solveNodeRef env block a (val / reDExpr env block b)
 solveNode env block (Apply "*" [a,b] _) val =
   trace ("WARN assuming "++ show a ++" * "++ show b ++" = "++ "[...]" {-show val-}) emptyEEnv
+solveNode env block (Apply "/" [a,b] _) val | evaluable env block a =
+  solveNodeRef env block b (reDExpr env block a / val)
+solveNode env block (Apply "/" [a,b] _) val | evaluable env block b =
+  solveNodeRef env block a (reDExpr env block b * val)
 solveNode env block (Apply "**" [a,b] _) val =
   trace ("WARN assuming "++ show a ++" ** "++ show b ++" = "++ "[...]" {-show val-}) emptyEEnv
 solveNode env block (Apply "#>" [a,b] _) val | evaluable env block a =
@@ -562,7 +568,7 @@ solveNode env block (Case hd alts _) val | IntT <- typeRef hd, Lambda _ [_] <- h
   solveCase env block hd [Lambda dag ret | Lambda dag [ret] <- alts] val
 solveNode _ _ (Apply "findSortedInsertIndex" _ _) _ = emptyEEnv
 solveNode env (Block dags) n v = error $
-  "solveNode: "++ showBlock dags (show n ++" = "++ show v) ++"\nwith env = "++ show env
+  "solveNode:\n"++ showBlock dags (show n) ++"\n=\n"++ show v ++"\nwith env:\n"++ show env
 
 diff :: Env -> Expr t -> Id -> Type -> ConstVal
 diff env = diffD env . erase

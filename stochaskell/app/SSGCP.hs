@@ -11,8 +11,8 @@ import System.Random
 
 noise = 1e-3
 
-kernelSE lsv lls2 a b =
-  exp (lsv - (a - b)^2 / (2 * exp lls2))
+kernelSE' eta ils x y =
+  eta * exp (- ((x - y) * ils)^2 / 2)
 
 gpClassifier :: (R -> R -> R) -> Z -> RVec -> P (RVec,BVec)
 gpClassifier kernel n s = do
@@ -29,154 +29,145 @@ poissonProcess' rate t = do
   s <- orderedSample n (uniform 0 t)
   return (n,s)
 
-type State = (R,R,R,Z,RVec,RVec,BVec)
+type State = (R,RVec,RVec,R,R,R,Z,RVec,BVec)
 
 dim :: State -> Z
-dim (_,_,_,n,_,_,_) = n
+dim (_,_,_,_,_,_,n,_,_) = n
 
 canonicalState :: Z -> State -> State
-canonicalState k (lsv,lls2,cap,n,s,g,phi) = (lsv,lls2,cap,n,s',g',phi)
+canonicalState k (z,a,b,eta,ils,cap,n,s,phi) = (z,a,b,eta,ils,cap,n,s',phi)
   where (s1,s0) = integer k `splitAt` list s
-        (g1,g0) = integer k `splitAt` list g
-        (s0',g0') = unzip . sort $ zip s0 g0 :: ([Double],[Double])
+        s0' = sort s0 :: [Double]
         s' = list $ s1 ++ s0' :: RVec
-        g' = list $ g1 ++ g0' :: RVec
 
-sgcp :: R -> P State
-sgcp t = do
-  lsv <- normal 0 1
-  lls2 <- normal (log 100) 2
+gpTrigPoly :: R -> Z -> R -> R -> R -> RVec -> RVec -> R -> R
+gpTrigPoly t m eta ils z a b x = c0 * z + sum' v
+  where sd = t * ils / pi
+        c0 = eta * exp (0.5 * lpdfNormal 0 0 sd)
+        omega = pi * x / t
+        v = vector [ 2 * eta * exp (0.5 * lpdfNormal (cast j) 0 sd)
+                       * ((a!j) * cos (cast j * omega) +
+                          (b!j) * sin (cast j * omega))
+                   | j <- 1...m ]
+
+ssgcp :: R -> Z -> P State
+ssgcp t m = do
+  z <- normal 0 1 :: P R
+  a <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ]) :: P RVec
+  b <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ]) :: P RVec
+  eta <- gamma 1 1
+  ils <- gamma 1 1
   cap <- gamma 1 1
   (n,s) <- poissonProcess' cap t
-  let kernel = kernelSE lsv lls2
-  (g,phi) <- gpClassifier kernel n s
-  return (lsv, lls2, cap, n, s, g, phi)
+  let y i = gpTrigPoly t m eta ils z a b (s!i)
+  phi <- joint vector [ bernoulliLogit (y i) | i <- 1...n ]
+  return (z,a,b,eta,ils,cap,n,s,phi)
 
-stepDown' :: Z -> State -> P (Z,Z,RVec,RVec,BVec)
-stepDown' k (lsv,lls2,cap,n,s,g,phi) = do
+stepDown' :: Z -> State -> P (Z,Z,RVec,BVec)
+stepDown' k (z,a,b,eta,ils,cap,n,s,phi) = do
   i <- uniform (k+1) n
   let n' = n - 1
       s' = s `deleteAt` i
-      g' = g `deleteAt` i
       phi' = phi `deleteAt` i
-  return (i,n',s',g',phi')
+  return (i,n',s',phi')
 
 stepDown :: Z -> State -> P State
-stepDown k state@(lsv,lls2,cap,n,s,g,phi) = do
-  (i,n',s',g',phi') <- stepDown' k state
-  return (lsv,lls2,cap,n',s',g',phi')
+stepDown k state@(z,a,b,eta,ils,cap,n,s,phi) = do
+  (i,n',s',phi') <- stepDown' k state
+  return (z,a,b,eta,ils,cap,n',s',phi')
 
-stepUp' :: R -> Z -> State -> P (R,R,Z,RVec,RVec,BVec)
-stepUp' t k (lsv,lls2,cap,n,s,g,phi) = do
+stepUp' :: R -> Z -> State -> P (R,Z,RVec,BVec)
+stepUp' t k (z,a,b,eta,ils,cap,n,s,phi) = do
   x <- uniform 0 t
-  let kernel = kernelSE lsv lls2
-  z <- normalCond n kernel noise s g x
   let n' = n + 1
       -- i = findSortedInsertIndex x s -- but with restriction i > k
       f i j = if x <= (s!i) then i else j
       i = foldr f (n+1) $ vector [ k + i | i <- 1...(n-k) ]
       s' = s `insertAt` (i, x)
-      g' = g `insertAt` (i, z)
       phi' = phi `insertAt` (i, false)
-  return (x,z,n',s',g',phi')
+  return (x,n',s',phi')
 
 stepUp :: R -> Z -> State -> P State
-stepUp t k state@(lsv,lls2,cap,n,s,g,phi) = do
-  (x,z,n',s',g',phi') <- stepUp' t k state
-  return (lsv,lls2,cap,n',s',g',phi')
+stepUp t k state@(z,a,b,eta,ils,cap,n,s,phi) = do
+  (x,n',s',phi') <- stepUp' t k state
+  return (z,a,b,eta,ils,cap,n',s',phi')
 
 stepN :: R -> Z -> State -> P State
-stepN t k state@(lsv,lls2,cap,n,s,g,phi) = mixture'
+stepN t k state@(z,a,b,eta,ils,cap,n,s,phi) = mixture'
   [(1/2, stepUp t k state)
   ,(1/2, if n == k then return state
                    else stepDown k state)
   ]
 
 stepS :: Z -> State -> P State
-stepS idx (lsv, lls2, cap, n, s, g, phi) = do
-  x <- normal (s!idx) (exp (lls2/2))
-  let kernel = kernelSE lsv lls2
-  z <- normalCond n kernel noise s g x
+stepS idx (z,a,b,eta,ils,cap,n,s,phi) = do
+  x <- normal (s!idx) (1/ils)
+  let kernel = kernelSE' eta ils
   let s' = s `replaceAt` (idx, x)
-      g' = g `replaceAt` (idx, z)
-  return (lsv, lls2, cap, n, s', g', phi)
+  return (z,a,b,eta,ils,cap,n,s',phi)
 
 stepCap :: R -> State -> P State
-stepCap t (lsv, lls2, cap, n, s, g, phi) = do
-  let a = cast (1 + n) :: R
-  cap' <- gamma a (1 + t)
-  return (lsv, lls2, cap', n, s, g, phi)
+stepCap t (z,a,b,eta,ils,cap,n,s,phi) = do
+  let alpha = cast (1 + n) :: R
+  cap' <- gamma alpha (1 + t)
+  return (z,a,b,eta,ils,cap',n,s,phi)
 
 sigmoid a = 1 / (1 + exp (-a))
 
-stepN' :: R -> Z -> State -> P (R,State)
-stepN' t k state@(lsv,lls2,cap,n,s,g,phi) = do
-  b <- bernoulli 0.5
-  if b then do -- birth
-    (x,z,n',s',g',phi') <- stepUp' t k state
-    let state' = (lsv,lls2,cap,n',s',g',phi')
-        alpha  = t * cap * sigmoid (-z) / cast (n - k + 1)
+stepN' :: R -> Z -> Z -> State -> P (R,State)
+stepN' t m k state@(z,a,b,eta,ils,cap,n,s,phi) = do
+  c <- bernoulli 0.5
+  if c then do -- birth
+    (x,n',s',phi') <- stepUp' t k state
+    let state' = (z,a,b,eta,ils,cap,n',s',phi')
+        y = gpTrigPoly t m eta ils z a b x
+        alpha  = t * cap * sigmoid (-y) / cast (n - k + 1)
     return (alpha,state')
   else if n == k then do
     return (1,state)
   else do -- death
-    (i,n',s',g',phi') <- stepDown' k state
-    let z = (g!i)
-        state' = (lsv,lls2,cap,n',s',g',phi')
-        alpha  = cast (n - k) / (t * cap * sigmoid (-z))
+    (i,n',s',phi') <- stepDown' k state
+    let state' = (z,a,b,eta,ils,cap,n',s',phi')
+        y = gpTrigPoly t m eta ils z a b (s!i)
+        alpha  = cast (n - k) / (t * cap * sigmoid (-y))
     return (alpha,state')
 
-mhN :: R -> Z -> State -> P State
-mhN t k state = debug "mhN" <$> do
-  (alpha,state') <- stepN' t k state
-  let alpha' = mhRatio (sgcp t) (stepN t k) state state'
+mhN :: R -> Z -> Z -> State -> P State
+mhN t m k state = debug "mhN" <$> do
+  (alpha,state') <- stepN' t m k state
+  let alpha' = mhRatio (ssgcp t m) (stepN t k) state state'
   accept <- bernoulli (min' 1 $
     0.5 * (debug "N alpha true" alpha + debug "N alpha auto" alpha'))
   return $ if accept then state' else state
 
-mhS :: R -> Z -> State -> P State
-mhS t idx state@(lsv,lls2,cap,n,s,g,phi) = do
-  x <- truncated 0 t $ normal (s!idx) (exp (lls2/2))
-  let kernel = kernelSE lsv lls2
-  z <- normalCond n kernel noise s g x
+mhS :: R -> Z -> Z -> State -> P State
+mhS t m idx state@(z,a,b,eta,ils,cap,n,s,phi) = do
+  x <- truncated 0 t $ normal (s!idx) (1/ils)
   let s' = s `replaceAt` (idx, x)
-      g' = g `replaceAt` (idx, z)
-      state' = (lsv,lls2,cap,n,s',g',phi)
-      alpha = sigmoid (-z) / sigmoid (-(g!idx))
-      alpha' = mhRatio (sgcp t) (stepS idx) state state'
+      state' = (z,a,b,eta,ils,cap,n,s',phi)
+      y  = gpTrigPoly t m eta ils z a b (s!idx)
+      y' = gpTrigPoly t m eta ils z a b x
+      alpha = sigmoid (-y') / sigmoid (-y)
+      alpha' = mhRatio (ssgcp t m) (stepS idx) state state'
   accept <- bernoulli (min' 1 $
     0.5 * (debug "S alpha true" alpha + debug "S alpha auto" alpha'))
   return $ if accept then state' else state
 
-stepMH :: R -> Z -> State -> P State
-stepMH t k state = do
-  state <- chain' 10 (mhN t k) state
-  state <- chainRange' (k + 1, dim state) (mhS t) state
+stepMH :: R -> Z -> Z -> State -> P State
+stepMH t m k state = do
+  state <- chain' 10 (mhN t m k) state
+  state <- chainRange' (k + 1, dim state) (mhS t m) state
   state <- stepCap t state
   return state
 
-stepGP :: R -> State -> IO State
-stepGP t (lsv,lls2,cap,n,s,g,phi) = do
-  samples <- hmcStanInit 10 [ (lsv',lls2',g') | (lsv',lls2',cap',n',s',g',phi') <- sgcp t,
-                              cap' == cap, n' == n, s' == s, phi' == phi ] (lsv,lls2,g)
-  let (lsv',lls2',g') = last samples
-  return (lsv',lls2',cap,n,s,g',phi)
-
-{-
-step :: R -> Z -> State -> IO State
-step t k state = do
-  state <- stepMH t k `runCC` state
-  state <- stepGP t state
-  return state
--}
-
-genData :: R -> IO [Double]
-genData t = do
-  (_,_,_,_,s,g,phi) <- sampleP (sgcp t)
-  toFile def "sgcp_data.png" $ do
-    plot $ line "truth" [sort $ zip (toList s) (toList g)]
-    plot . points "data" $ zip (toList s) [if y then 2.5 else (-2.5) | y <- toList phi]
-  return $ toList s `selectItems` toList phi
+stepGP :: R -> Z -> State -> IO State
+stepGP t m (z,a,b,eta,ils,cap,n,s,phi) = do
+  samples <- hmcStanInit 10
+    [ (z',a',b',eta',ils') | (z',a',b',eta',ils',cap',n',s',phi') <- ssgcp t m,
+                             cap' == cap, n' == n, s' == s, phi' == phi ]
+    (z,a,b,eta,ils)
+  let (z',a',b',eta',ils') = last samples
+  return (z',a',b',eta',ils',cap,n,s,phi)
 
 genData' :: Double -> IO [Double]
 genData' t = do
@@ -186,61 +177,62 @@ genData' t = do
   let f = [ 2 * exp (-x/15) + exp (-((x-25)/10)^2) | x <- s ]
   phi <- sequence [ bernoulli (y / cap) | y <- f ]
   let dat = s `selectItems` phi
-  toFile def "sgcp_data.png" $ do
+  toFile def "ssgcp_data.png" $ do
     plot $ line "truth" [sort $ zip s f]
     plot . points "data" $ zip dat (repeat 1.9)
     plot . points "rejections" $ zip (s `selectItems` map not phi) (repeat 0.1)
   return $ sort dat
 
-initialise :: R -> [Double] -> IO State
-initialise t dat = do
+initialise :: R -> Z -> [Double] -> IO State
+initialise t m dat = do
   let k = integer (length dat)
+  z <- real <$> (normal 0 1 :: IO Double)
+  a <- fromList <$> sequence [ normal 0 1 | _ <- [1..integer m] ]
+  b <- fromList <$> sequence [ normal 0 1 | _ <- [1..integer m] ]
+  let eta = 1
+      ils = 10 / t
       cap = real (2 * k / t)
-      m = 10
-      n = k + m
-      phi = fromList $ replicate k True ++ replicate m False :: BVec
-  rej <- sequence [ uniform 0 (real t) | _ <- [1..m] ]
+      n = k + 10
+  rej <- sequence [ uniform 0 (real t) | _ <- [1..(n-k)] ]
   let s = fromList $ dat ++ sort rej :: RVec
-  samples <- hmcStan 1000 [ (lsv,lls2,g) | (lsv,lls2,cap',n',s',g,phi') <- sgcp t,
-                            cap' == real cap, n' == integer n, s' == s, phi' == phi ]
-  let (lsv,lls2,g) = last samples
-  return (lsv,lls2,cap,n,s,g,phi)
+      phi = fromList $ replicate k True ++ replicate (n-k) False :: BVec
+  return (z,a,b,eta,ils,cap,n,s,phi)
 
 main :: IO ()
 main = do
   let t = 50
+      m = 20
   setStdGen (mkStdGen 3)
   dat <- genData' t
   let k = integer (length dat)
       xs = [0.5*x | x <- [0..100]]
-  state <- initialise t dat
-  stepMH' <- compileCC $ stepMH t k
+  state <- initialise t m dat
+  stepMH' <- compileCC $ stepMH t m k
   (_, accum) <- flip (chainRange (1,300)) (state,[]) $ \iter (state, accum) -> do
     putStrLn $ "*** CURRENT STATE: "++ show state
 
     state <- canonicalState k <$> stepMH' state
-    let (lsv,lls2,cap,n,s,g,phi) = state
+    let (z,a,b,eta,ils,cap,n,s,phi) = state
     let s' = real <$> list s :: [Double]
         phi' = toBool <$> list phi :: [Bool]
     unless (all (\x -> 0 <= x && x <= t) s') $ error ("s = "++ show s)
     unless (and $ take (integer k) phi') $ error ("phi = "++ show phi)
 
-    state <- stepGP t state
-    let (lsv,lls2,cap,n,s,g,phi) = state
+    state <- stepGP t m state
+    let (z,a,b,eta,ils,cap,n,s,phi) = state
 
-    let rate = sort $ zip (list s) (list g)
-        f = (real cap *) . sigmoid . interpolate rate
-        fs = f <$> xs
+    let f = (real cap *) . sigmoid . real . gpTrigPoly t m eta ils z a b . real
+        fs = f <$> xs :: [Double]
 
-    toFile def ("sgcp-figs/"++ show iter ++".png") $ do
+    toFile def ("ssgcp-figs/"++ show iter ++".png") $ do
       plot $ line "rate" [zip xs fs]
-      plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 | y <- toList phi]
-    return ((lsv,lls2,cap,n,s,g,phi), fs:accum)
+      plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 :: Double | y <- toList phi]
+    return ((z,a,b,eta,ils,cap,n,s,phi), fs:accum)
 
   let fmean = mean accum
       fmean2 = mean (map (**2) <$> accum)
       fsd = sqrt <$> fmean2 - map (**2) fmean
-  toFile def "sgcp_mean.png" $ do
+  toFile def "ssgcp_mean.png" $ do
     plot $ line "mean" [zip (xs :: [Double]) fmean]
     plot $ line "sd" [zip (xs :: [Double]) $ zipWith (+) fmean fsd
                      ,zip (xs :: [Double]) $ zipWith (-) fmean fsd]
