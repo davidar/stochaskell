@@ -40,6 +40,7 @@ canonicalState k (z,a,b,eta,ils,cap,n,s,phi) = (z,a,b,eta,ils,cap,n,s',phi)
         s0' = sort s0 :: [Double]
         s' = list $ s1 ++ s0' :: RVec
 
+-- TODO: generalise to accept concrete types (rather than eval'ing)
 gpTrigPoly :: R -> Z -> R -> R -> R -> RVec -> RVec -> R -> R
 gpTrigPoly t m eta ils z a b x = c0 * z + sum' v
   where sd = t * ils / pi

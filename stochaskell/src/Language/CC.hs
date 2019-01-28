@@ -118,6 +118,7 @@ ccDebug msg js = "cerr << \"[DEBUG] "++ msg ++"\" << "++ s ++" << endl;"
         printTuple js =
           "'(' << "++ intercalate " << ',' << " (g <$> js) ++" << ')'"
 
+-- TODO: cache matrix/vector dimensions
 ccNode :: Map Id PNode -> Label -> Node -> String
 ccNode r _ (Apply "getExternal" [Var i _] _) =
   ccPNode' (ccId i) . fromJust $ Map.lookup i r
