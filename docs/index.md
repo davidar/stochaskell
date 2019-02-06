@@ -264,6 +264,7 @@ To demonstrate the portability of Stochaskell across a variety of probabilistic 
 we also provide integration with Church.
 The implementation and usage of this is quite similar to the Stan backend,
 allowing inference to be easily offloaded:
+[^fig-imm]
 
 ```hs
 samples <- mhChurch posterior
@@ -272,14 +273,12 @@ samples <- mhChurch posterior
 The main conceptual difference from the Stan code generation is that for Church, arrays are represented by *memoised functions*.
 In particular, random arrays --- constructed with the `joint` keyword in Stochaskell --- utilise Church's support for *stochastic memoisation* [@goodman08, sec. 2.1].
 
-The following figure illustrates a simulation of the DP mixture model program presented in [the previous section](#probabilistic-modelling), sampled via the Church backend.[^church]
+The figure on the right illustrates a simulation of the DP mixture model program presented in [the previous section](#probabilistic-modelling), sampled via the Church backend.
 
-<figure>
+[^fig-imm]: {-}
 ![](imm.svg)
-^[{-} Histogram of $n=10^4$ samples from the Dirichlet process mixture model program from [the previous section](#probabilistic-modelling).]
-</figure>
-
-[^church]: We are using the [WebChurch](https://github.com/probmods/webchurch) implementation of Church.
+Histogram of $n=10^4$ samples from the Dirichlet process mixture model program from [the previous section](#probabilistic-modelling),
+via the [WebChurch](https://github.com/probmods/webchurch) implementation of Church.
 
 ### Metropolis--Hastings
 
