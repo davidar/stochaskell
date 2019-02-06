@@ -13,3 +13,6 @@
 [submodule "stochaskell/backward-cpp"]
 	path = stochaskell/backward-cpp
 	url = https://github.com/bombela/backward-cpp.git
+[submodule "docs/tufte-pandoc-css"]
+	path = docs/tufte-pandoc-css
+	url = https://github.com/davidar/tufte-pandoc-css.git
