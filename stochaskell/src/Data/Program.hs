@@ -87,6 +87,29 @@ dependsPNode block (Loop sh (Lambda defs dist) _) =
         ddeps = Set.filter ((dagLevel defs >) . idLevel) $
           dependsPNode (deriveBlock defs block) dist
 
+extractPNode :: (NodeRef -> State Block NodeRef) -> (Node -> State Block NodeRef)
+             -> EEnv -> Block -> PNode -> State Block PNode 
+extractPNode fNodeRef fNode env block = go where
+  go (Dist name args t) = do
+    args' <- sequence $ extractNodeRef fNodeRef fNode env block <$> args
+    t' <- extractType env block t
+    return (Dist name args' t')
+  go (HODist name arg0 args t) = do
+    arg0' <- go arg0
+    args' <- sequence $ extractNodeRef fNodeRef fNode env block <$> args
+    t' <- extractType env block t
+    return (HODist name arg0' args' t')
+
+isolateNodeRefPBlock :: (NodeRef -> Bool) -> ([NodeRef], PBlock) -> ([NodeRef], PBlock)
+isolateNodeRefPBlock p (rets, PBlock block acts given ns) =
+  (rets', PBlock block' acts' given ns)
+  where g r | p r = simplify $ Apply "id" [r] (typeRef r)
+            | otherwise = simplifyNodeRef r
+        ((acts', rets'), block') = flip runState emptyBlock $ do
+          acts' <- sequence $ extractPNode   g simplify emptyEEnv block <$> acts
+          rets' <- sequence $ extractNodeRef g simplify emptyEEnv block <$> rets
+          return (acts', rets')
+
 instance Show PNode where
   show (Dist d js t) = unwords (d : map show js) ++" :: P "++ show t
   show (Loop sh (Lambda dag hd) t) = "\n"++
@@ -723,6 +746,7 @@ cdfPNode env block (Dist f args _) x = expr $ do
   js <- sequence $ extractNodeRef simplifyNodeRef simplify env block <$> args
   simplify $ Apply (f ++"_cdf") (i:js) RealT
 
+-- TODO: deprecate in favour of pdf
 density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
 density prog vals = densityPBlock env' pb / adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "density" prog

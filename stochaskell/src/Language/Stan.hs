@@ -62,6 +62,11 @@ stanNodeRef (Var s _) = stanId s
 stanNodeRef (Const c _) | dimension c == 0 = show c
 stanNodeRef (Index f js) =
     stanNodeRef f ++"["++ stanNodeRef `commas` reverse js ++"]"
+stanNodeRef a | isBlockMatrix a =
+  foldl1 appendRow [foldl1 appendCol (stanNodeRef <$> row) | row <- fromBlockMatrix a]
+  where appendCol a b = "append_col("++ a ++", "++ b ++")"
+        appendRow a b = "append_row("++ a ++", "++ b ++")"
+stanNodeRef r = error $ "stanNodeRef "++ show r
 
 
 ------------------------------------------------------------------------------
@@ -134,6 +139,7 @@ stanBuiltinDistributions =
   ,("inv_gamma",       "inv_gamma")
   ,("inv_wishart",     "inv_wishart")
   ,("lkj_corr",        "lkj_corr")
+  ,("multi_normal",    "multi_normal")
   ,("neg_binomial",    "neg_binomial")
   ,("normal",          "normal")
   ,("poisson",         "poisson")
@@ -162,10 +168,21 @@ stanCompose (f:fs) x = f ++"("++ stanCompose fs x ++")"
 
 stanNode :: Label -> Node -> String
 stanNode _ (Apply "getExternal" _ _) = ""
+stanNode name (Apply "id" [a] _) =
+    name ++" = "++ stanNodeRef a ++";"
 stanNode name (Apply "ifThenElse" [a,b,c] _) =
     name ++" = "++ stanNodeRef a ++" ? "++ stanNodeRef b ++" : "++ stanNodeRef c ++";"
 stanNode name (Apply "tr'" [a] _) =
     name ++" = "++ stanNodeRef a ++"';"
+stanNode name (Apply "zeros" [m,n] _) =
+    name ++" = rep_matrix(0, "++ stanNodeRef m ++", "++ stanNodeRef n ++");"
+stanNode name (Apply "findSortedInsertIndex" [x,v] _) =
+    name ++" = "++ stanNodeRef n ++" + 1;\n"++
+    (forLoop [i] sh $
+      "if("++ stanNodeRef x ++" < "++ stanNodeRef v ++"["++ i ++"]) { "++
+        name ++" = "++ i ++"; break; }")
+    where ArrayT _ sh@[(Const 1 IntT,n)] _ = typeRef v
+          i = name ++"_i"
 stanNode name (Apply op [i,j] _)
   | isJust $ lookup op stanOperators,
     (ArrayT _ [(Const 1 IntT, Const m IntT), (Const 1 IntT, Const 1 IntT)] _) <- typeRef i,
@@ -409,7 +426,8 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
 
     putStrLn' "--- Removing temporary files ---"
     return [fromRight' $ evalPBlock p rets env | env <- stanRead table]
-  where (rets,p@(PBlock block _ given _)) = runProgExprs "stan" prog
+  where (rets,p@(PBlock block _ given _)) =
+          isolateNodeRefPBlock isBlockArray $ runProgExprs "stan" prog
         noComment row = not (LC.null row) && LC.head row /= '#'
 
 -- TODO: deprecate these

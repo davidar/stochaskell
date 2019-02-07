@@ -738,18 +738,19 @@ collectIds dag = concatMap (f . snd) (nodes dag) \\ inputs dag
 
 -- recursive data dependencies
 dependsNodeRef :: Block -> NodeRef -> Set Id
-dependsNodeRef block (Var i@Internal{} _) =
-  Set.insert i . dependsNode block $ lookupBlock i block
-dependsNodeRef _ (Var i _) = Set.singleton i
-dependsNodeRef _ (Const _ _) = Set.empty
-dependsNodeRef block (Index a i) =
-  Set.unions $ map (dependsNodeRef block) (a:i)
-dependsNodeRef block (Extract r _ _) = dependsNodeRef block r
-dependsNodeRef _ Unconstrained{} = Set.empty
-dependsNodeRef _ r = error $ "dependsNodeRef "++ show r
+dependsNodeRef block ref = dependsType block (typeRef ref) `Set.union` go ref where
+  go (Var i@Internal{} _) =
+    Set.insert i . dependsNode block $ lookupBlock i block
+  go (Var i _) = Set.singleton i
+  go (Const _ _) = Set.empty
+  go (BlockArray a _) = Set.unions $ go <$> A.elems a
+  go (Index a i) = Set.unions $ go <$> (a:i)
+  go (Extract r _ _) = go r
+  go Unconstrained{} = Set.empty
+  go r = error $ "dependsNodeRef "++ show r
 
 dependsNode :: Block -> Node -> Set Id
-dependsNode block node = Set.unions $ case node of
+dependsNode block node = Set.unions $ dependsType block (typeNode node) : case node of
   Apply _ args _ -> map (dependsNodeRef block) args
   Array sh lam _ -> map (d . fst) sh ++ map (d . snd) sh ++ [dependsLambda block lam]
   FoldScan _ _ lam seed ls _ -> [d seed, d ls, dependsLambda block lam]
@@ -763,6 +764,19 @@ dependsLambda' :: Block -> Lambda [NodeRef] -> Set Id
 dependsLambda' block (Lambda body rets) =
   Set.filter ((dagLevel body >) . idLevel) . Set.unions $
   dependsNodeRef (deriveBlock body block) <$> rets
+
+dependsType :: Block -> Type -> Set Id
+dependsType block = go where
+  go IntT = Set.empty
+  go RealT = Set.empty
+  go (SubrangeT t a b) = go t `Set.union` f a `Set.union` f b
+    where f Nothing = Set.empty
+          f (Just r) = dependsNodeRef block r
+  go (ArrayT _ sh t) = Set.unions $ 
+    go t : [dependsNodeRef block a `Set.union` dependsNodeRef block b | (a,b) <- sh]
+  go (TupleT ts) = Set.unions $ go <$> ts
+  go (UnionT tss) = Set.unions [go t | ts <- tss, t <- ts]
+  go UnknownType = Set.empty
 
 dependsD :: DExpr -> Set Id
 dependsD e = Set.filter (not . isInternal) $ dependsNodeRef block ret
@@ -1397,14 +1411,14 @@ instance AA.Matrix DExpr DExpr DExpr where
                 _ | isScalar t -> a
     eye n = DExpr $ do
       n' <- fromDExpr n
-      let t = ArrayT (Just "matrix") [(Const 1 IntT,Unconstrained IntT)
-                                     ,(Const 1 IntT,Unconstrained IntT)] RealT
+      let t = ArrayT (Just "matrix") [(Const 1 IntT,n')
+                                     ,(Const 1 IntT,n')] RealT
       simplify $ Apply "eye" [n'] t
     zeros m n = DExpr $ do
       m' <- fromDExpr m
       n' <- fromDExpr n
-      let t = ArrayT (Just "matrix") [(Const 1 IntT,Unconstrained IntT)
-                                     ,(Const 1 IntT,Unconstrained IntT)] RealT
+      let t = ArrayT (Just "matrix") [(Const 1 IntT,m')
+                                     ,(Const 1 IntT,n')] RealT
       simplify $ Apply "zeros" [m',n'] t
 
 typeMatrixProduct (ArrayT _ [r,_] t) (ArrayT _ [_,c] _) = ArrayT (Just "matrix") [r,c] t
