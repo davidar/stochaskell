@@ -340,4 +340,6 @@ where `n` is the number of iterations and `x0` is some initial state.
 
 See @roberts19.
 
-## References
+## References {-}
+
+<div id="refs" class="references fullwidth"></div>
