@@ -7,4 +7,5 @@
 **/*~
 **/*.tix
 stochaskell/.stack-work/
+stochaskell/cache/
 _scrap/

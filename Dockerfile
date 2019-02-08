@@ -1,65 +1,31 @@
 FROM fpco/stack-build:lts-11.19
 
-# Install all necessary Ubuntu packages
 RUN apt-get update && apt-get install -y python3-pip libgmp-dev libmagic-dev libtinfo-dev libzmq3-dev libcairo2-dev libpango1.0-dev libblas-dev liblapack-dev gcc g++ && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Jupyter notebook
 RUN pip3 install -U jupyter
 
+RUN adduser --disabled-password --gecos "Default user" --uid 1000 jovyan
+
+USER 1000
 ENV LANG en_US.UTF-8
-ENV NB_USER jovyan
-ENV NB_UID 1000
-ENV HOME /home/${NB_USER}
+ENV HOME /home/jovyan
+WORKDIR ${HOME}
 
-RUN adduser --disabled-password \
-    --gecos "Default user" \
-    --uid ${NB_UID} \
-    ${NB_USER}
+RUN stack --resolver lts-11.19 setup && stack config set system-ghc --global true
 
-# Set up a working directory for IHaskell
-RUN mkdir ${HOME}/ihaskell
-WORKDIR ${HOME}/ihaskell
+COPY --chown=1000 docker-stack.yaml stack.yaml
+COPY --chown=1000 ihaskell ihaskell
 
-USER root
-RUN chown -R ${NB_UID} ${HOME}
-USER ${NB_UID}
+RUN mkdir stochaskell
+COPY --chown=1000 stochaskell/stochaskell.cabal stochaskell/stochaskell.cabal
+RUN stack setup && stack build --only-snapshot
 
-# Set up stack
-RUN stack --resolver lts-11.19 setup
-COPY ihaskell-stack.yaml stack.yaml
-RUN stack config set system-ghc --global true
-RUN stack setup
-
-# Install dependencies for IHaskell
-COPY ihaskell/ihaskell.cabal ${HOME}/ihaskell/ihaskell.cabal
-COPY ihaskell/ipython-kernel ${HOME}/ihaskell/ipython-kernel
-COPY ihaskell/ghc-parser ${HOME}/ihaskell/ghc-parser
-COPY ihaskell/ihaskell-display ${HOME}/ihaskell/ihaskell-display
-
-COPY stochaskell ${HOME}/stochaskell
-
-USER root
-RUN chown -R ${NB_UID} ${HOME}
-USER ${NB_UID}
-
-RUN stack build --only-snapshot
-
-# Install IHaskell itself. Don't just COPY . so that
-# changes in e.g. README.md don't trigger rebuild.
-COPY ihaskell/src ${HOME}/ihaskell/src
-COPY ihaskell/html ${HOME}/ihaskell/html
-COPY ihaskell/main ${HOME}/ihaskell/main
-COPY ihaskell/LICENSE ${HOME}/ihaskell/LICENSE
-
-USER root
-RUN chown -R ${NB_UID} ${HOME}
-USER ${NB_UID}
-
+COPY --chown=1000 stochaskell stochaskell
 RUN stack build && stack install
 
-# Run the notebook
-ENV PATH $(stack path --local-install-root)/bin:$(stack path --snapshot-install-root)/bin:$(stack path --compiler-bin):/home/${NB_USER}/.local/bin:${PATH}
+COPY --chown=1000 *.ipynb ./
+
+ENV PATH $(stack path --local-install-root)/bin:$(stack path --snapshot-install-root)/bin:$(stack path --compiler-bin):${HOME}/.local/bin:${PATH}
 RUN ihaskell install --stack
-WORKDIR ${HOME}/ihaskell
-CMD ["stack", "exec", "jupyter", "--", "notebook", "--ip", "0.0.0.0"]
+CMD ["jupyter", "notebook", "--ip", "0.0.0.0"]
