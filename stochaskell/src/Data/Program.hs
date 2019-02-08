@@ -91,14 +91,32 @@ extractPNode :: (NodeRef -> State Block NodeRef) -> (Node -> State Block NodeRef
              -> EEnv -> Block -> PNode -> State Block PNode 
 extractPNode fNodeRef fNode env block = go where
   go (Dist name args t) = do
-    args' <- sequence $ extractNodeRef fNodeRef fNode env block <$> args
+    args' <- sequence $ goRef <$> args
     t' <- extractType env block t
     return (Dist name args' t')
+  go (Loop sh lam t) = do
+      let (lo,hi) = unzip sh
+      lo' <- sequence $ goRef <$> lo
+      hi' <- sequence $ goRef <$> hi
+      let sh' = zip lo' hi'
+      lam' <- extractLambdaPNode lam
+      t' <- extractType env block t
+      return $ Loop sh' lam' t'
   go (HODist name arg0 args t) = do
     arg0' <- go arg0
     args' <- sequence $ extractNodeRef fNodeRef fNode env block <$> args
     t' <- extractType env block t
     return (HODist name arg0' args' t')
+  go pn = error $ "extractPNode "++ show pn
+  goRef = extractNodeRef fNodeRef fNode env block
+  extractLambdaPNode (Lambda body pn) = do
+    d <- getNextLevel
+    let inps = inputsLevel d body
+        ids' = f <$> inps
+        env' = bindInputs body ids' `unionEEnv` env
+    runLambda inps $ extractPNode fNodeRef fNode env' block' pn
+    where f (i,t) = DExpr . return $ Var i t
+          block' = deriveBlock body block
 
 isolateNodeRefPBlock :: (NodeRef -> Bool) -> ([NodeRef], PBlock) -> ([NodeRef], PBlock)
 isolateNodeRefPBlock p (rets, PBlock block acts given ns) =

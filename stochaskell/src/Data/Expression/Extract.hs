@@ -126,12 +126,7 @@ extractNodeRef fNodeRef fNode env block = go where
   extractLambda' :: Lambda [NodeRef] -> State Block (Lambda [NodeRef])
   extractLambda' (Lambda body hds) = do
     d <- getNextLevel
-    let inps = do
-          (i,t) <- inputsT body
-          let i' = case i of
-                -- TODO rename to avoid capture without breaking fixpt
-                Dummy _ p -> Dummy d p -- set correct level
-          return (i',t)
+    let inps = inputsLevel d body
         ids' = f <$> inps
         env' = bindInputs body ids' `unionEEnv` env
     runLambda inps (sequence $ extractNodeRef fNodeRef fNode env' block' <$> hds)

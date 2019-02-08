@@ -232,6 +232,13 @@ inputsL :: DAG -> [LVal]
 inputsL = map LVar . inputs
 inputs' :: DAG -> [NodeRef]
 inputs' = map (uncurry Var) . inputsT
+inputsLevel :: Level -> DAG -> [(Id,Type)]
+inputsLevel d body = do
+  (i,t) <- inputsT body
+  let i' = case i of
+        -- TODO rename to avoid capture without breaking fixpt
+        Dummy _ p -> Dummy d p -- set correct level
+  return (i',t)
 instance Show DAG where
   show dag = unlines $ map f (nodes dag)
     where f (i,n) = show (Internal (dagLevel dag) i) ++" = "++ show n

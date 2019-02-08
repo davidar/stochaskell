@@ -159,6 +159,8 @@ stanOperators =
   ,("<=",  "<=")
   ,(">",   ">")
   ,(">=",  ">=")
+  ,("&&",  "&&")
+  ,("||",  "||")
   ,("**",  "^")
   ]
 
@@ -175,6 +177,8 @@ stanNode :: Label -> Node -> String
 stanNode _ (Apply "getExternal" _ _) = ""
 stanNode name (Apply "id" [a] _) =
     name ++" = "++ stanNodeRef a ++";"
+stanNode name (Apply "&&s" js _) =
+    name ++" = "++ intercalate " && " (stanNodeRef <$> js) ++";"
 stanNode name (Apply "ifThenElse" [a,b,c] _) =
     name ++" = "++ stanNodeRef a ++" ? "++ stanNodeRef b ++" : "++ stanNodeRef c ++";"
 stanNode name (Apply "tr'" [a] _) =
