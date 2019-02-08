@@ -37,7 +37,7 @@ COPY ihaskell/ipython-kernel ${HOME}/ihaskell/ipython-kernel
 COPY ihaskell/ghc-parser ${HOME}/ihaskell/ghc-parser
 COPY ihaskell/ihaskell-display ${HOME}/ihaskell/ihaskell-display
 
-COPY . ${HOME}/stochaskell
+COPY stochaskell ${HOME}/stochaskell
 
 USER root
 RUN chown -R ${NB_UID} ${HOME}

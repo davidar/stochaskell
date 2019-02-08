@@ -1,1 +1,9 @@
-.directory
+*.png
+*.imports
+*_flymake.*
+*.prof
+*.bak
+*~
+*.tix
+/stochaskell/.stack-work/
+/_scrap/
