@@ -1,4 +1,7 @@
-module Language.Church where
+module Language.Church
+  ( mhChurch
+  , simChurchVec
+  ) where
 
 import Data.Array.Abstract
 import Data.Expression

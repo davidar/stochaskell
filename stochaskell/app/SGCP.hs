@@ -172,7 +172,7 @@ step t k state = do
 
 genData :: R -> IO [Double]
 genData t = do
-  (_,_,_,_,s,g,phi) <- sampleP (sgcp t)
+  (_,_,_,_,s,g,phi) <- simulate (sgcp t)
   toFile def "sgcp_data.png" $ do
     plot $ line "truth" [sort $ zip (toList s) (toList g)]
     plot . points "data" $ zip (toList s) [if y then 2.5 else (-2.5) | y <- toList phi]
@@ -221,7 +221,7 @@ main = do
     state <- canonicalState k <$> stepMH' state
     let (lsv,lls2,cap,n,s,g,phi) = state
     let s' = real <$> list s :: [Double]
-        phi' = toBool <$> list phi :: [Bool]
+        phi' = boolean <$> list phi :: [Bool]
     unless (all (\x -> 0 <= x && x <= t) s') $ error ("s = "++ show s)
     unless (and $ take (integer k) phi') $ error ("phi = "++ show phi)
 

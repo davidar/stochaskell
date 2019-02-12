@@ -215,7 +215,7 @@ main = do
     state <- canonicalState k <$> stepMH' state
     let (z,a,b,eta,ils,cap,n,s,phi) = state
     let s' = real <$> list s :: [Double]
-        phi' = toBool <$> list phi :: [Bool]
+        phi' = boolean <$> list phi :: [Bool]
     unless (all (\x -> 0 <= x && x <= t) s') $ error ("s = "++ show s)
     unless (and $ take (integer k) phi') $ error ("phi = "++ show phi)
 

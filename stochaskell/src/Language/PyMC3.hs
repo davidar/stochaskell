@@ -1,6 +1,11 @@
 {-# LANGUAGE RecordWildCards #-}
 
-module Language.PyMC3 where
+module Language.PyMC3
+  ( PyMC3Inference(..), PyMC3Step(..)
+  , defaultPyMC3Inference
+  , pmProgram
+  , runPyMC3
+  ) where
 
 import Control.Monad
 import Data.Either.Utils

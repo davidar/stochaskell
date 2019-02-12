@@ -43,7 +43,7 @@ main = do
   let k = 2
       t = 10
       n = 100
-  (etas,ilss,cs,s,g) <- sampleP $ gpChangepoint k t n
+  (etas,ilss,cs,s,g) <- simulate (gpChangepoint k t n)
   toFile def "cp_data.png" $ do
     plot $ line "data" [sort $ zip (list s :: [Double]) (list g :: [Double])]
   samples <- hmcStanInit 100 [cs' | (etas',ilss',cs',s',g') <- gpChangepoint k t n

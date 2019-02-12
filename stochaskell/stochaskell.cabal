@@ -15,7 +15,13 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Control.Monad.Guard
+  exposed-modules:     Language.Stochaskell
+                     , Language.Stochaskell.Expression
+                     , Language.Church
+                     , Language.Edward
+                     , Language.PyMC3
+                     , Language.Stan
+  other-modules:       Control.Monad.Guard
                      , Data.Array.Abstract
                      , Data.Expression
                      , Data.Expression.Case
@@ -26,11 +32,6 @@ library
                      , Data.Program
                      , Data.Random.Distribution.Abstract
                      , Language.CC
-                     , Language.Church
-                     , Language.Edward
-                     , Language.PyMC3
-                     , Language.Stan
-                     , Language.Stochaskell
                      , Util
   build-depends:       Boolean
                      , array

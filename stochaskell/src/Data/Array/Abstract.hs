@@ -1,7 +1,34 @@
 {-# LANGUAGE MultiParamTypeClasses, TypeFamilies, FlexibleInstances,
              TypeOperators, GADTs, FunctionalDependencies, FlexibleContexts,
              UndecidableInstances #-}
-module Data.Array.Abstract ( module Data.Array.Abstract, LA.tr, LA.tr' ) where
+module Data.Array.Abstract
+  ( LA.Transposable(..)
+  , (...)
+  , AbstractArray
+  , Indexable(..)
+  , InnerProduct(..)
+  , Interval
+  , Joint(..)
+  , LinearOperator(..)
+  , Matrix(..)
+  , Scalable(..)
+  , ShapedMatrix(..)
+  , ShapedVector(..)
+  , SquareMatrix(..)
+  , Vector(..)
+  , cardinality
+  , coerceShape
+  , deleteAt
+  , fromShape
+  , insertAt
+  , list
+  , outer
+  , replaceAt
+  , rrange
+  , shape
+  , toArray
+  , zipWithA
+  ) where
 
 import qualified Data.Array.Unboxed as A
 import Data.Ix

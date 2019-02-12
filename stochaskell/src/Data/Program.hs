@@ -1056,7 +1056,8 @@ mhAdjust adjust target proposal x = do
   accept <- bernoulli $ if a > 1 then 1 else a
   return $ if accept then y else x
 
-mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => String -> P t -> (t -> P t) -> t -> P t
+mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t)
+    => String -> P t -> (t -> P t) -> t -> P t
 mh' msg target proposal x = do
   let a = mhRatio target proposal
   y <- debug (msg ++" proposing") <$> proposal x

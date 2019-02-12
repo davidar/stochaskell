@@ -2,10 +2,10 @@
 
 module Main where
 import Language.Stochaskell
+import Language.Stochaskell.Expression
 
 import Control.Monad hiding (guard)
 import Control.Monad.HT (iterateLimit)
-import Data.Expression.Eval
 import System.IO
 
 -- https://cran.r-project.org/web/packages/engsoccerdata/README.html
@@ -15,22 +15,22 @@ data Model = Model1 R ZVec
            | Model2 R R ZVec
            deriving (Show)
 
+-- TODO: autogenerate this boilerplate code
 instance Constructor Model where
   tags = Tags [0..1]
   construct f 0 [lam,    y] = Model1 (f lam)         (f y)
   construct f 1 [lam,kap,y] = Model2 (f lam) (f kap) (f y)
   deconstruct f (Model1 lam     y) = (0, [f lam,        f y])
   deconstruct f (Model2 lam kap y) = (1, [f lam, f kap, f y])
-
 instance ExprType Model where
   fromConcrete = fromConcreteC
   toConcrete = toConcreteC
   constVal = fromRight' . eval_ . fromConcrete
   typeOf = TypeIs $ UnionT [[RealT, vecT IntT] ,[RealT, RealT, vecT IntT]]
 
-model1 :: R -> ZVec -> Expr Model
+model1 :: R -> ZVec -> Expression Model
 model1 lam y = fromConcrete (Model1 lam y)
-model2 :: R -> R -> ZVec -> Expr Model
+model2 :: R -> R -> ZVec -> Expression Model
 model2 lam kap y = fromConcrete (Model2 lam kap y)
 
 pvnb1 :: Z -> P (R,ZVec)
@@ -48,14 +48,14 @@ pvnb2 n = do
   y <- joint vector [ negBinomial a b | _ <- 1...n ]
   return (lam,kap,y)
 
-pvnb :: Z -> P (Expr Model)
+pvnb :: Z -> P (Expression Model)
 pvnb n = do
   (lam1,     y1) <- pvnb1 n
   (lam2,kap2,y2) <- pvnb2 n
   k <- bernoulli 0.5
   return $ if k then model1 lam1 y1 else model2 lam2 kap2 y2
 
-pvnbJump :: Model -> P (Expr Model)
+pvnbJump :: Model -> P (Expression Model)
 pvnbJump (Model1 lam y) = do
   u <- normal 0 1.5
   let kap = 0.015 * exp u

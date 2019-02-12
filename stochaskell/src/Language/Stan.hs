@@ -1,5 +1,10 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
-module Language.Stan where
+module Language.Stan
+  ( StanMethod(..), StanHMCMetric(..), StanHMCEngine(..)
+  , defaultStanMethod
+  , hmcStan, hmcStanInit
+  , runStan
+  ) where
 
 import Control.Applicative ()
 import Control.Monad

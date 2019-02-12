@@ -538,16 +538,14 @@ class ExprType c => Constructor c where
   tags :: Tags c
   construct   :: (forall t. ExprType t => a -> Expr t) -> Tag -> [a] -> c
   deconstruct :: (forall t. ExprType t => Expr t -> a) -> c -> (Tag, [a])
-
-toConcreteC :: Constructor t => ConstVal -> t
-toConcreteC (Tagged c args) = construct constExpr c args
-
-fromConcreteC :: forall t. Constructor t => t -> Expr t
-fromConcreteC m = expr $ do
-  js <- sequence args
-  let TypeIs t = typeOf :: TypeOf t
-  return $ Data c js t
-  where (c, args) = deconstruct fromExpr m
+  toConcreteC :: ConstVal -> c
+  toConcreteC (Tagged c args) = construct constExpr c args
+  fromConcreteC :: c -> Expr c
+  fromConcreteC m = expr $ do
+    js <- sequence args
+    let TypeIs t = typeOf :: TypeOf c
+    return $ Data c js t
+    where (c, args) = deconstruct fromExpr m
 
 internal :: Level -> Pointer -> State Block NodeRef
 internal level i = do
@@ -1170,9 +1168,9 @@ array :: (Num i, ExprType i, ExprType e)
 array l n = Expr . array' l n . eraseAA
 
 eraseAA :: AA.AbstractArray (Expr i) (Expr e) -> AA.AbstractArray DExpr DExpr
-eraseAA (AA.AArr sh f) = AA.AArr sh' f'
-  where sh' = flip map sh $ \(a,b) -> (erase a, erase b)
-        f' = erase . f . map Expr
+eraseAA arr = f' <$> AA.fromShape sh'
+  where sh' = flip map (AA.shape arr) $ \(a,b) -> (erase a, erase b)
+        f' = erase . (arr!) . map Expr
 
 index :: Expr a -> [Expr i] -> Expr r
 index a es = expr $ do

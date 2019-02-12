@@ -1,4 +1,7 @@
-module Language.Edward where
+module Language.Edward
+  ( edProgram
+  , hmcEdward
+  ) where
 
 import Control.Monad
 import Data.Either.Utils

@@ -1,23 +1,34 @@
 module Language.Stochaskell
   ( module Prelude
   , module Control.Monad.Guard
-  , module Data.Array.Abstract
   , module Data.Boolean.Overload
-  , module Data.Expression
-  , module Data.Expression.Case
-  , module Data.Expression.Const
-  , module Data.Expression.Const.IO
   , module Data.Monoid
   , module Data.Number.Transfinite
-  , module Data.Program
-  , module Data.Random.Distribution.Abstract
   , module GHC.Exts
-  , module Language.CC
-  , module Language.Church
-  , module Language.Edward
-  , module Language.PyMC3
-  , module Language.Stan
-  , module Util
+
+  , Expression, B, R, Z, BVec, RVec, ZVec, BMat, RMat, ZMat, P
+  , boolean, integer, real, list
+  , joint, vector, matrix, blockVector, blockMatrix
+  , (...), (!), (#>), (*>)
+  , inv, tr', outer, diag, qfDiag
+  , asColumn, asRow, cast
+
+  , bernoulli, bernoulliLogit, bernoulliLogits
+  , beta, cauchy, gamma, invGamma, lognormal, normal, normals, uniform, uniforms
+  , geometric, negBinomial, pmf, poisson
+  , orderedSample, poissonProcess
+  , mixture, mixture', truncated
+  , normalChol, normalsChol, normalCond
+  , corrLKJ, lpdfNormal
+
+  , compileCC, runCC, runStep, simulate
+  , debug, chain, chain', chainRange, chainRange', loop
+  , hmcStan, hmcStanInit, mh, mh', mhRatio, rjmc, rjmcC
+
+  , deleteAt, insertAt, replaceAt
+  , foldl, foldr, scanl, scanr
+  , find', findSortedInsertIndex, min', sum'
+  , binarize, fromRight', interpolate, mean, readRealMatrix, selectItems, slice, square
   ) where
 
 import Prelude hiding (
@@ -36,8 +47,5 @@ import Data.Program
 import Data.Random.Distribution.Abstract
 import GHC.Exts (IsList(..))
 import Language.CC
-import Language.Church
-import Language.Edward
-import Language.PyMC3
 import Language.Stan
 import Util

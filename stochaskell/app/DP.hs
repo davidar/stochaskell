@@ -3,6 +3,7 @@
 module Main where
 
 import Language.Stochaskell
+import Language.Church
 
 stickBreak :: R -> P RVec
 stickBreak alpha = do

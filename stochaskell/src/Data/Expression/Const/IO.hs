@@ -1,5 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Data.Expression.Const.IO where
+module Data.Expression.Const.IO
+  ( readRealMatrix
+  , writeNPy
+  ) where
 
 import Control.Monad
 import Data.Array.Abstract hiding (elems)
