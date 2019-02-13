@@ -177,26 +177,26 @@ liftExprBlock s = do
     put $ PBlock block' rhs given ns
     return ret
 
-newtype Prog t = Prog { fromProg :: State PBlock t }
+newtype P t = P { fromProg :: State PBlock t }
   deriving (Functor,Applicative,Monad)
-type P t = Prog t
-instance (Eq t) => Eq (Prog t) where p == q = runProg "eq" p == runProg "eq" q
-runProg :: NS -> Prog a -> (a, PBlock)
+type Prog t = P t
+instance (Eq t) => Eq (P t) where p == q = runProg "eq" p == runProg "eq" q
+runProg :: NS -> P a -> (a, PBlock)
 runProg ns p = runState (fromProg p) $ emptyPBlock ns
 
-instance (ExprTuple t) => Show (Prog t) where
+instance (ExprTuple t) => Show (P t) where
   show p = showPBlock pb $ show rets
     where (rets, pb) = runProgExprs "show" p
-instance (ExprTuple a, ExprTuple b) => Show (a -> Prog b) where
+instance (ExprTuple a, ExprTuple b) => Show (a -> P b) where
   show p = "\\input ->\n"++ (indent . showPBlock pb $ show rets)
     where (rets, pb) = runProgExprs "show" . p . entuple $ symbol "input"
 
-fromProgExprs :: (ExprTuple t) => Prog t -> State PBlock [NodeRef]
+fromProgExprs :: (ExprTuple t) => P t -> State PBlock [NodeRef]
 fromProgExprs p = do
   es <- fromExprTuple <$> fromProg p
   mapM (liftExprBlock . fromDExpr) es
 
-runProgExprs :: (ExprTuple t) => NS -> Prog t -> ([NodeRef], PBlock)
+runProgExprs :: (ExprTuple t) => NS -> P t -> ([NodeRef], PBlock)
 runProgExprs ns p = runState (fromProgExprs p) $ emptyPBlock ns
 
 -- all samples whose density depends on the value of non-fixed parameters
@@ -220,7 +220,7 @@ evalPBlock (PBlock block _ given _) rets = \env -> do
   return $ fromConstVals xs
 
 caseP :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
-caseP n e ps = Prog $ do
+caseP n e ps = P $ do
   k <- liftExprBlock $ fromDExpr e
   case k of
     Data c args _ -> do
@@ -251,13 +251,13 @@ caseP' n k ps = distDs n $ \ns -> do
       return (Lambda dag ret, reverse acts)
   return $ Switch k cases ns (tupleT . foldr1 (zipWith E.coerce) $ map typeRef . fHead . fst <$> cases)
 
-fromCaseP :: forall c t. (Constructor c, ExprTuple t) => (c -> P t) -> Expr c -> P t
+fromCaseP :: forall c t. (Constructor c, ExprTuple t) => (c -> P t) -> Expression c -> P t
 fromCaseP p e = toExprTuple <$> caseP n (erase e)
-  [fmap fromExprTuple . p . construct Expr c | c <- cs]
+  [fmap fromExprTuple . p . construct Expression c | c <- cs]
   where Tags cs = tags :: Tags c
         TupleSize n = tupleSize :: TupleSize t
 
-switchOf :: (Constructor c, ExprTuple t) => (Expr c -> P t) -> Expr c -> P t
+switchOf :: (Constructor c, ExprTuple t) => (Expression c -> P t) -> Expression c -> P t
 switchOf f = fromCaseP (f . fromConcrete)
 
 chainRange' :: forall t. (ExprTuple t) => Interval Z -> (Z -> t -> P t) -> t -> P t
@@ -268,7 +268,7 @@ chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
       ids = [(Dummy 99 0, IntT), (Dummy 99 1, t)]
       args = [DExpr . return $ Var i t | (i,t) <- ids]
       s = do
-        r <- fromProg $ p (Expr $ args !! 0) (entuple . Expr $ args !! 1)
+        r <- fromProg $ p (Expression $ args !! 0) (entuple . Expression $ args !! 1)
         liftExprBlock . fromExpr $ detuple r
       (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
         PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
@@ -310,12 +310,12 @@ instance (IfB t, BooleanOf t ~ B) => IfB (P t) where
 -- PRIMITIVE DISTRIBUTIONS                                                  --
 ------------------------------------------------------------------------------
 
-dist :: State Block PNode -> Prog (Expr t)
+dist :: State Block PNode -> P (Expression t)
 dist = dist' . const
-dist' :: (NS -> State Block PNode) -> Prog (Expr t)
-dist' s = Expr <$> distD s
-distD :: (NS -> State Block PNode) -> Prog DExpr
-distD s = Prog $ do
+dist' :: (NS -> State Block PNode) -> P (Expression t)
+dist' s = Expression <$> distD s
+distD :: (NS -> State Block PNode) -> P DExpr
+distD s = P $ do
     PBlock _ _ _ ns <- get
     d <- liftExprBlock $ s ns
     PBlock block rhs given _ <- get
@@ -327,13 +327,13 @@ distD s = Prog $ do
         v = Var name t
     _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
     return (DExpr $ return v)
-distDs :: Int -> (NS -> State Block PNode) -> Prog [DExpr]
-distDs n s = Prog $ do
+distDs :: Int -> (NS -> State Block PNode) -> P [DExpr]
+distDs n s = P $ do
   e <- fromProg $ distD s
   return $ if n == 1 then [e] else extractD e 0 <$> [0..(n-1)]
 
-truncated :: (Expr t) -> (Expr t) -> P (Expr t) -> P (Expr t)
-truncated a b p = Prog $ do
+truncated :: (Expression t) -> (Expression t) -> P (Expression t) -> P (Expression t)
+truncated a b p = P $ do
   i <- liftExprBlock $ fromExpr a
   j <- liftExprBlock $ fromExpr b
   x <- fromProg p
@@ -354,8 +354,8 @@ truncated a b p = Prog $ do
   return (expr $ return (Var name t'))
 
 {-
-transform :: (ExprTuple t) => Prog t -> Prog t
-transform prog = Prog $ do
+transform :: (ExprTuple t) => P t -> P t
+transform prog = P $ do
   PBlock block acts given ns <- get
   assert (given == emptyEnv) $ return ()
   let d = nextLevel block
@@ -379,7 +379,7 @@ transform prog = Prog $ do
   return $ entuple (expr $ return v)
 -}
 
-instance Distribution Bernoulli R Prog B where
+instance Distribution Bernoulli R P B where
     sample (Bernoulli p) = dist $ do
         i <- fromExpr p
         return $ Dist "bernoulli" [i] boolT
@@ -387,7 +387,7 @@ instance Distribution Bernoulli R Prog B where
         i <- fromExpr l
         return $ Dist "bernoulliLogit" [i] boolT
 
-instance Distribution Bernoullis RVec Prog BVec where
+instance Distribution Bernoullis RVec P BVec where
     sample (Bernoullis p) = dist $ do
         i <- fromExpr p
         let (ArrayT _ [n] _) = typeRef i
@@ -397,85 +397,85 @@ instance Distribution Bernoullis RVec Prog BVec where
         let (ArrayT _ [n] _) = typeRef i
         return $ Dist "bernoulliLogits" [i] (ArrayT Nothing [n] boolT)
 
-instance Distribution Beta (R,R) Prog R where
+instance Distribution Beta (R,R) P R where
     sample (Beta (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "beta" [i,j] RealT
 
-instance Distribution Categorical RVec Prog Z where
+instance Distribution Categorical RVec P Z where
     sample (Categorical q) = dist $ do
         i <- fromExpr q
         return $ Dist "categorical" [i] IntT
 
-instance Distribution Cauchy (R,R) Prog R where
+instance Distribution Cauchy (R,R) P R where
     sample (Cauchy (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "cauchy" [i,j] RealT
 
-instance Distribution Cauchys (RVec,RVec) Prog RVec where
+instance Distribution Cauchys (RVec,RVec) P RVec where
     sample (Cauchys (m,s)) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "cauchys" [i,j] (typeRef i)
 
-instance Distribution Gamma (R,R) Prog R where
+instance Distribution Gamma (R,R) P R where
     sample (Gamma (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "gamma" [i,j] RealT
 
-instance Distribution InvGamma (R,R) Prog R where
+instance Distribution InvGamma (R,R) P R where
     sample (InvGamma (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "inv_gamma" [i,j] RealT
 
-instance Distribution Geometric R Prog Z where
+instance Distribution Geometric R P Z where
     sample (Geometric p) = dist $ do
         i <- fromExpr p
         return $ Dist "geometric" [i] IntT
 
-instance Distribution LKJ (R, Interval Z) Prog RMat where
+instance Distribution LKJ (R, Interval Z) P RMat where
     sample (LKJ (v,(a,b))) = dist $ do
         i <- fromExpr v
         l <- fromExpr a
         h <- fromExpr b
         return $ Dist "lkj_corr" [i] (ArrayT (Just "corr_matrix") [(l,h),(l,h)] RealT)
 
-instance Distribution NegBinomial (R,R) Prog Z where
+instance Distribution NegBinomial (R,R) P Z where
     sample (NegBinomial (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "neg_binomial" [i,j] IntT
 
-instance Distribution Normal (R,R) Prog R where
+instance Distribution Normal (R,R) P R where
     sample (Normal (m,s)) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "normal" [i,j] RealT
 
-instance Distribution Normals (RVec,RVec) Prog RVec where
+instance Distribution Normals (RVec,RVec) P RVec where
     sample (Normals (m,s)) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "normals" [i,j] (typeRef i)
 
-instance Distribution Normals (RMat,RMat) Prog RMat where
+instance Distribution Normals (RMat,RMat) P RMat where
     sample (Normals (m,s)) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "normals" [i,j] (typeRef i)
 
-instance Distribution Normal (RVec,RMat) Prog RVec where
+instance Distribution Normal (RVec,RMat) P RVec where
     sample (Normal (m,s)) = dist $ do
         i <- fromExpr m
         j <- fromExpr s
         return $ Dist "multi_normal" [i,j] (typeRef i)
 
-instance (ExprType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (Expr [t]) where
-    sample (OrderedSample (n,prog)) = Prog $ do
+instance (ExprType t) => Distribution OrderedSample (Z, P (Expression t)) P (Expression [t]) where
+    sample (OrderedSample (n,prog)) = P $ do
         i <- liftExprBlock $ fromExpr n
         PBlock block rhs given ns <- get
         let (_, PBlock block' [act] _ _) =
@@ -490,17 +490,17 @@ instance (ExprType t) => Distribution OrderedSample (Z, Prog (Expr t)) Prog (Exp
         _ <- liftExprBlock . simplify $ Apply "getExternal" [v] t
         return (expr $ return v)
 
-instance Distribution PMF RVec Prog Z where
+instance Distribution PMF RVec P Z where
     sample (PMF probs) = dist $ do
         l <- fromExpr probs
         return $ Dist "pmf" [l] IntT
 
-instance Distribution Poisson R Prog Z where
+instance Distribution Poisson R P Z where
     sample (Poisson a) = dist $ do
         i <- fromExpr a
         return $ Dist "poisson" [i] IntT
 
-instance Distribution PoissonProcess (R, R -> R, R) Prog RVec where
+instance Distribution PoissonProcess (R, R -> R, R) P RVec where
     sample (PoissonProcess (t, rate, mean)) = dist $ do
         i <- fromExpr t
         d <- getNextLevel
@@ -511,37 +511,37 @@ instance Distribution PoissonProcess (R, R -> R, R) Prog RVec where
         return . Dist "poissonProcess" [i,j,k] $
           ArrayT (Just "vector") [(Const 1 IntT, Unconstrained IntT)] RealT
 
-instance Distribution Uniform (R,R) Prog R where
+instance Distribution Uniform (R,R) P R where
     sample (Uniform (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "uniform" [i,j] RealT
 
-instance Distribution Uniforms (RVec,RVec) Prog RVec where
+instance Distribution Uniforms (RVec,RVec) P RVec where
     sample (Uniforms (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "uniforms" [i,j] (typeRef i)
 
-instance Distribution Uniforms (RMat,RMat) Prog RMat where
+instance Distribution Uniforms (RMat,RMat) P RMat where
     sample (Uniforms (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "uniforms" [i,j] (typeRef i)
 
-instance Distribution Uniform (Z,Z) Prog Z where
+instance Distribution Uniform (Z,Z) P Z where
     sample (Uniform (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "discreteUniform" [i,j] IntT
 
-instance Distribution Wishart (R,RMat) Prog RMat where
+instance Distribution Wishart (R,RMat) P RMat where
     sample (Wishart (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "wishart" [i,j] (typeRef j)
 
-instance Distribution InvWishart (R,RMat) Prog RMat where
+instance Distribution InvWishart (R,RMat) P RMat where
     sample (InvWishart (a,b)) = dist $ do
         i <- fromExpr a
         j <- fromExpr b
@@ -562,7 +562,7 @@ normalsChol n k mu cov = do
                (matrix [ 1 | i <- 1...n, j <- 1...k ])
   return $ asRow mu + (w <> tr' (chol cov))
 
-normalCond :: Z -> (Expr t -> Expr t -> R) -> R -> Expr [t] -> RVec -> Expr t -> P R
+normalCond :: Z -> (Expression t -> Expression t -> R) -> R -> Expression [t] -> RVec -> Expression t -> P R
 normalCond n cov noise s y x = normal m (sqrt v)
   where c = matrix [ cov (s!i) (s!j) + ifB (i ==* j) noise 0
                    | i <- 1...n, j <- 1...n ] :: RMat
@@ -576,8 +576,8 @@ normalCond n cov noise s y x = normal m (sqrt v)
 ------------------------------------------------------------------------------
 
 instance forall r f. ExprType r =>
-         Joint Prog Z (Expr r) (Expr f) where
-  joint _ ar = Prog $ do
+         Joint P Z (Expression r) (Expression f) where
+  joint _ ar = P $ do
     sh <- liftExprBlock . sequence . flip map (shape ar) $ \(a,b) -> do
       i <- fromExpr a
       j <- fromExpr b
@@ -598,7 +598,7 @@ instance forall r f. ExprType r =>
     _ <- liftExprBlock . simplify $ Apply "getExternal" [v] loopType
     return $ case ret of
       Var (Volatile ns depth 0) _ | depth == d ->
-        expr $ return v :: Expr f
+        expr $ return v :: Expression f
       Index vec [Var (Volatile ns depth 0) _] | depth == d ->
         expr . floatNode $ Array sh (Lambda dag (Index vec [ref])) loopType
           where ref = Index v (reverse [Var i t | (i,t) <- ids])
@@ -609,9 +609,9 @@ instance forall r f. ExprType r =>
 -- CONDITIONING                                                             --
 ------------------------------------------------------------------------------
 
-type instance ConditionOf (Prog ()) = Expr Bool
-instance MonadGuard Prog where
-    guard cond = Prog $ do -- TODO: weaker assumptions
+type instance ConditionOf (P ()) = Expression Bool
+instance MonadGuard P where
+    guard cond = P $ do -- TODO: weaker assumptions
         (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
         PBlock block dists given ns <- get
         let dag = topDAG block
@@ -622,7 +622,7 @@ instance MonadGuard Prog where
         put $ PBlock (deriveBlock dag' block) dists
                      (Map.insert (LVar j) (a,t) given) ns
 
-dirac :: (Expr t) -> Prog (Expr t)
+dirac :: (Expression t) -> P (Expression t)
 dirac c = do
   x <- dist $ do
     i <- fromExpr c
@@ -635,15 +635,15 @@ dirac c = do
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
 
-solveP :: (ExprTuple t) => String -> Prog t -> t -> EEnv -> EEnv
+solveP :: (ExprTuple t) => String -> P t -> t -> EEnv -> EEnv
 solveP ns prog vals = solveTuple block rets vals
   where (rets, pb) = runProgExprs ns prog
         block = definitions pb
 
-pdf :: (ExprTuple t, Show t) => Prog t -> t -> R
+pdf :: (ExprTuple t, Show t) => P t -> t -> R
 pdf p = exp . lpdf p
 
-lpdf :: (ExprTuple t, Show t) => Prog t -> t -> R
+lpdf :: (ExprTuple t, Show t) => P t -> t -> R
 lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "lpdf" prog
         EEnv env = solveTuple block rets vals emptyEEnv
@@ -656,9 +656,9 @@ lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - adjust
           | r <- rets, typeRef r /= IntT ]
         isLowerTri = and [ isZ `all` drop i row | (i,row) <- zip [1..] jacobian ]
         diagonal = [ row !! i | (i,row) <- zip [0..] jacobian ]
-        adjust | isLowerTri = Expr $ sum (logDet <$> diagonal)
+        adjust | isLowerTri = Expression $ sum (logDet <$> diagonal)
                | otherwise = trace "WARN: jacobian is not block triangular" $
-                    Expr $ logDet (blockMatrix jacobian)
+                    Expression $ logDet (blockMatrix jacobian)
         isZ e = case ret of
           Const c _ -> isZeros c
           Var i@Internal{} _ | Apply "zeros" _ _ <- lookupBlock i block -> True
@@ -666,7 +666,7 @@ lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - adjust
           where (ret,block) = runDExpr e
 
 -- compute joint pdf of primitive random variables within the given program
-lpdfAux :: (ExprTuple t, Show t) => Prog t -> t -> R
+lpdfAux :: (ExprTuple t, Show t) => P t -> t -> R
 lpdfAux prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb
   where (rets, pb) = runProgExprs "lpdfAux" prog
         EEnv env = solveTuple (definitions pb) rets vals emptyEEnv
@@ -674,7 +674,7 @@ lpdfAux prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb
         p (LVar (Volatile "lpdfAux" _ _)) _ = True
         p _ _ = False
 
-lpdfAuxC :: (Constructor t, Show t) => Prog (Expr t) -> Expr t -> R
+lpdfAuxC :: (Constructor t, Show t) => P (Expression t) -> Expression t -> R
 lpdfAuxC = caseOf . lpdfAux
 
 pdfPBlock :: Bool -> EEnv -> PBlock -> R
@@ -702,7 +702,7 @@ pdfPNode r lg env block (Loop _ lam _) a
   | (PartiallyConstrained{},_) <- runDExpr a = error "TODO: partially constrained"
   | lg        = E.foldl (\l e -> l + f e) 0 idxs
   | otherwise = E.foldl (\p e -> p * f e) 1 idxs
-  where n = Expr $ vectorSize a
+  where n = Expression $ vectorSize a
         idxs = vector [ i | i <- 1...n ]
         f e = let j = erase e in pdfJoint r lg env block lam [j] (a!j)
 pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
@@ -711,10 +711,10 @@ pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
     Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
     PartiallyConstrained [(lo,hi)] [(id,t)] [([k],v)] _ -> fromExpr $
       pdfOrderStats r lg env block d n (lo,hi) (id,t) (k,v)
-    _ | lg -> fromExpr $ E.foldl g (logFactorial' n') (Expr x)
-  where n' = Expr $ reDExpr env block n
+    _ | lg -> fromExpr $ E.foldl g (logFactorial' n') (Expression x)
+  where n' = Expression $ reDExpr env block n
         g l z = l + pdfPNode r lg env block d (erase z)
-pdfPNode _ lg env block (Switch hd alts ns _) x = Expr $
+pdfPNode _ lg env block (Switch hd alts ns _) x = Expression $
   caseD hd' [\_ -> [erase e] | e <- alts']
   where hd' = reDExpr env block hd
         p (LVar (Volatile ns' _ _)) _ | ns' == ns = True
@@ -735,13 +735,13 @@ pdfJoint r lg env block (Lambda body pn) js x = pdfPNode r lg env' block' pn x
 pdfOrderStats :: Map Id PNode -> Bool -> EEnv -> Block -> PNode -> NodeRef
               -> Interval DExpr -> (Id,Type) -> (DExpr,DExpr) -> R
 pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) =
-  ifB (Expr lo >* Expr hi) (if lg then 0 else 1) $ if lg
+  ifB (Expression lo >* Expression hi) (if lg then 0 else 1) $ if lg
   then    logFactorial' n'  + intervalL +     sum' intervals + intervalR +     sum' points
   else cast (factorial' n') * intervalL * product' intervals * intervalR * product' points
   where fcdf = cdfPNode env block d
         n' = reExpr env block n :: Z
         kv' i = let envi = EEnv $ Map.singleton (LVar dummy) i
-                in (Expr $ substD envi k, substD envi v) :: (Z,DExpr)
+                in (Expression $ substD envi k, substD envi v) :: (Z,DExpr)
         intervalL = let (i,x) = kv' lo in if lg
           then log (fcdf x) *  cast (i-1) -    logFactorial' (i-1)
           else     (fcdf x) ** cast (i-1) / cast (factorial' (i-1))
@@ -749,12 +749,12 @@ pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) =
           then log (fcdf y - fcdf x) *  cast (j-i-1) -    logFactorial' (j-i-1)
           else     (fcdf y - fcdf x) ** cast (j-i-1) / cast (factorial' (j-i-1))
         intervals = vector [ interval (kv' $ erase i) (kv' . erase $ i+1)
-                           | i::Z <- (Expr lo)...(Expr $ hi-1) ] :: RVec
+                           | i::Z <- (Expression lo)...(Expression $ hi-1) ] :: RVec
         intervalR = let (j,y) = kv' hi in if lg
           then log (1 - fcdf y) *  cast (n'-j) -    logFactorial' (n'-j)
           else     (1 - fcdf y) ** cast (n'-j) / cast (factorial' (n'-j))
         points = vector [ let (_,x) = (kv' $ erase i) in pdfPNode r lg env block d x
-                        | i::Z <- (Expr lo)...(Expr hi) ] :: RVec
+                        | i::Z <- (Expression lo)...(Expression hi) ] :: RVec
         sum' = E.foldl (+) 0
         product' = E.foldl (*) 1
 
@@ -765,7 +765,7 @@ cdfPNode env block (Dist f args _) x = expr $ do
   simplify $ Apply (f ++"_cdf") (i:js) RealT
 
 -- TODO: deprecate in favour of pdf
-density :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
+density :: (ExprTuple t) => P t -> t -> LF.LogFloat
 density prog vals = densityPBlock env' pb / adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "density" prog
         env = unifyTuple block rets vals Map.empty
@@ -779,7 +779,7 @@ density prog vals = densityPBlock env' pb / adjust
         adjust | isLowerTri = product (map ldet diagonal)
                | otherwise = error "jacobian is not block triangular"
 
-density' :: (ExprTuple t) => Prog t -> t -> LF.LogFloat
+density' :: (ExprTuple t) => P t -> t -> LF.LogFloat
 density' prog vals = densityPBlock env' pb
   where (rets, pb) = runProgExprs "density'" prog
         env = unifyTuple (definitions pb) rets vals Map.empty
@@ -871,12 +871,12 @@ densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
 -- SAMPLING                                                                 --
 ------------------------------------------------------------------------------
 
-simulate :: (ExprTuple t) => Prog t -> IO t
+simulate :: (ExprTuple t) => P t -> IO t
 simulate = sampleP
 
-sampleP :: (ExprTuple t) => Prog t -> IO t
+sampleP :: (ExprTuple t) => P t -> IO t
 sampleP = sampleP' emptyEnv
-sampleP' :: (ExprTuple t) => Env -> Prog t -> IO t
+sampleP' :: (ExprTuple t) => Env -> P t -> IO t
 sampleP' env p = fromConstVals <$> samplePBlock env pb rets
   where (rets, pb) = runProgExprs "sim" p
 
@@ -1040,10 +1040,10 @@ chainRange (lo,hi) f x0 = snd <$> chain (hi-lo+1) g (integer lo, x0)
           return (i+1,y)
 
 -- Metropolis-Hastings
-mh :: (ExprTuple r, Show r) => Prog r -> (r -> Prog r) -> r -> IO r
+mh :: (ExprTuple r, Show r) => P r -> (r -> P r) -> r -> IO r
 mh = mhAdjust (const $ LF.logFloat 1)
 
-mhAdjust :: (ExprTuple r, Show r) => (r -> LF.LogFloat) -> Prog r -> (r -> Prog r) -> r -> IO r
+mhAdjust :: (ExprTuple r, Show r) => (r -> LF.LogFloat) -> P r -> (r -> P r) -> r -> IO r
 mhAdjust adjust target proposal x = do
   y <- sampleP (proposal x)
   putStrLn $ "proposing "++ show y
@@ -1083,7 +1083,7 @@ rjmc target proposal x = do
   accept <- bernoulli (min' 1 (a x y))
   return $ ifB accept y x
 
-rjmcC :: (Constructor t, Show t) => P (Expr t) -> (t -> P (Expr t)) -> Expr t -> P (Expr t)
+rjmcC :: (Constructor t, Show t) => P (Expression t) -> (t -> P (Expression t)) -> Expression t -> P (Expression t)
 rjmcC target proposal = switchOf $ \x -> do
   y <- fromCaseP proposal x
   accept <- bernoulli . min' 1 . exp $
@@ -1144,7 +1144,7 @@ rjmcTransRatio' q x y = lu' - lu + logDet jacobian
         bot = [(d v x + (d v y <> d x' x)) : [qualify r $ d v y <> d_ x' r | r <- u]
               | v <- Map.elems u']
         substAux = getAux "qx" x y True `unionEEnv` getAux "qy" y x True
-        jacobian = Expr . optimiseD 2 . substD (substEEnv substAux) . optimiseD 1 $ blockMatrix (top:bot) :: RMat
+        jacobian = Expression . optimiseD 2 . substD (substEEnv substAux) . optimiseD 1 $ blockMatrix (top:bot) :: RMat
 
 runStep :: forall t. (ExprTuple t) => (t -> P t) -> t -> IO t
 runStep step = trace (showPBlock stepPB $ show stepRets) $ \m ->

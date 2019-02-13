@@ -1,8 +1,7 @@
 module Language.Stochaskell.Expression
-  ( Constructor(..), Expr(..), ExprType(..), Tags(..), Type(..), TypeOf(..)
+  ( Constructor(..), Expression(..), ExprTuple(..), ExprType(..), Tags(..), Type(..), TypeOf(..)
+  , boolT, tupleT, vecT, matT
   , eval_, eval'
-  , fromExprTuple
-  , vecT
   ) where
 
 import Data.Expression

@@ -42,7 +42,7 @@ caseD' k fs = do
 
 fromCase :: forall c t. (Constructor c, ExprTuple t) => (c -> t) -> Expr c -> t
 fromCase f e = toExprTuple . entupleD n $ caseD (erase e)
-  [fromExprTuple . f . construct Expr c | c <- cs]
+  [fromExprTuple . f . construct Expression c | c <- cs]
   where Tags cs = tags :: Tags c
         TupleSize n = tupleSize :: TupleSize t
 

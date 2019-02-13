@@ -16,15 +16,15 @@ import Util
 substEEnv :: EEnv -> EEnv
 substEEnv (EEnv env) = EEnv $ Map.map (substD $ EEnv env) `fixpt` env
 
-subst :: EEnv -> Expr e -> Expr e
-subst env = Expr . substD env . erase
+subst :: EEnv -> Expression e -> Expression e
+subst env = Expression . substD env . erase
 
 substD :: EEnv -> DExpr -> DExpr
 substD env e = DExpr $ extractNodeRef simplifyNodeRef simplify env block ret
   where (ret, block) = runDExpr e
 
-reExpr :: EEnv -> Block -> NodeRef -> Expr t
-reExpr env block = Expr . reDExpr env block
+reExpr :: EEnv -> Block -> NodeRef -> Expression t
+reExpr env block = Expression . reDExpr env block
 reDExpr :: EEnv -> Block -> NodeRef -> DExpr
 reDExpr env block = DExpr . extractNodeRef simplifyNodeRef simplify env block
 
@@ -159,8 +159,8 @@ extractType env block = go where
   f :: (Traversable t) => t NodeRef -> State Block (t NodeRef)
   f t = sequence $ extractNodeRef simplifyNodeRef simplify env block <$> t
 
-optimiseE :: Int -> Expr t -> Expr t
-optimiseE ol = Expr . optimiseD ol . erase
+optimiseE :: Int -> Expression t -> Expression t
+optimiseE ol = Expression . optimiseD ol . erase
 
 optimiseD :: Int -> DExpr -> DExpr
 optimiseD ol = fixpt f

@@ -450,13 +450,13 @@ readCC (UnionT tss) (x:s) = (Tagged c cs, s')
         ts = tss !! c
         (cs,s') = readChain (map readCC ts) s
 
-runCC :: forall s t. (ExprTuple s, ExprTuple t) => (s -> Prog t) -> s -> IO t
+runCC :: forall s t. (ExprTuple s, ExprTuple t) => (s -> P t) -> s -> IO t
 runCC prog x = do
   p <- compileCC prog
   p x
 
 compileCC :: forall s t. (ExprTuple s, ExprTuple t)
-          => (s -> Prog t) -> IO (s -> IO t)
+          => (s -> P t) -> IO (s -> IO t)
 compileCC prog = do
   let TypesIs ts = typesOf :: TypesOf s
       (code,rets) = ccProgram ts prog

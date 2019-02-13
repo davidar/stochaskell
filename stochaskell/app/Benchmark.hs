@@ -221,7 +221,7 @@ benchStanHMC numSamp numSteps stepSize p init = do
         }
   samples <- runStan method p init
   tocStan <- getPOSIXTime
-  let means = map mean . transpose $ map (map (fromRight . eval_ . Expr) . fromExprTuple) samples
+  let means = map mean . transpose $ map (map (fromRight . eval_ . Expression) . fromExprTuple) samples
   return $ "STAN:\t"++ show means ++" took "++ show (tocStan - ticStan)
 
 benchPyMC3HMC numSamp numSteps stepSize p init = do

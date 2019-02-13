@@ -119,10 +119,10 @@ unconstrainedLike es = DExpr $ do
   ts <- sequence $ typeDExpr <$> es
   return . Unconstrained $ coerces ts
 
-symbol :: forall t. (ExprType t) => String -> Expr t
+symbol :: forall t. (ExprType t) => String -> Expression t
 symbol name = expr . return $ Var (Symbol name False) t
   where TypeIs t = typeOf :: TypeOf t
-symbols :: (ExprType t) => String -> [Expr t]
+symbols :: (ExprType t) => String -> [Expression t]
 symbols names = symbol . return <$> names
 
 instance Show NodeRef where
@@ -326,32 +326,32 @@ conditionEEnv sufficient c (EEnv env) =
 bindInputs :: DAG -> [DExpr] -> EEnv
 bindInputs dag xs = EEnv . Map.fromList $ inputsL dag `zip` xs
 
-type Expression t = Expr t
-newtype Expr t = Expr { erase :: DExpr }
-expr :: State Block NodeRef -> Expr t
-expr = Expr . DExpr
-fromExpr :: Expr t -> State Block NodeRef
+newtype Expression t = Expression { erase :: DExpr }
+type Expr t = Expression t
+expr :: State Block NodeRef -> Expression t
+expr = Expression . DExpr
+fromExpr :: Expression t -> State Block NodeRef
 fromExpr = fromDExpr . erase
-runExpr :: Expr t -> (NodeRef, Block)
+runExpr :: Expression t -> (NodeRef, Block)
 runExpr  =  runDExpr . erase
-instance (Eq t) => Eq (Expr t) where
+instance (Eq t) => Eq (Expression t) where
   e == f = runExpr e == runExpr f
-instance (Ord t) => Ord (Expr t) where
+instance (Ord t) => Ord (Expression t) where
   e `compare` f = runExpr e `compare` runExpr f
 
-instance (ExprTuple a, ExprTuple b, ExprType t) => Show (a -> b -> Expr t) where
+instance (ExprTuple a, ExprTuple b, ExprType t) => Show (a -> b -> Expression t) where
   show f = "\\input_a input_b ->\n"++ (indent . show . erase $
     f (entuple $ symbol "input_a") (entuple $ symbol "input_b"))
 
 type B = Expression Bool
 type R = Expression Double
 type Z = Expression Integer
-type BVec = Expr [Bool]
-type RVec = Expr [Double]
-type ZVec = Expr [Integer]
-type BMat = Expr [[Bool]]
-type RMat = Expr [[Double]]
-type ZMat = Expr [[Integer]]
+type BVec = Expression [Bool]
+type RVec = Expression [Double]
+type ZVec = Expression [Integer]
+type BMat = Expression [[Bool]]
+type RMat = Expression [[Double]]
+type ZMat = Expression [[Integer]]
 
 
 ------------------------------------------------------------------------------
@@ -413,9 +413,9 @@ newtype TypeOf t = TypeIs Type deriving (Show)
 class ExprType t where
     typeOf       :: TypeOf t
     toConcrete   :: ConstVal -> t
-    fromConcrete :: t -> Expr t
+    fromConcrete :: t -> Expression t
     constVal     :: t -> ConstVal
-    constExpr    :: ConstVal -> Expr t
+    constExpr    :: ConstVal -> Expression t
     constExpr    = fromConcrete . toConcrete
 instance ExprType Integer where
     typeOf       = TypeIs IntT
@@ -451,22 +451,22 @@ instance forall t. (ExprType t) => ExprType [t] where
               TypeIs s | isScalar s -> s
               TypeIs (ArrayT _ _ s) -> s
 
-instance forall a. (ExprType a) => ExprType (Expr a) where
+instance forall a. (ExprType a) => ExprType (Expression a) where
   typeOf = TypeIs a where TypeIs a = typeOf :: TypeOf a
-instance forall a b. (ExprType a, ExprType b) => ExprType (Expr a, Expr b) where
+instance forall a b. (ExprType a, ExprType b) => ExprType (Expression a, Expression b) where
   typeOf = TypeIs $ TupleT [a,b]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
 instance forall a b c.
     (ExprType a, ExprType b, ExprType c) =>
-    ExprType (Expr a, Expr b, Expr c) where
+    ExprType (Expression a, Expression b, Expression c) where
   typeOf = TypeIs $ TupleT [a,b,c]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
           TypeIs c = typeOf :: TypeOf c
 instance forall a b c d.
     (ExprType a, ExprType b, ExprType c, ExprType d) =>
-    ExprType (Expr a, Expr b, Expr c, Expr d) where
+    ExprType (Expression a, Expression b, Expression c, Expression d) where
   typeOf = TypeIs $ TupleT [a,b,c,d]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
@@ -475,7 +475,7 @@ instance forall a b c d.
 instance forall a b c d e.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e) =>
-    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e) where
+    ExprType (Expression a, Expression b, Expression c, Expression d, Expression e) where
   typeOf = TypeIs $ TupleT [a,b,c,d,e]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
@@ -485,7 +485,7 @@ instance forall a b c d e.
 instance forall a b c d e f.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e, ExprType f) =>
-    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
+    ExprType (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f) where
   typeOf = TypeIs $ TupleT [a,b,c,d,e,f]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
@@ -496,7 +496,7 @@ instance forall a b c d e f.
 instance forall a b c d e f g.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e, ExprType f, ExprType g) =>
-    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
+    ExprType (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g) where
   typeOf = TypeIs $ TupleT [a,b,c,d,e,f,g]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
@@ -508,7 +508,7 @@ instance forall a b c d e f g.
 instance forall a b c d e f g h.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e, ExprType f, ExprType g, ExprType h) =>
-    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
+    ExprType (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g, Expression h) where
   typeOf = TypeIs $ TupleT [a,b,c,d,e,f,g,h]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
@@ -521,7 +521,7 @@ instance forall a b c d e f g h.
 instance forall a b c d e f g h i.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e, ExprType f, ExprType g, ExprType h, ExprType i) =>
-    ExprType (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h, Expr i) where
+    ExprType (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g, Expression h, Expression i) where
   typeOf = TypeIs $ TupleT [a,b,c,d,e,f,g,h,i]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
@@ -536,11 +536,11 @@ instance forall a b c d e f g h i.
 newtype Tags t = Tags [Tag]
 class ExprType c => Constructor c where
   tags :: Tags c
-  construct   :: (forall t. ExprType t => a -> Expr t) -> Tag -> [a] -> c
-  deconstruct :: (forall t. ExprType t => Expr t -> a) -> c -> (Tag, [a])
+  construct   :: (forall t. ExprType t => a -> Expression t) -> Tag -> [a] -> c
+  deconstruct :: (forall t. ExprType t => Expression t -> a) -> c -> (Tag, [a])
   toConcreteC :: ConstVal -> c
   toConcreteC (Tagged c args) = construct constExpr c args
-  fromConcreteC :: c -> Expr c
+  fromConcreteC :: c -> Expression c
   fromConcreteC m = expr $ do
     js <- sequence args
     let TypeIs t = typeOf :: TypeOf c
@@ -567,7 +567,7 @@ extractD e c j = DExpr $ do
                      | otherwise -> args !! j
     _ -> Extract i c j
 
-typeExpr :: Expr t -> State Block Type
+typeExpr :: Expression t -> State Block Type
 typeExpr = typeDExpr . erase
 
 typeDExpr :: DExpr -> State Block Type
@@ -657,9 +657,9 @@ compatible _ _ = False
 class    Cast a b                          where cast :: a -> b
 instance Cast Z R                          where cast = expr . fromExpr
 instance Cast Int R                        where cast = fromIntegral
-instance Cast (Expr t) (Expr [t])          where cast = expr . fromExpr
-instance Cast (Expr t) (Expr [[t]])        where cast = expr . fromExpr
-instance (ExprType t) => Cast t (Expr t) where cast = fromConcrete
+instance Cast (Expression t) (Expression [t])          where cast = expr . fromExpr
+instance Cast (Expression t) (Expression [[t]])        where cast = expr . fromExpr
+instance (ExprType t) => Cast t (Expression t) where cast = fromConcrete
 
 
 ------------------------------------------------------------------------------
@@ -1081,30 +1081,30 @@ simplifyConj' block refs = nub . sort $ do
                        , f `elem` ["&&","&&s"] -> simplifyConj' block js
     _ -> return ref
 
-apply :: String -> Type -> [Expr a] -> Expr r
-apply f t = Expr . apply' f t . map erase
+apply :: String -> Type -> [Expression a] -> Expression r
+apply f t = Expression . apply' f t . map erase
 apply' :: String -> Type -> [DExpr] -> DExpr
 apply' f t xs = DExpr $ do
     js <- mapM fromDExpr xs
     simplify $ Apply f js t
 
-apply2 :: String -> Type -> Expr a -> Expr b -> Expr r
-apply2 f t x y = Expr $ apply2' f t (erase x) (erase y)
+apply2 :: String -> Type -> Expression a -> Expression b -> Expression r
+apply2 f t x y = Expression $ apply2' f t (erase x) (erase y)
 apply2' :: String -> Type -> DExpr -> DExpr -> DExpr
 apply2' f t x y = DExpr $ do
     i <- fromDExpr x
     j <- fromDExpr y
     simplify $ Apply f [i,j] t
 
-applyClosed1 :: String -> Expr a -> Expr a
-applyClosed1 f = Expr . applyClosed1' f . erase
+applyClosed1 :: String -> Expression a -> Expression a
+applyClosed1 f = Expression . applyClosed1' f . erase
 applyClosed1' :: String -> DExpr -> DExpr
 applyClosed1' f x = DExpr $ do
     i <- fromDExpr x
     simplify $ Apply f [i] (typeRef i)
 
-applyClosed2 :: String -> Expr a -> Expr a -> Expr a
-applyClosed2 f x y = Expr $ applyClosed2' f (erase x) (erase y)
+applyClosed2 :: String -> Expression a -> Expression a -> Expression a
+applyClosed2 f x y = Expression $ applyClosed2' f (erase x) (erase y)
 applyClosed2' :: String -> DExpr -> DExpr -> DExpr
 applyClosed2' f x y = DExpr $ do
     i <- fromDExpr x
@@ -1164,42 +1164,42 @@ array' l n a = if length sh == n
                 else error "dimension mismatch"
   where sh = AA.shape a
 array :: (Num i, ExprType i, ExprType e)
-      => Maybe String -> Int -> AA.AbstractArray (Expr i) (Expr e) -> Expr t
-array l n = Expr . array' l n . eraseAA
+      => Maybe String -> Int -> AA.AbstractArray (Expression i) (Expression e) -> Expression t
+array l n = Expression . array' l n . eraseAA
 
-eraseAA :: AA.AbstractArray (Expr i) (Expr e) -> AA.AbstractArray DExpr DExpr
+eraseAA :: AA.AbstractArray (Expression i) (Expression e) -> AA.AbstractArray DExpr DExpr
 eraseAA arr = f' <$> AA.fromShape sh'
   where sh' = flip map (AA.shape arr) $ \(a,b) -> (erase a, erase b)
-        f' = erase . (arr!) . map Expr
+        f' = erase . (arr!) . map Expression
 
-index :: Expr a -> [Expr i] -> Expr r
+index :: Expression a -> [Expression i] -> Expression r
 index a es = expr $ do
     f <- fromExpr a
     js <- mapM fromExpr es
     return $ Index f js
 
 foldl :: (ExprType b) =>
-  (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr b
+  (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression b
 foldl f r xs = expr $ foldscan Fold Left_ (flip f) r xs
 
 foldr :: (ExprType b) =>
-  (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr b
+  (Expression a -> Expression b -> Expression b) -> Expression b -> Expression [a] -> Expression b
 foldr f r xs = expr $ foldscan Fold Right_ f r xs
 
 scanl :: (ExprType b) =>
-  (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
+  (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
 scanl f r xs = expr $ foldscan Scan Left_ (flip f) r xs
 
 scanr :: (ExprType b) =>
-  (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
+  (Expression a -> Expression b -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
 scanr f r xs = expr $ foldscan Scan Right_ f r xs
 
 scan :: (ExprType b) =>
-  (Expr b -> Expr a -> Expr b) -> Expr b -> Expr [a] -> Expr [b]
+  (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
 scan f r xs = expr $ foldscan ScanRest Left_ (flip f) r xs
 
 foldscan :: forall a b. (ExprType b) => FoldOrScan -> LeftRight ->
-  (Expr a -> Expr b -> Expr b) -> Expr b -> Expr [a] -> State Block NodeRef
+  (Expression a -> Expression b -> Expression b) -> Expression b -> Expression [a] -> State Block NodeRef
 foldscan fs dir f r xs = do
     seed <- fromExpr r
     l <- fromExpr xs
@@ -1230,16 +1230,16 @@ foldscan fs dir f r xs = do
       else liftBlock $ foldscan fs dir f r xs
 
 -- find leftmost element of v satisfying p, else def if no elements satisfy p
-find' :: (ExprType e) => (Expr e -> B) -> Expr e -> Expr [e] -> Expr e
+find' :: (ExprType e) => (Expression e -> B) -> Expression e -> Expression [e] -> Expression e
 find' p def v = foldr f def v where f i j = ifB (p i) i j
 
-sum' :: (ExprType a, Num a) => Expr [a] -> Expr a
+sum' :: (ExprType a, Num a) => Expression [a] -> Expression a
 sum' = foldl (+) 0
 
 findSortedInsertIndex :: R -> RVec -> Z
 findSortedInsertIndex = apply2 "findSortedInsertIndex" IntT
 
-min' :: Expr a -> Expr a -> Expr a
+min' :: Expression a -> Expression a -> Expression a
 min' = applyClosed2 "min"
 
 debug :: (ExprTuple t) => String -> t -> t
@@ -1286,7 +1286,7 @@ factorial' n = apply "factorial" IntT [n]
 logFactorial' :: Z -> R
 logFactorial' n = apply "logFactorial" RealT [n]
 
-instance (ExprType t, Num t) => Num (Expr t) where
+instance (ExprType t, Num t) => Num (Expression t) where
     (+) = applyClosed2 "+"
     (-) = applyClosed2 "-"
     (*) = applyClosed2 "*"
@@ -1298,12 +1298,12 @@ instance (ExprType t, Num t) => Num (Expr t) where
     fromInteger  = expr . return . flip Const t . fromInteger
       where TypeIs t = typeOf :: TypeOf t
 
-instance (ExprType t, Fractional t) => Fractional (Expr t) where
+instance (ExprType t, Fractional t) => Fractional (Expression t) where
     fromRational = expr . return . flip Const t . fromRational
       where TypeIs t = typeOf :: TypeOf t
     (/) = applyClosed2 "/"
 
-instance (ExprType t, Floating t) => Floating (Expr t) where
+instance (ExprType t, Floating t) => Floating (Expression t) where
     pi = apply "pi" RealT []
     (**) = applyClosed2 "**"
 
@@ -1323,10 +1323,10 @@ instance (ExprType t, Floating t) => Floating (Expr t) where
     acosh = applyClosed1 "acosh"
     atanh = applyClosed1 "atanh"
 
-instance (ExprType e) => AA.Vector (Expr [e]) Z (Expr e) where
+instance (ExprType e) => AA.Vector (Expression [e]) Z (Expression e) where
     vector = array (Just "vector") 1
-    blockVector = Expr . AA.blockVector . map erase
-    vectorSize  = Expr . AA.vectorSize . erase
+    blockVector = Expression . AA.blockVector . map erase
+    vectorSize  = Expression . AA.vectorSize . erase
 instance AA.Vector DExpr DExpr DExpr where
     vector = array' (Just "vector") 1
     blockVector v = DExpr $ do
@@ -1397,11 +1397,11 @@ blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent
             _ -> error $ "saneCol "++ show t
         allSame' xs = allSame xs || isUnconstrained `any` xs
 
-instance (ExprType e) => AA.Matrix (Expr [[e]]) Z (Expr e) where
+instance (ExprType e) => AA.Matrix (Expression [[e]]) Z (Expression e) where
     matrix = array (Just "matrix") 2
-    blockMatrix m = Expr $ AA.blockMatrix (fmap erase <$> m)
-    eye = Expr . AA.eye . erase
-    zeros m n = Expr $ AA.zeros (erase m) (erase n)
+    blockMatrix m = Expression $ AA.blockMatrix (fmap erase <$> m)
+    eye = Expression . AA.eye . erase
+    zeros m n = Expression $ AA.zeros (erase m) (erase n)
 instance AA.Matrix DExpr DExpr DExpr where
     matrix = array' (Just "matrix") 2
     blockMatrix m = DExpr $ do
@@ -1428,19 +1428,19 @@ instance AA.Matrix DExpr DExpr DExpr where
 
 typeMatrixProduct (ArrayT _ [r,_] t) (ArrayT _ [_,c] _) = ArrayT (Just "matrix") [r,c] t
 
-instance (ExprType e) => Monoid (Expr [[e]]) where
-    mappend a b = Expr $ erase a `mappend` erase b
+instance (ExprType e) => Monoid (Expression [[e]]) where
+    mappend a b = Expression $ erase a `mappend` erase b
 instance Monoid DExpr where
     mappend a b = DExpr $ do
         i <- fromDExpr a
         j <- fromDExpr b
         simplify . Apply "<>" [i,j] $ typeRef i `typeMatrixProduct` typeRef j
 
-instance AA.Indexable (Expr [e]) (Expr Integer) (Expr e) where
-    a ! e = Expr $ erase a ! erase e
-    deleteIndex  a e   = Expr $ AA.deleteIndex  (erase a) (erase e)
-    insertIndex  a e d = Expr $ AA.insertIndex  (erase a) (erase e) (erase d)
-    replaceIndex a e d = Expr $ AA.replaceIndex (erase a) (erase e) (erase d)
+instance AA.Indexable (Expression [e]) (Expression Integer) (Expression e) where
+    a ! e = Expression $ erase a ! erase e
+    deleteIndex  a e   = Expression $ AA.deleteIndex  (erase a) (erase e)
+    insertIndex  a e d = Expression $ AA.insertIndex  (erase a) (erase e) (erase d)
+    replaceIndex a e d = Expression $ AA.replaceIndex (erase a) (erase e) (erase d)
 instance AA.Indexable DExpr DExpr DExpr where
     a ! e = DExpr $ do
         f <- fromDExpr a
@@ -1475,7 +1475,7 @@ instance AA.Scalable R RVec where
         i <- fromExpr a
         j <- fromExpr v
         simplify $ Apply "*>" [i,j] (typeRef j)
-instance (ExprType e) => AA.Scalable (Expr e) (Expr [[e]]) where
+instance (ExprType e) => AA.Scalable (Expression e) (Expression [[e]]) where
     a *> m = expr $ do
         i <- fromExpr a
         j <- fromExpr m
@@ -1490,11 +1490,11 @@ instance LA.Transposable DExpr DExpr where
         i <- fromDExpr m
         let (ArrayT _ [r,c] t) = typeRef i
         simplify $ Apply "tr'" [i] (ArrayT (Just "matrix") [c,r] t)
-instance (ExprType e) => LA.Transposable (Expr [[e]]) (Expr [[e]]) where
-    tr  = Expr . LA.tr  . erase
-    tr' = Expr . LA.tr' . erase
+instance (ExprType e) => LA.Transposable (Expression [[e]]) (Expression [[e]]) where
+    tr  = Expression . LA.tr  . erase
+    tr' = Expression . LA.tr' . erase
 
-instance AA.InnerProduct (Expr [e]) (Expr e) where
+instance AA.InnerProduct (Expression [e]) (Expression e) where
     u <.> v = expr $ do
         i <- fromExpr u
         j <- fromExpr v
@@ -1545,13 +1545,13 @@ instance AA.LinearOperator DExpr DExpr where
           _ -> simplify $ Apply "asRow" [k] t'
       where asRow' x | isScalar (typeRef x) = return x
                      | otherwise = fromDExpr . AA.asRow . DExpr $ return x
-instance AA.LinearOperator (Expr [[e]]) (Expr [e]) where
-    m #> v   = Expr $ erase m AA.#>  erase v
-    v <# m   = Expr $ erase v AA.<#  erase m
-    m <\> v  = Expr $ erase m AA.<\> erase v
-    diag     = Expr . AA.diag     . erase
-    asColumn = Expr . AA.asColumn . erase
-    asRow    = Expr . AA.asRow    . erase
+instance AA.LinearOperator (Expression [[e]]) (Expression [e]) where
+    m #> v   = Expression $ erase m AA.#>  erase v
+    v <# m   = Expression $ erase v AA.<#  erase m
+    m <\> v  = Expression $ erase m AA.<\> erase v
+    diag     = Expression . AA.diag     . erase
+    asColumn = Expression . AA.asColumn . erase
+    asRow    = Expression . AA.asRow    . erase
 
 instance AA.SquareMatrix DExpr DExpr where
     chol m = DExpr $ do
@@ -1572,11 +1572,11 @@ instance AA.SquareMatrix DExpr DExpr where
           Unconstrained{} -> return $ Unconstrained UnknownType
           _ -> let (ArrayT _ _ t) = trace ("logDet "++ show i) $ typeRef i
                in simplify $ Apply "log_det" [i] t
-instance AA.SquareMatrix (Expr [[e]]) (Expr e) where
-    chol   = Expr . AA.chol   . erase
-    inv    = Expr . AA.inv    . erase
-    det    = Expr . AA.det    . erase
-    logDet = Expr . AA.logDet . erase
+instance AA.SquareMatrix (Expression [[e]]) (Expression e) where
+    chol   = Expression . AA.chol   . erase
+    inv    = Expression . AA.inv    . erase
+    det    = Expression . AA.det    . erase
+    logDet = Expression . AA.logDet . erase
 
 qfDiag :: RMat -> RVec -> RMat
 qfDiag m v = expr $ do
@@ -1591,7 +1591,7 @@ instance Boolean DExpr where
     notB  = applyClosed1' "not"
     (&&*) = applyClosed2' "&&"
     (||*) = applyClosed2' "||"
-instance Boolean (Expr Bool) where
+instance Boolean (Expression Bool) where
     true  = apply "true" boolT []
     false = apply "false" boolT []
     notB  = applyClosed1 "not"
@@ -1599,10 +1599,10 @@ instance Boolean (Expr Bool) where
     (||*) = applyClosed2 "||"
 
 type instance BooleanOf DExpr = DExpr
-type instance BooleanOf (Expr t) = Expr Bool
+type instance BooleanOf (Expression t) = Expression Bool
 
-instance IfB (Expr t) where
-  ifB c x y = Expr $ ifB (erase c) (erase x) (erase y)
+instance IfB (Expression t) where
+  ifB c x y = Expression $ ifB (erase c) (erase x) (erase y)
 instance IfB DExpr where
   ifB c x y = DExpr $ do
     k <- fromDExpr c
@@ -1615,27 +1615,27 @@ instance IfB DExpr where
 instance EqB DExpr where
     (==*) = apply2' "==" boolT
     (/=*) = apply2' "/=" boolT
-instance EqB (Expr t) where
+instance EqB (Expression t) where
     (==*) = apply2 "==" boolT
     (/=*) = apply2 "/=" boolT
 
-instance OrdB (Expr t) where
+instance OrdB (Expression t) where
     (<*)  = apply2 "<"  boolT
     (<=*) = apply2 "<=" boolT
     (>=*) = apply2 ">=" boolT
     (>*)  = apply2 ">"  boolT
 
-instance (Ord t, ExprType t) => Transfinite (Expr t) where
+instance (Ord t, ExprType t) => Transfinite (Expression t) where
     infinity = constExpr infinity
 
-detuple :: (ExprTuple t) => t -> Expr t
+detuple :: (ExprTuple t) => t -> Expression t
 detuple t = expr $ do
   js <- sequence $ fromDExpr <$> fromExprTuple t
   return $ case js of
     [j] -> j
     _ -> Data 0 js . TupleT $ typeRef <$> js
 
-entuple :: forall t. (ExprTuple t) => Expr t -> t
+entuple :: forall t. (ExprTuple t) => Expression t -> t
 entuple = toExprTuple . entupleD n . erase
   where TupleSize n = tupleSize :: TupleSize t
 entupleD :: Int -> DExpr -> [DExpr]
@@ -1657,40 +1657,40 @@ zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
 constDExpr :: ConstVal -> Type -> DExpr
 constDExpr c = DExpr . return . Const c
 
-const :: (ExprType t) => ConstVal -> Expr t
+const :: (ExprType t) => ConstVal -> Expression t
 const = constExpr
 
-instance forall a. (ExprType a) => ExprTuple (Expr a) where
+instance forall a. (ExprType a) => ExprTuple (Expression a) where
     tupleSize = TupleSize 1
     fromExprTuple (a) = [erase a]
-    toExprTuple [a] = (Expr a)
+    toExprTuple [a] = (Expression a)
     fromConstVals [a] = (const a)
     typesOf = TypesIs [t] where
       TypeIs t = typeOf :: TypeOf a
 instance (ExprType a, ExprType b) =>
-         ExprTuple (Expr a, Expr b) where
+         ExprTuple (Expression a, Expression b) where
     tupleSize = TupleSize 2
     fromExprTuple (a,b) = [erase a, erase b]
-    toExprTuple [a,b] = (Expr a, Expr b)
+    toExprTuple [a,b] = (Expression a, Expression b)
     fromConstVals [a,b] = (const a, const b)
     typesOf = TypesIs [s,t] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
 instance (ExprType a, ExprType b, ExprType c) =>
-         ExprTuple (Expr a, Expr b, Expr c) where
+         ExprTuple (Expression a, Expression b, Expression c) where
     tupleSize = TupleSize 3
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
-    toExprTuple [a,b,c] = (Expr a, Expr b, Expr c)
+    toExprTuple [a,b,c] = (Expression a, Expression b, Expression c)
     fromConstVals [a,b,c] = (const a, const b, const c)
     typesOf = TypesIs [s,t,u] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
       TypeIs u = typeOf :: TypeOf c
 instance (ExprType a, ExprType b, ExprType c, ExprType d) =>
-         ExprTuple (Expr a, Expr b, Expr c, Expr d) where
+         ExprTuple (Expression a, Expression b, Expression c, Expression d) where
     tupleSize = TupleSize 4
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
-    toExprTuple [a,b,c,d] = (Expr a, Expr b, Expr c, Expr d)
+    toExprTuple [a,b,c,d] = (Expression a, Expression b, Expression c, Expression d)
     fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
     typesOf = TypesIs [s,t,u,v] where
       TypeIs s = typeOf :: TypeOf a
@@ -1699,12 +1699,12 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d) =>
       TypeIs v = typeOf :: TypeOf d
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e) =>
-         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e) where
+         ExprTuple (Expression a, Expression b, Expression c, Expression d, Expression e) where
     tupleSize = TupleSize 5
     fromExprTuple (a,b,c,d,e) =
       [erase a, erase b, erase c, erase d, erase e]
     toExprTuple [a,b,c,d,e] =
-      (Expr a, Expr b, Expr c, Expr d, Expr e)
+      (Expression a, Expression b, Expression c, Expression d, Expression e)
     fromConstVals [a,b,c,d,e] =
       (const a, const b, const c, const d, const e)
     typesOf = TypesIs [s,t,u,v,w] where
@@ -1715,12 +1715,12 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       TypeIs w = typeOf :: TypeOf e
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e, ExprType f) =>
-         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f) where
+         ExprTuple (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f) where
     tupleSize = TupleSize 6
     fromExprTuple (a,b,c,d,e,f) =
       [erase a, erase b, erase c, erase d, erase e, erase f]
     toExprTuple [a,b,c,d,e,f] =
-      (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f)
+      (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f)
     fromConstVals [a,b,c,d,e,f] =
       (const a, const b, const c, const d, const e, const f)
     typesOf = TypesIs [s,t,u,v,w,x] where
@@ -1732,12 +1732,12 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       TypeIs x = typeOf :: TypeOf f
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e, ExprType f, ExprType g) =>
-         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g) where
+         ExprTuple (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g) where
     tupleSize = TupleSize 7
     fromExprTuple (a,b,c,d,e,f,g) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g]
     toExprTuple [a,b,c,d,e,f,g] =
-      (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g)
+      (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g)
     fromConstVals [a,b,c,d,e,f,g] =
       (const a, const b, const c, const d, const e, const f, const g)
     typesOf = TypesIs [s,t,u,v,w,x,y] where
@@ -1750,12 +1750,12 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       TypeIs y = typeOf :: TypeOf g
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e, ExprType f, ExprType g, ExprType h) =>
-         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h) where
+         ExprTuple (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g, Expression h) where
     tupleSize = TupleSize 8
     fromExprTuple (a,b,c,d,e,f,g,h) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g, erase h]
     toExprTuple [a,b,c,d,e,f,g,h] =
-      (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h)
+      (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g, Expression h)
     fromConstVals [a,b,c,d,e,f,g,h] =
       (const a, const b, const c, const d, const e, const f, const g, const h)
     typesOf = TypesIs [s,t,u,v,w,x,y,z] where
@@ -1769,12 +1769,12 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
       TypeIs z = typeOf :: TypeOf h
 instance (ExprType a, ExprType b, ExprType c, ExprType d,
           ExprType e, ExprType f, ExprType g, ExprType h, ExprType i) =>
-         ExprTuple (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h, Expr i) where
+         ExprTuple (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g, Expression h, Expression i) where
     tupleSize = TupleSize 9
     fromExprTuple (a,b,c,d,e,f,g,h,i) =
       [erase a, erase b, erase c, erase d, erase e, erase f, erase g, erase h, erase i]
     toExprTuple [a,b,c,d,e,f,g,h,i] =
-      (Expr a, Expr b, Expr c, Expr d, Expr e, Expr f, Expr g, Expr h, Expr i)
+      (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g, Expression h, Expression i)
     fromConstVals [a,b,c,d,e,f,g,h,i] =
       (const a, const b, const c, const d, const e, const f, const g, const h, const i)
     typesOf = TypesIs [r,s,t,u,v,w,x,y,z] where

@@ -445,10 +445,10 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
         noComment row = not (LC.null row) && LC.head row /= '#'
 
 -- TODO: deprecate these
-hmcStan :: (ExprTuple t) => Int -> Prog t -> IO [t]
+hmcStan :: (ExprTuple t) => Int -> P t -> IO [t]
 hmcStan n prog = runStan method prog Nothing
   where method = defaultStanMethod { numSamples = n, numWarmup = n }
 
-hmcStanInit :: (ExprTuple t) => Int -> Prog t -> t -> IO [t]
+hmcStanInit :: (ExprTuple t) => Int -> P t -> t -> IO [t]
 hmcStanInit n prog t = runStan method prog (Just t)
   where method = defaultStanMethod { numSamples = n, numWarmup = n }

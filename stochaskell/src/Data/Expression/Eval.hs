@@ -56,14 +56,14 @@ evalContext :: String -> Either String a -> Either String a
 evalContext s (Left e) = Left $ s ++":\n"++ indent e
 evalContext _ r = r
 
-eval :: Env -> Expr t -> Eval
+eval :: Env -> Expression t -> Eval
 eval env e = evalNodeRef env block ret
   where (ret, block) = runExpr e
 
-eval_ :: Expr t -> Eval
+eval_ :: Expression t -> Eval
 eval_ = eval emptyEnv
 
-eval' :: (ExprType t) => Expr t -> Either String t
+eval' :: (ExprType t) => Expression t -> Either String t
 eval' = fmap toConcrete . eval_
 
 evalD :: Env -> DExpr -> Eval
@@ -239,7 +239,7 @@ unifyTuple block rets vals env = Map.map (fromRight' . evalD (Map.map fst env)) 
         EEnv eenv' = solveTuple block rets vals eenv
 
 {-
-unify :: Expr t -> ConstVal -> Env -> Env
+unify :: Expression t -> ConstVal -> Env -> Env
 unify e c env = env `Map.union` unifyNodeRef env block ret c
   where (ret, block) = runExpr e
 
@@ -380,13 +380,13 @@ aggregateConds' (EEnv env) = EEnv $ Map.union env' env
                 return (c &&* c',v)
           return (lval, substD emptyEEnv . condD $ conds')
 
-solve :: Expr t -> Expr t -> EEnv -> EEnv
+solve :: Expression t -> Expression t -> EEnv -> EEnv
 solve e val = solveD (erase e) (erase val)
 solveD :: DExpr -> DExpr -> EEnv -> EEnv
 solveD e val env = aggregateLVals $ env `unionEEnv` solveNodeRef env block ret val
   where (ret, block) = runDExpr e
 
-solve_ :: Expr t -> Expr t -> EEnv
+solve_ :: Expression t -> Expression t -> EEnv
 solve_ a b = solve a b emptyEEnv
 
 solveTupleD :: Block -> [NodeRef] -> [DExpr] -> EEnv -> EEnv
@@ -457,7 +457,7 @@ solveCase' offset env block hd envs = unionsEEnv $ do
 
 firstDiffD :: Z -> Z -> DExpr -> DExpr -> Z
 firstDiffD n def a b = find' p def $ vector (1...n)
-  where p i = let i' = erase i in Expr $ (a!i') /=* (b!i') :: B
+  where p i = let i' = erase i in Expression $ (a!i') /=* (b!i') :: B
 
 solveNodeRefs :: EEnv -> Block -> [(NodeRef,DExpr)] -> EEnv
 solveNodeRefs _ _ [] = emptyEEnv
@@ -527,19 +527,19 @@ solveNode env block (Apply "replaceIndex" [a,e,d] _) val =
   trace ("WARN assuming "++ show a ++" = "++ show val ++" except at index "++ show e) $
   solveNodeRefs env block [(e,j), (d, val!j)]
   where a' = reDExpr env block a
-        n = Expr $ vectorSize a' :: Z
+        n = Expression $ vectorSize a' :: Z
         j = erase $ firstDiffD n (-1) a' val
 solveNode env block (Apply "insertIndex" [a,e,d] _) val =
   trace ("WARN assuming "++ show a ++" = "++ show val ++" except at inserted index "++ show e) $
   solveNodeRefs env block [(e,j), (d, val!j)]
   where a' = reDExpr env block a
-        n = Expr $ vectorSize a' :: Z
+        n = Expression $ vectorSize a' :: Z
         j = erase $ firstDiffD n (n+1) a' val
 solveNode env block (Apply "deleteIndex" [a,e] _) val =
   trace ("WARN assuming "++ show a ++" = "++ show val ++" except at deleted index "++ show e) $
   solveNodeRef env block e j
   where a' = reDExpr env block a
-        n = Expr $ vectorSize val :: Z
+        n = Expression $ vectorSize val :: Z
         j = erase $ firstDiffD n (n+1) val a'
 solveNode env block (FoldScan Scan Left_ (Lambda dag ret) seed ls _) val =
   solveNodeRefs env block [(seed,seed'), (ls,ls')]
@@ -570,10 +570,10 @@ solveNode _ _ (Apply "findSortedInsertIndex" _ _) _ = emptyEEnv
 solveNode env (Block dags) n v = error $
   "solveNode:\n"++ showBlock dags (show n) ++"\n=\n"++ show v ++"\nwith env:\n"++ show env
 
-diff :: Env -> Expr t -> Id -> Type -> ConstVal
+diff :: Env -> Expression t -> Id -> Type -> ConstVal
 diff env = diffD env . erase
 
-diff_ :: Expr t -> Id -> Type -> ConstVal
+diff_ :: Expression t -> Id -> Type -> ConstVal
 diff_ = diff emptyEnv
 
 diffD :: Env -> DExpr -> Id -> Type -> ConstVal
@@ -600,11 +600,11 @@ diffNode env block (Apply "#>" [a,b] _) var t | isRight a' =
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
 
-deriv :: EEnv -> Expr s -> Expr t -> RMat
-deriv env e = Expr . derivNodeRef env block ret . fst . runExpr
+deriv :: EEnv -> Expression s -> Expression t -> RMat
+deriv env e = Expression . derivNodeRef env block ret . fst . runExpr
   where (ret, block) = runExpr e
 
-deriv_ :: Expr s -> Expr t -> RMat
+deriv_ :: Expression s -> Expression t -> RMat
 deriv_ = deriv emptyEEnv
 
 d :: (ExprTuple s, ExprTuple t) => s -> t -> RMat
@@ -719,12 +719,12 @@ derivNode env block (Case hd alts _) var = caseD hd' alts'
 derivNode _ block node var = error . showLet' (topDAG block) $
   "d "++ show node ++" / d "++ show var
 
-instance (ExprType t, Enum t) => Enum (Expr t)
+instance (ExprType t, Enum t) => Enum (Expression t)
 
-instance (ExprType t, Real t) => Real (Expr t) where
+instance (ExprType t, Real t) => Real (Expression t) where
   toRational = real . fromRight' . eval_
 
-instance (ExprType t, Integral t) => Integral (Expr t) where
+instance (ExprType t, Integral t) => Integral (Expression t) where
   toInteger = integer . fromRight' . eval_
 
 instance IsList RVec where
@@ -758,7 +758,7 @@ instance IsList RMat where
                                ,(Const 1 IntT, Const (fromInteger m) IntT)] RealT
     toList = map (map real . toList) . toList . fromRight' . eval_
 
-instance forall t. (Show t, ExprType t) => Show (Expr t) where
+instance forall t. (Show t, ExprType t) => Show (Expression t) where
   show x = case eval_ x of
     Right c  -> show (toConcrete c :: t)
     Left _ -> show (erase x)

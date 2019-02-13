@@ -1,34 +1,88 @@
-module Language.Stochaskell
-  ( module Prelude
-  , module Control.Monad.Guard
+{-|
+Description : Stochaskell main module
+Copyright   : (c) David A Roberts, 2015-2019
+License     : GPL-3
+Maintainer  : d@vidr.cc
+Stability   : experimental
+-}
+module Language.Stochaskell (
+  -- * Re-exported modules
+    module Prelude
   , module Data.Boolean.Overload
   , module Data.Monoid
   , module Data.Number.Transfinite
   , module GHC.Exts
 
-  , Expression, B, R, Z, BVec, RVec, ZVec, BMat, RMat, ZMat, P
-  , boolean, integer, real, list
-  , joint, vector, matrix, blockVector, blockMatrix
-  , (...), (!), (#>), (*>)
-  , inv, tr', outer, diag, qfDiag
-  , asColumn, asRow, cast
+  -- * Expressions
+  , Expression
+  -- ** Array manipulation
+  , deleteAt, insertAt, replaceAt
+  -- ** Recursion
+  , foldl, foldr, scanl, scanr
+  -- *** Helpers
+  , find', findSortedInsertIndex, min', sum'
 
+  -- * Linear algebra
+  , Indexable(..)
+  , InnerProduct(..)
+  , Joint(..)
+  , LinearOperator(..)
+  , Matrix(..)
+  , Scalable(..)
+  , SquareMatrix(..)
+  , Transposable(..)
+  , Vector(..)
+
+  -- * Types
+  , B, R, Z, BVec, RVec, ZVec, BMat, RMat, ZMat
+  -- ** Type casting
+  , Cast(..), boolean, integer, real, list
+  -- ** Abstract arrays
+  , Interval
+  , AbstractArray
+  , (...)
+
+  -- * Probability distributions
+  , P, Distribution
+  -- ** Primitives
+  -- *** Boolean
   , bernoulli, bernoulliLogit, bernoulliLogits
-  , beta, cauchy, gamma, invGamma, lognormal, normal, normals, uniform, uniforms
+  -- *** Discrete
   , geometric, negBinomial, pmf, poisson
+  -- *** Continuous
+  , beta, cauchy, gamma, invGamma, lognormal, normal, normals, uniform, uniforms
+  -- *** Vector
   , orderedSample, poissonProcess
+  -- *** Matrix
+  , corrLKJ
+  -- ** Transformers
   , mixture, mixture', truncated
+  -- ** Iteration
+  , chain', chainRange'
+  -- ** Helpers
   , normalChol, normalsChol, normalCond
-  , corrLKJ, lpdfNormal
 
+  -- * Sampling
   , compileCC, runCC, runStep, simulate
-  , debug, chain, chain', chainRange, chainRange', loop
+  -- * Inference
   , hmcStan, hmcStanInit, mh, mh', mhRatio, rjmc, rjmcC
 
-  , deleteAt, insertAt, replaceAt
-  , foldl, foldr, scanl, scanr
-  , find', findSortedInsertIndex, min', sum'
-  , binarize, fromRight', interpolate, mean, readRealMatrix, selectItems, slice, square
+  -- ** Miscellaneous
+  , binarize
+  , chain
+  , chainRange
+  , debug
+  , fromRight'
+  , guard
+  , interpolate
+  , loop
+  , lpdfNormal
+  , mean
+  , qfDiag
+  , readRealMatrix
+  , selectItems
+  , slice
+  , square
   ) where
 
 import Prelude hiding (
