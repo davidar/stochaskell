@@ -49,6 +49,7 @@ evaluable (EEnv env) block ref =
         p Internal{} = False
         p (Symbol _ known) = if known then False else True
 
+-- | either an evaluated constant or error string
 type Eval = Either String ConstVal
 type Evals = Either String [ConstVal]
 
@@ -60,9 +61,11 @@ eval :: Env -> Expression t -> Eval
 eval env e = evalNodeRef env block ret
   where (ret, block) = runExpr e
 
+-- | evaluate Stochaskell expression to constant value
 eval_ :: Expression t -> Eval
 eval_ = eval emptyEnv
 
+-- | evaluate Stochaskell expression to native value
 eval' :: (ExprType t) => Expression t -> Either String t
 eval' = fmap toConcrete . eval_
 

@@ -177,6 +177,7 @@ liftExprBlock s = do
     put $ PBlock block' rhs given ns
     return ret
 
+-- | Stochaskell probabilistic program intermediate representation
 newtype P t = P { fromProg :: State PBlock t }
   deriving (Functor,Applicative,Monad)
 type Prog t = P t
@@ -260,6 +261,9 @@ fromCaseP p e = toExprTuple <$> caseP n (erase e)
 switchOf :: (Constructor c, ExprTuple t) => (Expression c -> P t) -> Expression c -> P t
 switchOf f = fromCaseP (f . fromConcrete)
 
+-- | iterate a Markov chain over the given integer range, eg.
+--
+-- > chainRange' (1,10) (\i x -> normal x 1) 0 -- 10-step standard normal random walk from 0
 chainRange' :: forall t. (ExprTuple t) => Interval Z -> (Z -> t -> P t) -> t -> P t
 chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
   block <- get
@@ -278,9 +282,13 @@ chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
   x' <- fromExpr $ detuple x
   return $ Chain (lo',hi') (reverse acts) (Lambda dag ret) x' ns t
 
+-- | convenience function for calling 'chainRange'' starting at 1 and ignoring indices
 chain' :: (ExprTuple t) => Z -> (t -> P t) -> t -> P t
 chain' n p = chainRange' (1,n) (\_ -> p)
 
+-- | creates a mixture distribution, eg.
+--
+-- > mixture [(0.7, uniform 0 1), (0.3, normal 0 1)]
 mixture :: forall t. (ExprTuple t) => [(R, P t)] -> P t
 mixture qps = do
   k <- categorical qv :: P Z
@@ -289,7 +297,8 @@ mixture qps = do
         qv = blockVector [cast q | q <- qs] :: RVec
         TupleSize n = tupleSize :: TupleSize t
 
--- flatten and select with case rather than switch
+-- | like 'mixture', but produces a flattened intermediate representation
+-- that uses a case expression rather than a switch statement
 mixture' :: (ExprTuple t) => [(R, P t)] -> P t
 mixture' qps = do
   k <- categorical qv
@@ -332,6 +341,7 @@ distDs n s = P $ do
   e <- fromProg $ distD s
   return $ if n == 1 then [e] else extractD e 0 <$> [0..(n-1)]
 
+-- | truncate distribution to given bounds
 truncated :: (Expression t) -> (Expression t) -> P (Expression t) -> P (Expression t)
 truncated a b p = P $ do
   i <- liftExprBlock $ fromExpr a
@@ -548,6 +558,7 @@ instance Distribution InvWishart (R,RMat) P RMat where
         let (ArrayT _ sh t) = typeRef j
         return $ Dist "inv_wishart" [i,j] (ArrayT (Just "cov_matrix") sh t)
 
+-- | multivariate normal via Cholesky decomposition of covariance matrix
 normalChol :: Z -> RVec -> RMat -> P RVec
 normalChol n mu cov = do
   --w <- joint vector [ normal 0 1 | _ <- 1...n ]
@@ -555,6 +566,7 @@ normalChol n mu cov = do
                (vector [ 1 | _ <- 1...n ])
   return (mu + chol cov #> w)
 
+-- | iid 'normalChol' samples as rows
 normalsChol :: Z -> Z -> RVec -> RMat -> P RMat
 normalsChol n k mu cov = do
   --w <- joint vector [ normal 0 1 | i <- 1...n, j <- 1...k ]
@@ -562,6 +574,7 @@ normalsChol n k mu cov = do
                (matrix [ 1 | i <- 1...n, j <- 1...k ])
   return $ asRow mu + (w <> tr' (chol cov))
 
+-- | Gaussian process conditioned on observations
 normalCond :: Z -> (Expression t -> Expression t -> R) -> R -> Expression [t] -> RVec -> Expression t -> P R
 normalCond n cov noise s y x = normal m (sqrt v)
   where c = matrix [ cov (s!i) (s!j) + ifB (i ==* j) noise 0

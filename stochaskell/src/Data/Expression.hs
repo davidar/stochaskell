@@ -270,6 +270,7 @@ showBlock :: [DAG] -> String -> String
 showBlock (dag:block) r = showBlock block $ showLet' dag r
 showBlock [] r = r
 
+-- | dynamically typed Stochaskell expression
 data DExpr = DExpr { fromDExpr :: State Block NodeRef }
 runDExpr :: DExpr -> (NodeRef, Block)
 runDExpr e = runState (fromDExpr e) emptyBlock
@@ -326,6 +327,7 @@ conditionEEnv sufficient c (EEnv env) =
 bindInputs :: DAG -> [DExpr] -> EEnv
 bindInputs dag xs = EEnv . Map.fromList $ inputsL dag `zip` xs
 
+-- | Stochaskell expression representation (statically typed)
 newtype Expression t = Expression { erase :: DExpr }
 type Expr t = Expression t
 expr :: State Block NodeRef -> Expression t
@@ -343,15 +345,15 @@ instance (ExprTuple a, ExprTuple b, ExprType t) => Show (a -> b -> Expression t)
   show f = "\\input_a input_b ->\n"++ (indent . show . erase $
     f (entuple $ symbol "input_a") (entuple $ symbol "input_b"))
 
-type B = Expression Bool
-type R = Expression Double
-type Z = Expression Integer
-type BVec = Expression [Bool]
-type RVec = Expression [Double]
-type ZVec = Expression [Integer]
-type BMat = Expression [[Bool]]
-type RMat = Expression [[Double]]
-type ZMat = Expression [[Integer]]
+type B = Expression Bool           -- ^ boolean
+type R = Expression Double         -- ^ real
+type Z = Expression Integer        -- ^ integer
+type BVec = Expression [Bool]      -- ^ boolean vector
+type RVec = Expression [Double]    -- ^ real vector
+type ZVec = Expression [Integer]   -- ^ integer vector
+type BMat = Expression [[Bool]]    -- ^ boolean matrix
+type RMat = Expression [[Double]]  -- ^ real matrix
+type ZMat = Expression [[Integer]] -- ^ integer matrix
 
 
 ------------------------------------------------------------------------------
@@ -360,6 +362,7 @@ type ZMat = Expression [[Integer]]
 
 -- TODO: remove NodeRef's from Type, make subranges static and
 --       query array sizes elsewhere
+-- | Stochaskell types
 data Type
     = IntT
     | RealT
@@ -410,11 +413,17 @@ isArrayT ArrayT{} = True
 isArrayT _ = False
 
 newtype TypeOf t = TypeIs Type deriving (Show)
+-- | Stochaskell interface for native Haskell types
 class ExprType t where
+    -- | corresponding Stochaskell type
     typeOf       :: TypeOf t
+    -- | convert constant to native value
     toConcrete   :: ConstVal -> t
+    -- | convert native value to Stochaskell expression
     fromConcrete :: t -> Expression t
+    -- | convert native value to constant
     constVal     :: t -> ConstVal
+    -- | convert constant to Stochaskell expression
     constExpr    :: ConstVal -> Expression t
     constExpr    = fromConcrete . toConcrete
 instance ExprType Integer where
@@ -534,12 +543,18 @@ instance forall a b c d e f g h i.
           TypeIs i = typeOf :: TypeOf i
 
 newtype Tags t = Tags [Tag]
+-- | Stochaskell interface for algebraic data types
 class ExprType c => Constructor c where
+  -- | list of possible tags in tagged union
   tags :: Tags c
+  -- | construct ADT from tag and arguments
   construct   :: (forall t. ExprType t => a -> Expression t) -> Tag -> [a] -> c
+  -- | deconstruct ADT to tag and arguments
   deconstruct :: (forall t. ExprType t => Expression t -> a) -> c -> (Tag, [a])
+  -- | convert constant to ADT value
   toConcreteC :: ConstVal -> c
   toConcreteC (Tagged c args) = construct constExpr c args
+  -- | convert ADT value to Stochaskell expression
   fromConcreteC :: c -> Expression c
   fromConcreteC m = expr $ do
     js <- sequence args
@@ -654,6 +669,7 @@ compatible s (SubrangeT t _ _) = compatible s t
 compatible (ArrayT _ sh s) (ArrayT _ sh' t) | length sh == length sh' = compatible s t
 compatible _ _ = False
 
+-- | cast a value of one type to another
 class    Cast a b                          where cast :: a -> b
 instance Cast Z R                          where cast = expr . fromExpr
 instance Cast Int R                        where cast = fromIntegral
@@ -1178,18 +1194,22 @@ index a es = expr $ do
     js <- mapM fromExpr es
     return $ Index f js
 
+-- | Stochaskell equivalent of 'Prelude.foldl'
 foldl :: (ExprType b) =>
   (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression b
 foldl f r xs = expr $ foldscan Fold Left_ (flip f) r xs
 
+-- | Stochaskell equivalent of 'Prelude.foldr'
 foldr :: (ExprType b) =>
   (Expression a -> Expression b -> Expression b) -> Expression b -> Expression [a] -> Expression b
 foldr f r xs = expr $ foldscan Fold Right_ f r xs
 
+-- | Stochaskell equivalent of 'Prelude.scanl'
 scanl :: (ExprType b) =>
   (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
 scanl f r xs = expr $ foldscan Scan Left_ (flip f) r xs
 
+-- | Stochaskell equivalent of 'Prelude.scanr'
 scanr :: (ExprType b) =>
   (Expression a -> Expression b -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
 scanr f r xs = expr $ foldscan Scan Right_ f r xs
@@ -1229,19 +1249,25 @@ foldscan fs dir f r xs = do
             hashcons $ FoldScan fs dir (Lambda dag ret) seed l t'
       else liftBlock $ foldscan fs dir f r xs
 
--- find leftmost element of v satisfying p, else def if no elements satisfy p
+-- | @find p d v@: find leftmost element of @v@ satisfying @p@,
+-- else @d@ if no elements satisfy @p@
 find' :: (ExprType e) => (Expression e -> B) -> Expression e -> Expression [e] -> Expression e
 find' p def v = foldr f def v where f i j = ifB (p i) i j
 
+-- | Stochaskell equivalent of 'Prelude.sum'
 sum' :: (ExprType a, Num a) => Expression [a] -> Expression a
 sum' = foldl (+) 0
 
+-- | given a value and a sorted vector, find the index at which we could
+-- 'Data.Array.Abstract.insertAt' the value whilst keeping the vector sorted
 findSortedInsertIndex :: R -> RVec -> Z
 findSortedInsertIndex = apply2 "findSortedInsertIndex" IntT
 
+-- | minimum of two values
 min' :: Expression a -> Expression a -> Expression a
 min' = applyClosed2 "min"
 
+-- | Stochaskell equivalent of 'trace' that runs within generated code
 debug :: (ExprTuple t) => String -> t -> t
 debug msg t = toExprTuple $ do
   e <- fromExprTuple t
@@ -1644,11 +1670,17 @@ entupleD n e = extractD e 0 <$> [0..(n-1)]
 
 newtype TupleSize t = TupleSize Int
 newtype TypesOf t = TypesIs [Type]
+-- | Stochaskell interface for tuples of expressions
 class ExprType t => ExprTuple t where
+    -- | numer of tuple elements
     tupleSize :: TupleSize t
+    -- | convert to list of expressions
     fromExprTuple :: t -> [DExpr]
+    -- | convert from list of expressions
     toExprTuple :: [DExpr] -> t
+    -- | convert from list of constants
     fromConstVals :: [ConstVal] -> t
+    -- | list of types of elements
     typesOf :: TypesOf t
 
 zipExprTuple :: (ExprTuple t) => t -> t -> [(DExpr,DExpr)]

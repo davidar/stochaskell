@@ -14,6 +14,7 @@ import qualified Numeric.LinearAlgebra.Data as LAD
 import Numeric.SpecFunctions
 import System.Random
 
+-- | generalised probability distribution interface
 class (Monad m) => Distribution d s m t | d m t -> s where
     sample :: d s -> m t
 
@@ -115,6 +116,7 @@ instance Distribution Normal (Double,Double) IO Double where
 normal m s = sample $ Normal (m,s)
 lpdfNormal x m s = - log (2*pi) / 2 - log s - (((x - m) / s) ** 2) / 2
 
+-- | log-normal distribution
 lognormal m s = do
   x <- normal m s
   return (exp x)
@@ -129,9 +131,12 @@ instance Distribution Normals (ShapedMatrix Double, ShapedMatrix Double) IO (Sha
 normals m s = sample $ Normals (m,s)
 
 newtype OrderedSample a = OrderedSample a
+-- | @orderedSample n d@ gives an ordered vector of @n@ samples from a base
+-- distribution @d@
 orderedSample n d = sample $ OrderedSample (n,d)
 
 newtype PMF a = PMF a
+-- | distribution over indices given by vector of probabilities
 pmf a = sample $ PMF a
 
 newtype Poisson a = Poisson a

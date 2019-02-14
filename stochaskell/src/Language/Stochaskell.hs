@@ -16,16 +16,14 @@ module Language.Stochaskell (
   -- * Expressions
   , Expression
   -- ** Array manipulation
-  , deleteAt, insertAt, replaceAt
+  , Indexable(..)
   -- ** Recursion
   , foldl, foldr, scanl, scanr
   -- *** Helpers
   , find', findSortedInsertIndex, min', sum'
 
   -- * Linear algebra
-  , Indexable(..)
   , InnerProduct(..)
-  , Joint(..)
   , LinearOperator(..)
   , Matrix(..)
   , Scalable(..)
@@ -43,24 +41,32 @@ module Language.Stochaskell (
   , (...)
 
   -- * Probability distributions
-  , P, Distribution
+  , P, Distribution, Joint(..)
   -- ** Primitives
   -- *** Boolean
-  , bernoulli, bernoulliLogit, bernoulliLogits
+  , Bernoulli, Bernoullis
+  , bernoulli, bernoullis, bernoulliLogit, bernoulliLogits
   -- *** Discrete
+  , Geometric, NegBinomial, PMF, Poisson
   , geometric, negBinomial, pmf, poisson
   -- *** Continuous
-  , beta, cauchy, gamma, invGamma, lognormal, normal, normals, uniform, uniforms
+  , Beta, Cauchy, Gamma, InvGamma, Normal, Normals, Uniform, Uniforms
+  , beta, cauchy, gamma, invGamma, normal, normals, uniform, uniforms
   -- *** Vector
+  , OrderedSample, PoissonProcess
   , orderedSample, poissonProcess
   -- *** Matrix
+  , LKJ
   , corrLKJ
+  -- ** Logarithmic probability density functions
+  , lpdfGamma, lpdfNegBinomial, lpdfNormal, lpdfPoisson
+  , lpdfUniform, lpdfDiscreteUniform
   -- ** Transformers
   , mixture, mixture', truncated
   -- ** Iteration
   , chain', chainRange'
-  -- ** Helpers
-  , normalChol, normalsChol, normalCond
+  -- ** Pre-defined probabilistic programs
+  , lognormal, normalChol, normalsChol, normalCond
 
   -- * Sampling
   , compileCC, runCC, runStep, simulate
@@ -76,7 +82,6 @@ module Language.Stochaskell (
   , guard
   , interpolate
   , loop
-  , lpdfNormal
   , mean
   , qfDiag
   , readRealMatrix

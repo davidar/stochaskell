@@ -25,3 +25,6 @@ env: edward/env pymc3/env
 %/env: %/requirements.txt
 	virtualenv $@
 	$@/bin/pip install -Ur $<
+
+doc: build
+	stack haddock --no-haddock-hyperlink-source

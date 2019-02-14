@@ -38,6 +38,7 @@ import GHC.Exts
 import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra.Data as LAD
 
+-- | convert between list types (eg. @['Double']@ to 'Language.Stochaskell.RVec')
 list :: (IsList l, IsList l', Item l ~ Item l') => l -> l'
 list = fromList . toList
 
@@ -66,10 +67,14 @@ rrange (x:xs,y:ys) = [ z:zs | zs <- rrange (xs,ys), z <- range (x,y) ]
 rrange ([],[]) = [[]]
 rrange _ = []
 
+-- | closed interval of integers
 type Interval i = (i,i)
 cardinality :: (Num a) => Interval a -> a
 cardinality (a,b) = b - a + 1
 
+-- | create abstract arrays with an expression like
+--
+-- > [ i + j | i <- 1...rows, j <- 1...cols ]
 data AbstractArray i e = AArr [Interval i] ([i] -> e)
 
 toArray :: (Ix i, Show i) => AbstractArray i e -> A.Array [i] e
@@ -116,6 +121,7 @@ coerceShape sh sh' = sequence $ zipWith g sh sh'
                             | lo  == hi  = Just (lo,hi')
                             | otherwise = Nothing
 
+-- | create abstract array containing given integer range
 infix 5 ...
 (...) :: a -> a -> AbstractArray a a
 a...b = AArr [(a,b)] f
@@ -123,20 +129,31 @@ a...b = AArr [(a,b)] f
         f _ = error "shape mismatch"
 
 infixl 9 !
+-- | generalised array interface
 class Indexable a i e | a -> i e where
+    -- | see 'Data.Array.!'
     (!) :: a -> i -> e
+    -- | see 'Data.Array.bounds'
     bounds :: a -> Interval i
+    -- | remove i'th element of array
+    deleteAt :: (Indexable a i e) => a -> i -> a
+    deleteAt = deleteIndex
+    -- | move a!i and following elements up one, and set a!i = e
+    insertAt :: (Indexable a i e) => a -> (i,e) -> a
+    insertAt a (i,e) = insertIndex a i e
+    -- | set a!i = e
+    replaceAt :: (Indexable a i e) => a -> (i,e) -> a
+    replaceAt a (i,e) = replaceIndex a i e
     deleteIndex :: a -> i -> a
+    deleteIndex = deleteAt
     insertIndex :: a -> i -> e -> a
+    insertIndex a i e = insertAt a (i,e)
     replaceIndex :: a -> i -> e -> a
+    replaceIndex a i e = replaceAt a (i,e)
+
+-- | bounds on each dimension of array
 shape :: (Indexable a [i] e) => a -> [Interval i]
 shape x = uncurry zip . bounds $ x
-deleteAt :: (Indexable a i e) => a -> i -> a
-deleteAt = deleteIndex
-insertAt :: (Indexable a i e) => a -> (i,e) -> a
-insertAt a (i,e) = insertIndex a i e
-replaceAt :: (Indexable a i e) => a -> (i,e) -> a
-replaceAt a (i,e) = replaceIndex a i e
 
 instance Indexable [e] Int e where
     (!) = (!!)
@@ -160,9 +177,13 @@ instance (A.IArray A.UArray e, Ix i) => Indexable (A.UArray i e) i e where
     (!) = (A.!)
     bounds = A.bounds
 
+-- | generalised vector interface
 class Vector v i e | v -> i e, i e -> v where
+    -- | convert from abstract array
     vector :: AbstractArray i e -> v
+    -- | see 'blockMatrix'
     blockVector :: [v] -> v
+    -- | number of elements in vector
     vectorSize :: v -> i
 
 data ShapedVector t = ShVec (Interval Integer) (LAD.Vector t)
@@ -187,6 +208,7 @@ instance Vector (ShapedVector Double) Integer Double where
 
 infixr 7 *>
 class Scalable a v | v -> a where
+    -- | scalar by array multiplication (see 'Algebra.Vector.*>')
     (*>) :: a -> v -> v
 
 instance (Num e, Ix i) => Scalable e (A.Array i e) where
@@ -200,17 +222,25 @@ instance Scalable Double (ShapedMatrix Double) where
 
 infixr 8 <.>
 class InnerProduct v e | v -> e where
+    -- | generalisation of 'Numeric.LinearAlgebra.<.>'
     (<.>) :: v -> v -> e
 
 instance (LA.Numeric t) => InnerProduct (ShapedVector t) t where
     (ShVec _ u) <.> (ShVec _ v) = (LA.<.>) u v
 
+-- | generalised matrix interface
 class Matrix m i e | m -> i e where
+    -- | convert from abstract array
     matrix :: AbstractArray i e -> m
+    -- | create a block matrix
     blockMatrix :: [[m]] -> m
+    -- | identity matrix
     eye :: i -> m
+    -- | zero matrix
     zeros :: i -> i -> m
+    -- | number of rows
     matrixRows :: m -> i
+    -- | number of columns
     matrixCols :: m -> i
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
@@ -238,13 +268,21 @@ instance LA.Transposable (ShapedMatrix Double) (ShapedMatrix Double) where
 
 infixr 8 #>
 infixl 7 <\>
+-- | generalised linear operator interface
 class LinearOperator m v | m -> v, v -> m where
+    -- | see 'Numeric.LinearAlgebra.#>'
     (#>)  :: m -> v -> v
+    -- | see 'Numeric.LinearAlgebra.<#'
     (<#)  :: v -> m -> v
+    -- | see 'Numeric.LinearAlgebra.<\>'
     (<\>) :: m -> v -> v
+    -- | convert vector to diagonal matrix
     diag  :: v -> m
+    -- | convert vector to column
     asColumn :: v -> m
+    -- | convert vector to row
     asRow :: v -> m
+    -- | outer product
     outer :: (LinearOperator m v, Num m) => v -> v -> m
     outer u v = asColumn u * asRow v
 
@@ -256,10 +294,14 @@ instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) where
     asRow    (ShVec (l,h) v) = ShMat (l,l) (l,h) $ LAD.asRow v
 
 class SquareMatrix m e | m -> e where
-    chol   :: m -> m -- lower-triangular
+    -- | lower-triangular Cholesky decomposition, see 'Numeric.LinearAlgebra.chol'
+    chol   :: m -> m
+    -- | see 'Numeric.LinearAlgebra.inv'
     inv    :: m -> m
+    -- | see 'Numeric.LinearAlgebra.det'
     det    :: m -> e
-    logDet :: m -> e -- log abs det
+    -- | logarithm of the absolute value of the determinant
+    logDet :: m -> e
 
 instance SquareMatrix (ShapedMatrix Double) Double where
     chol   (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.sym) m
@@ -272,6 +314,10 @@ class Broadcastable a b c | a b -> c where
     bsxfun :: (c -> c -> c) -> a -> b -> c
 
 class Joint m i r f | m -> i where
+    -- | create distribution over arrays as the product of an array of
+    -- independent distributions, eg.
+    --
+    -- > joint matrix [ normal i j | i <- 1...m, j <- 1...n ]
     joint :: (AbstractArray i r -> f) -> AbstractArray i (m r) -> m f
 
 instance Joint IO Integer e f where

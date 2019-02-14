@@ -108,15 +108,19 @@ fromBool :: (Boolean b) => Bool -> b
 fromBool True  = true
 fromBool False = false
 
+-- | convert between boolean types (eg. 'Bool' to 'Language.Stochaskell.B')
 boolean :: (Eq a, Boolean a, Boolean b) => a -> b
 boolean = fromBool . toBool
+-- | convert between integer types (eg. 'Int' to 'Language.Stochaskell.Z')
 integer :: (Integral i, Num n) => i -> n
 integer = fromInteger . toInteger
+-- | convert between real types (eg. 'Double' to 'Language.Stochaskell.R')
 real :: (Real r, Fractional f) => r -> f
 real = fromRational . toRational
 
 type Tag = Int
 
+-- | constant numeric array (of arbitrary dimension) or tagged union value
 data ConstVal = Exact  (UArray [Integer] Int)
               | Approx (UArray [Integer] Double)
               | Tagged Tag [ConstVal]
