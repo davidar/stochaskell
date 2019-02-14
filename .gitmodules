@@ -16,3 +16,6 @@
 [submodule "docs/tufte-pandoc-css"]
 	path = docs/tufte-pandoc-css
 	url = https://github.com/davidar/tufte-pandoc-css.git
+[submodule "stochaskell/standalone-haddock"]
+	path = stochaskell/standalone-haddock
+	url = https://github.com/corajr/standalone-haddock.git

@@ -6,4 +6,5 @@
 *~
 *.tix
 /stochaskell/.stack-work/
+/stochaskell/docs/
 /_scrap/

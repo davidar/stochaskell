@@ -5,6 +5,9 @@ STYLES := \
 	tufte-pandoc-css/tufte-extra.css
 
 all: index.html
+	$(MAKE) -C ../stochaskell doc || true
+	rm -rf doc
+	cp -rv ../stochaskell/docs/stochaskell/ doc
 
 %.html: %.md tufte-pandoc-css/tufte.html5 $(STYLES)
 	pandoc \

@@ -61,7 +61,7 @@ spanning diverse probabilistic programming paradigms.
 ## Probabilistic Modelling
 
 In this section,
-we will introduce Stochaskell through a number of example probabilistic programs.
+we will introduce Stochaskell through a number of example probabilistic programs.[^docs]
 We begin with a simple program to simulate a homogeneous Poisson process over a fixed interval $[0,t]$, using the standard method [@kroese11, sec. 5.4]:
 
 ```hs
@@ -71,6 +71,8 @@ poissonProcess rate t = do
   s <- orderedSample n (uniform 0 t)
   return (n,s)
 ```
+
+[^docs]: Also see [A Gentle Introduction to Haskell](https://www.haskell.org/tutorial/) and the [Stochaskell API documentation](./doc/).
 
 The program takes two real numbers as input[^types]
 specifying the $\text{rate}>0$ of the process, and the length $t>0$ of the interval, respectively.
@@ -339,6 +341,17 @@ where `n` is the number of iterations and `x0` is some initial state.
 ### Reversible Jump Markov Chain Monte Carlo
 
 See @roberts19.
+
+<!--
+## Usage
+
+### Docker
+
+```sh
+docker build -t stochaskell:latest .
+docker run -it -p8888:8888 stochaskell:latest
+```
+-->
 
 ## References {-}
 
