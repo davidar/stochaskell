@@ -656,6 +656,7 @@ solveP ns prog vals = solveTuple block rets vals
 pdf :: (ExprTuple t, Show t) => P t -> t -> R
 pdf p = exp . lpdf p
 
+-- | compute log pdf of distribution represented by probabilistic program
 lpdf :: (ExprTuple t, Show t) => P t -> t -> R
 lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "lpdf" prog
@@ -678,7 +679,7 @@ lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - adjust
           _ -> False
           where (ret,block) = runDExpr e
 
--- compute joint pdf of primitive random variables within the given program
+-- | compute joint pdf of primitive random variables within the given program
 lpdfAux :: (ExprTuple t, Show t) => P t -> t -> R
 lpdfAux prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb
   where (rets, pb) = runProgExprs "lpdfAux" prog
@@ -884,6 +885,7 @@ densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
 -- SAMPLING                                                                 --
 ------------------------------------------------------------------------------
 
+-- | like 'runStep' for programs that don't take parameters
 simulate :: (ExprTuple t) => P t -> IO t
 simulate = sampleP
 
@@ -1038,21 +1040,24 @@ samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
 -- DISTRIBUTION CONSTRUCTORS                                                --
 ------------------------------------------------------------------------------
 
--- from hsc3
+-- | like 'chain'' but for arbitrary monads
 chain :: Monad m => Int -> (b -> m b) -> b -> m b
 chain n f = foldr (<=<) return (replicate n f)
+
+-- | infinite loop
 loop :: Monad m => a -> (a -> m a) -> m ()
 loop s f = do
   s' <- f s
   loop s' f
 
+-- | like 'chainRange'' but for arbitrary monads
 chainRange :: (Num i, Monad m) => (Int,Int) -> (i -> x -> m x) -> x -> m x
 chainRange (lo,hi) f x0 = snd <$> chain (hi-lo+1) g (integer lo, x0)
   where g (i,x) = do
           y <- f i x
           return (i+1,y)
 
--- Metropolis-Hastings
+-- | Metropolis-Hastings inference
 mh :: (ExprTuple r, Show r) => P r -> (r -> P r) -> r -> IO r
 mh = mhAdjust (const $ LF.logFloat 1)
 
@@ -1069,6 +1074,8 @@ mhAdjust adjust target proposal x = do
   accept <- bernoulli $ if a > 1 then 1 else a
   return $ if accept then y else x
 
+-- | like 'mh' but returns a Stochaskell probabilistic program that can be
+-- used with 'Language.Stochaskell.compileCC', etc
 mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t)
     => String -> P t -> (t -> P t) -> t -> P t
 mh' msg target proposal x = do
@@ -1077,6 +1084,7 @@ mh' msg target proposal x = do
   accept <- bernoulli (min' 1 (debug (msg ++" acceptance ratio") $ a x y))
   return $ ifB accept y x
 
+-- | compute the M-H acceptance ratio
 mhRatio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R
 mhRatio target proposal x y = optimiseE 2 . subst (substEEnv substEnv) $
   exp $ f y - f x + q y' x' - q x' y'
@@ -1089,6 +1097,7 @@ mhRatio target proposal x y = optimiseE 2 . subst (substEEnv substEnv) $
           ,(LVar $ Symbol "mhy" True, erase $ detuple y)
           ]
 
+-- | Reversible Jump Monte Carlo inference
 rjmc :: (ExprTuple t, IfB t, BooleanOf t ~ B, Show t) => P t -> (t -> P t) -> t -> P t
 rjmc target proposal x = do
   let a = rjmcRatio target proposal
@@ -1096,6 +1105,7 @@ rjmc target proposal x = do
   accept <- bernoulli (min' 1 (a x y))
   return $ ifB accept y x
 
+-- | like 'rjmc' but for ADTs that implement the 'Constructor' typeclass
 rjmcC :: (Constructor t, Show t) => P (Expression t) -> (t -> P (Expression t)) -> Expression t -> P (Expression t)
 rjmcC target proposal = switchOf $ \x -> do
   y <- fromCaseP proposal x
@@ -1159,6 +1169,7 @@ rjmcTransRatio' q x y = lu' - lu + logDet jacobian
         substAux = getAux "qx" x y True `unionEEnv` getAux "qy" y x True
         jacobian = Expression . optimiseD 2 . substD (substEEnv substAux) . optimiseD 1 $ blockMatrix (top:bot) :: RMat
 
+-- | sample probabilistic program via Stochaskell's interpreter
 runStep :: forall t. (ExprTuple t) => (t -> P t) -> t -> IO t
 runStep step = trace (showPBlock stepPB $ show stepRets) $ \m ->
   let env = Map.fromList $ (LVar . Dummy 9 <$> [0..]) `zip` fromRight' (evalTuple emptyEnv m)

@@ -1,7 +1,11 @@
-module Language.Edward
-  ( edProgram
-  , hmcEdward
-  ) where
+{-|
+Description : Edward integration
+Copyright   : (c) David A Roberts, 2015-2019
+License     : GPL-3
+Maintainer  : d@vidr.cc
+Stability   : experimental
+-}
+module Language.Edward (hmcEdward, edProgram) where
 
 import Control.Monad
 import Data.Either.Utils
@@ -135,7 +139,8 @@ edDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = edId $ Internal (dagLevel dag) i
   in edNode r name n
 
-edProgram :: (ExprTuple t) => Int -> Int -> Double -> Prog t -> Maybe t -> String
+-- | generate Edward code, as used by 'hmcEdward'
+edProgram :: (ExprTuple t) => Int -> Int -> Double -> P t -> Maybe t -> String
 edProgram numSamples numSteps stepSize prog init =
   edPrelude ++"\n"++
   "if True:\n"++
@@ -160,7 +165,10 @@ edProgram numSamples numSteps stepSize prog init =
           [edId k ++": np.load('"++ edId k ++".npy')"
           | LVar k <- Map.keys given, k `Set.member` skel] ++"}"
 
-hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> Prog t -> Maybe t -> IO [t]
+-- | @hmcEdward numSamples numSteps stepSize program initialState@
+--
+-- perform Hamiltonian Monte Carlo inference via the Edward code generation backend
+hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> P t -> Maybe t -> IO [t]
 hmcEdward numSamples numSteps stepSize prog init =
   withSystemTempDirectory "edward" $ \tmpDir -> do
     pwd <- getCurrentDirectory

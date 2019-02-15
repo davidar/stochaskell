@@ -131,17 +131,18 @@ a...b = AArr [(a,b)] f
 infixl 9 !
 -- | generalised array interface
 class Indexable a i e | a -> i e where
-    -- | see 'Data.Array.!'
+    -- | see @('Data.Array.!')@
     (!) :: a -> i -> e
     -- | see 'Data.Array.bounds'
     bounds :: a -> Interval i
-    -- | remove i'th element of array
+    -- | @a ``deleteAt`` i@ -- remove @i@'th element of array
     deleteAt :: (Indexable a i e) => a -> i -> a
     deleteAt = deleteIndex
-    -- | move a!i and following elements up one, and set a!i = e
+    -- | @a ``insertAt`` (i,e)@ --
+    -- move @a!i@ and following elements up one, and set @a!i = e@
     insertAt :: (Indexable a i e) => a -> (i,e) -> a
     insertAt a (i,e) = insertIndex a i e
-    -- | set a!i = e
+    -- | @a ``replaceAt`` (i,e)@ -- set @a!i = e@
     replaceAt :: (Indexable a i e) => a -> (i,e) -> a
     replaceAt a (i,e) = replaceIndex a i e
     deleteIndex :: a -> i -> a

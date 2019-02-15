@@ -17,6 +17,7 @@ import System.ProgressBar
 import Text.CSV.Lazy.ByteString
 import Util
 
+-- | read CSV file into a matrix
 readRealMatrix :: FilePath -> Interval Integer -> Interval Integer -> IO ConstVal
 readRealMatrix fname (rlo,rhi) (clo,chi) = do
   table <- fromCSVTable . csvTable . parseCSV <$> LC.readFile fname

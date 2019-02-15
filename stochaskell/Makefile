@@ -27,4 +27,5 @@ env: edward/env pymc3/env
 	$@/bin/pip install -Ur $<
 
 doc: build
-	standalone-haddock -o docs --package-db=$(shell stack path --snapshot-pkg-db) --package-db=$(shell stack path --local-pkg-db) .
+	stack haddock
+	standalone-haddock -o docs --package-db=$(shell stack path --snapshot-pkg-db) --package-db=$(shell stack path --local-pkg-db) . || true

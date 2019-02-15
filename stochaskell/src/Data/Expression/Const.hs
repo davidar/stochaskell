@@ -183,6 +183,7 @@ constBinOp' f a b = case broadcast (a,b) of
   (Approx a, Approx b) -> Approx (zipWithA f a b)
   (Exact  a, Exact  b) -> Approx (zipWithA f (amap fromIntegral a) (amap fromIntegral b))
 
+-- | map boolean function over elements of array
 binarize :: (forall a. (Num a, EqB a, OrdB a) => a -> BooleanOf a) -> ConstVal -> ConstVal
 binarize f (Exact  a) = Exact $ amap (\x -> if f x then 1 else 0) a
 binarize f (Approx a) = Exact $ amap (\x -> if f x then 1 else 0) a
@@ -292,6 +293,9 @@ elems' :: ConstVal -> [ConstVal]
 elems' (Exact  a) = map fromIntegral (elems a)
 elems' (Approx a) = map fromDouble   (elems a)
 
+-- | extract the given indices from an array, eg.
+--
+-- > diagonal = table `slice` [[i,i] | i <- 1...n]
 slice :: ConstVal -> AbstractArray Integer [Integer] -> ConstVal
 slice (Exact  a) i = Exact  $ ixmap (bounds i) (i!) a
 slice (Approx a) i = Approx $ ixmap (bounds i) (i!) a

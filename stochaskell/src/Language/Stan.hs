@@ -1,4 +1,11 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
+{-|
+Description : Stan integration
+Copyright   : (c) David A Roberts, 2015-2019
+License     : GPL-3
+Maintainer  : d@vidr.cc
+Stability   : experimental
+-}
 module Language.Stan
   ( StanMethod(..), StanHMCMetric(..), StanHMCEngine(..)
   , defaultStanMethod
@@ -390,6 +397,8 @@ instance Show StanHMCMetric where
   show StanDiagEMetric  = "metric=diag_e"
   show StanDenseEMetric = "metric=dense_e"
 
+-- | default Stan configuration, see
+-- https://github.com/stan-dev/cmdstan/releases/download/v2.18.0/cmdstan-guide.pdf
 defaultStanMethod :: StanMethod
 defaultStanMethod = StanSample
   { numSamples = 1000
@@ -404,7 +413,8 @@ defaultStanMethod = StanSample
   , hmcStepSizeJitter = 0.0
   }
 
-runStan :: (ExprTuple t) => StanMethod -> Prog t -> Maybe t -> IO [t]
+-- | perform inference via the Stan code generation backend
+runStan :: (ExprTuple t) => StanMethod -> P t -> Maybe t -> IO [t]
 runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/stan"
     pwd <- getCurrentDirectory
@@ -444,11 +454,15 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
           isolateNodeRefPBlock isBlockArray $ runProgExprs "stan" prog
         noComment row = not (LC.null row) && LC.head row /= '#'
 
--- TODO: deprecate these
+-- | perform Hamiltonian Monte Carlo inference on the given posterior program,
+-- via the Stan code generation backend, returning the given number of samples
+--
+-- see 'Language.Stan.runStan' for a more advanced interface
 hmcStan :: (ExprTuple t) => Int -> P t -> IO [t]
 hmcStan n prog = runStan method prog Nothing
   where method = defaultStanMethod { numSamples = n, numWarmup = n }
 
+-- | like 'hmcStan' but specifying the initial MC state
 hmcStanInit :: (ExprTuple t) => Int -> P t -> t -> IO [t]
 hmcStanInit n prog t = runStan method prog (Just t)
   where method = defaultStanMethod { numSamples = n, numWarmup = n }

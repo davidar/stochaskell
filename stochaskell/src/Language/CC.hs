@@ -450,11 +450,13 @@ readCC (UnionT tss) (x:s) = (Tagged c cs, s')
         ts = tss !! c
         (cs,s') = readChain (map readCC ts) s
 
+-- | sample probabilistic program via 'compileCC'
 runCC :: forall s t. (ExprTuple s, ExprTuple t) => (s -> P t) -> s -> IO t
 runCC prog x = do
   p <- compileCC prog
   p x
 
+-- | compile probabilistic program to native machine code, via the C++ backend
 compileCC :: forall s t. (ExprTuple s, ExprTuple t)
           => (s -> P t) -> IO (s -> IO t)
 compileCC prog = do

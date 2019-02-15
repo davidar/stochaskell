@@ -1,3 +1,10 @@
+{-|
+Description : Church integration
+Copyright   : (c) David A Roberts, 2015-2019
+License     : GPL-3
+Maintainer  : d@vidr.cc
+Stability   : experimental
+-}
 module Language.Church
   ( mhChurch
   , simChurchVec
@@ -121,7 +128,8 @@ churchProgram prog
                   | otherwise = "(model)"
         printedConds = [churchConstraint k v | (k,(v,t)) <- Map.toList given]
 
-simChurchVec :: (Read t, ExprType t) => Prog (Expr [t]) -> IO [t]
+-- | sample a random vector via Church
+simChurchVec :: (Read t, ExprType t) => P (Expression [t]) -> IO [t]
 simChurchVec prog = withSystemTempDirectory "church" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   let fname = tmpDir ++"/program.church"
@@ -130,7 +138,8 @@ simChurchVec prog = withSystemTempDirectory "church" $ \tmpDir -> do
   let samples = words $ drop 1 $ take (length out - 2) out
   return $ map read samples
 
-mhChurch :: (ExprTuple t, Read t) => Prog t -> IO [t]
+-- | Metropolis-Hastings inference via the Church code generation backend
+mhChurch :: (ExprTuple t, Read t) => P t -> IO [t]
 mhChurch prog = withSystemTempDirectory "church" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   let fname = tmpDir ++"/program.church"

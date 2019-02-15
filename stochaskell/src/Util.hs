@@ -41,6 +41,7 @@ compose :: [a -> a] -> a -> a
 compose [] x = x
 compose (f:fs) x = compose fs $ f x
 
+-- | extract elements of first list where second list contains 'True'
 selectItems :: [a] -> [Bool] -> [a]
 selectItems xs ps = map fst . filter snd $ zip xs ps
 
@@ -73,9 +74,11 @@ system_ cmd = do
 putStrLn' :: String -> IO ()
 putStrLn' = hPutStrLn stdout --stderr
 
+-- | calculate the mean of a set
 mean :: (Foldable t, Fractional a) => t a -> a
 mean xs = sum xs / fromIntegral (length xs)
 
+-- | convenience function for squaring a value
 square :: (Num a) => a -> a
 square x = x*x
 
@@ -101,6 +104,8 @@ traceShow' s x = trace ("["++ s ++"] "++ show x) x
 liftMaybe :: MonadPlus m => Maybe a -> m a
 liftMaybe = maybe mzero return
 
+-- | extract result from an 'Either' value when possible, throw an exception
+-- with the error string otherwise
 fromRight' :: Either String b -> b
 fromRight' (Left e) = error $ "fromRight: "++ e
 fromRight' (Right x) = x
@@ -115,6 +120,7 @@ unsafeCatch' f x = System.IO.Unsafe.unsafePerformIO $
   where handler :: Control.Exception.ErrorCall -> IO (Either String a)
         handler = return . Left . show
 
+-- | piecewise linear interpolation
 interpolate :: (Ord a, Fractional a) => [(a,a)] -> a -> a
 interpolate ((x0,y0):(x1,y1):xys) x
   | x < x0 = y0

@@ -59,6 +59,8 @@ module Language.Stochaskell (
   , LKJ
   , corrLKJ
   -- ** Logarithmic probability density functions
+  , lpdf, lpdfAux
+  -- *** Primitives
   , lpdfGamma, lpdfNegBinomial, lpdfNormal, lpdfPoisson
   , lpdfUniform, lpdfDiscreteUniform
   -- ** Transformers
@@ -74,12 +76,12 @@ module Language.Stochaskell (
   , hmcStan, hmcStanInit, mh, mh', mhRatio, rjmc, rjmcC
 
   -- ** Miscellaneous
+  , module Control.Monad.Guard
   , binarize
   , chain
   , chainRange
   , debug
   , fromRight'
-  , guard
   , interpolate
   , loop
   , mean

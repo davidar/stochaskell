@@ -37,6 +37,7 @@ type Pointer = Int
 type Level = Int
 type NS = String
 
+-- | variable identifier
 data Id = Dummy    { idLevel' :: Level, idPointer :: Pointer }
         | Volatile { idNS :: NS, idLevel' :: Level, idPointer :: Pointer }
         | Internal { idLevel' :: Level, idPointer :: Pointer }
@@ -61,6 +62,7 @@ instance Show Id where
   show (Internal l p)    = "v_"++ show l ++"_"++ show p
   show (Symbol s known)  = (if known then toUpper else toLower) <$> s
 
+-- | reference to a node in the computation graph
 data NodeRef = Var Id Type
              | Const ConstVal Type
              | Data Tag [NodeRef] Type
@@ -1604,6 +1606,7 @@ instance AA.SquareMatrix (Expression [[e]]) (Expression e) where
     det    = Expression . AA.det    . erase
     logDet = Expression . AA.logDet . erase
 
+-- | \(\mathrm{qfDiag}\ A\ x = x^\top A x\)
 qfDiag :: RMat -> RVec -> RMat
 qfDiag m v = expr $ do
   i <- fromExpr m

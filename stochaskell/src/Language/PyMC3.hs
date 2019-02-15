@@ -1,10 +1,16 @@
 {-# LANGUAGE RecordWildCards #-}
-
+{-|
+Description : PyMC3 integration
+Copyright   : (c) David A Roberts, 2015-2019
+License     : GPL-3
+Maintainer  : d@vidr.cc
+Stability   : experimental
+-}
 module Language.PyMC3
   ( PyMC3Inference(..), PyMC3Step(..)
   , defaultPyMC3Inference
-  , pmProgram
   , runPyMC3
+  , pmProgram
   ) where
 
 import Control.Monad
@@ -164,7 +170,8 @@ pmDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = pmId $ Internal (dagLevel dag) i
   in pmNode r name n
 
-pmProgram :: (ExprTuple t) => Prog t -> String
+-- | generate PyMC3 code, as used by 'runPyMC3'
+pmProgram :: (ExprTuple t) => P t -> String
 pmProgram prog =
   pmPrelude ++"\n"++
   --"@profile(stream=sys.stderr)\n"++
@@ -216,6 +223,7 @@ instance Show PyMC3Step where
                                          ++",step_scale="++ show stepScale
                                          ++")"
 
+-- | default PyMC3 configuration, see https://docs.pymc.io/api/inference.html
 defaultPyMC3Inference :: PyMC3Inference
 defaultPyMC3Inference = PyMC3Sample
   { pmDraws = 500
@@ -225,7 +233,8 @@ defaultPyMC3Inference = PyMC3Sample
   , pmTune = 500
   }
 
-runPyMC3 :: (ExprTuple t, Read t) => PyMC3Inference -> Prog t -> Maybe t -> IO [t]
+-- | perform inference via the PyMC3 code generation backend
+runPyMC3 :: (ExprTuple t, Read t) => PyMC3Inference -> P t -> Maybe t -> IO [t]
 runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   setCurrentDirectory tmpDir
