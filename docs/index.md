@@ -295,10 +295,10 @@ $$p_Z(z)=\frac{p_X(h^{-1}(z))}{|J_h(h^{-1}(z))|}$$
 
 where the denominator is the absolute value of the determinant of the Jacobian matrix of the transformation $h$ [@kroese11, sec. A.6].
 The Jacobian matrix is computed using automatic differentiation, and the inverse transform $h^{-1}(z)$ is calculated by the following procedure.
-Given an expression graph representing $h(X)$,
+Given an expression graph representing $h(x)$,
 we associate the root node with the value of $z$,
 then walk the graph associating values with nodes whenever they can be fully determined by the values of neighbouring nodes.
-When this process succeeds, the nodes representing $X$ will be associated with the value of $h^{-1}(z)$.
+When this process succeeds, the nodes representing $x$ will be associated with the value of $h^{-1}(z)$.
 
 This density computation library allows us to provide a simple implementation of the Metropolis--Hastings (M--H) inference algorithm,
 with support for *user-defined* proposal distributions:[^density]
