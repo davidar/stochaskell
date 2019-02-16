@@ -90,6 +90,7 @@ module Language.Stochaskell (
   , selectItems
   , slice
   , square
+  , stochaskell
   ) where
 
 import Prelude hiding (
@@ -106,7 +107,27 @@ import Data.Monoid
 import Data.Number.Transfinite hiding (log,isNaN,isInfinite)
 import Data.Program
 import Data.Random.Distribution.Abstract
+import Data.Version
 import GHC.Exts (IsList(..))
 import Language.CC
 import Language.Stan
+import Paths_stochaskell (version)
+import System.Directory
+import System.Environment
 import Util
+
+-- | perform initialisation for interactive use
+stochaskell :: IO ()
+stochaskell = do
+  putStr $ unlines
+    [ "Stochaskell, version "++ showVersion version
+    , "Copyright (C) 2015-2019 David A Roberts"
+    , "This program comes with ABSOLUTELY NO WARRANTY."
+    , "This is free software, and you are welcome to redistribute it"
+    , "under certain conditions; see the LICENSE for details."
+    , ""
+    , "Using installation directory at "
+    ]
+  pwd <- getEnv "STOCHASKELL_DIRECTORY"
+  putStrLn $ "  "++ pwd
+  setCurrentDirectory pwd

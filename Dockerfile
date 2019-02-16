@@ -24,8 +24,9 @@ RUN stack setup && stack build --only-snapshot
 COPY --chown=1000 stochaskell stochaskell
 RUN stack build && stack install
 
-COPY --chown=1000 *.ipynb ./
+COPY --chown=1000 *.ipynb LICENSE ./
 
 ENV PATH $(stack path --local-install-root)/bin:$(stack path --snapshot-install-root)/bin:$(stack path --compiler-bin):${HOME}/.local/bin:${PATH}
 RUN ihaskell install --stack
+ENV STOCHASKELL_DIRECTORY ${HOME}/stochaskell
 CMD ["jupyter", "notebook", "--ip", "0.0.0.0"]

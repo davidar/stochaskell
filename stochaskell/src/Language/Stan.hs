@@ -419,7 +419,9 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
     let basename = tmpDir ++"/stan"
     pwd <- getCurrentDirectory
     let hash = toHex . SHA1.hash . C.pack $ stanProgram p
-        exename = pwd ++"/cache/stan/model_"++ hash
+        cacheDir = pwd ++"/cache/stan"
+        exename = cacheDir ++"/model_"++ hash
+    createDirectoryIfMissing True cacheDir
     exeExists <- doesFileExist exename
 
     unless exeExists $ do
