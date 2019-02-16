@@ -7,4 +7,5 @@
 *.tix
 /stochaskell/.stack-work/
 /stochaskell/docs/
+/stochaskell/stochaskell.cabal
 /_scrap/

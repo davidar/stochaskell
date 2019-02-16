@@ -18,7 +18,7 @@ COPY --chown=1000 docker-stack.yaml stack.yaml
 COPY --chown=1000 ihaskell ihaskell
 
 RUN mkdir stochaskell
-COPY --chown=1000 stochaskell/stochaskell.cabal stochaskell/stochaskell.cabal
+COPY --chown=1000 stochaskell/package.yaml stochaskell/package.yaml
 RUN stack setup && stack build --only-snapshot
 
 COPY --chown=1000 stochaskell stochaskell

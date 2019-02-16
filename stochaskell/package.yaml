@@ -1,0 +1,87 @@
+name: stochaskell
+version: '0.1.0'
+synopsis: A probabilistic programming language
+description: An embedded domain-specific language for specifying probabilistic
+  programs that can be compiled to multiple existing probabilistic programming
+  languages.
+category: Language
+author: David A Roberts
+maintainer: d@vidr.cc
+copyright: 2015-2019 David A Roberts
+license: GPL-3
+github: davidar/stochaskell
+homepage: https://davidar.github.io/stochaskell
+dependencies:
+- array
+- base >=4.10 && <4.11
+- bimap
+- binary
+- Boolean
+- bytestring
+- Chart
+- Chart-cairo
+- containers
+- cryptohash
+- data-binary-ieee754
+- deepseq
+- directory
+- extra
+- hmatrix
+- lazy-csv
+- logfloat
+- math-functions
+- MissingH
+- mtl
+- process
+- random
+- random-fu
+- split
+- temporary
+- terminal-progress-bar
+- time
+- utility-ht
+library:
+  source-dirs: src
+  exposed-modules:
+  - Language.Stochaskell
+  - Language.Stochaskell.Expression
+  - Language.Church
+  - Language.Edward
+  - Language.PyMC3
+  - Language.Stan
+executables:
+  benchmark-exe:
+    main: Main.hs
+    source-dirs: app/benchmark
+    dependencies:
+    - stochaskell
+  cp-exe:
+    main: Main.hs
+    source-dirs: app/cp
+    dependencies:
+    - stochaskell
+  dp-exe:
+    main: Main.hs
+    source-dirs: app/dp
+    dependencies:
+    - stochaskell
+  poly-exe:
+    main: Main.hs
+    source-dirs: app/poly
+    dependencies:
+    - stochaskell
+  rj-exe:
+    main: Main.hs
+    source-dirs: app/rj
+    dependencies:
+    - stochaskell
+  sgcp-exe:
+    main: Main.hs
+    source-dirs: app/sgcp
+    dependencies:
+    - stochaskell
+  ssgcp-exe:
+    main: Main.hs
+    source-dirs: app/ssgcp
+    dependencies:
+    - stochaskell

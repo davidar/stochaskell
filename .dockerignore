@@ -9,4 +9,5 @@
 stochaskell/.stack-work/
 stochaskell/cache/
 stochaskell/docs/
+stochaskell/stochaskell.cabal
 _scrap/
