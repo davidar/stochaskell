@@ -134,6 +134,8 @@ runChurch :: (ExprTuple t) => P t -> IO [String]
 runChurch prog = withSystemTempDirectory "church" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   let fname = tmpDir ++"/program.church"
+  putStrLn' "--- Generating Church code ---"
+  putStrLn' $ churchProgram prog
   fname `writeFile` churchProgram prog
   out <- readProcess (pwd ++"/church.sh") [fname] ""
   let samples = words $ drop 1 $ take (length out - 2) out
