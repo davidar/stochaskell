@@ -59,6 +59,7 @@ churchPrelude = unlines
   ]
 
 churchNode :: Label -> Node -> String
+churchNode _ (Apply "getExternal" _ _) = ""
 churchNode _ (Apply f js _) =
   "("++ fromMaybe f (lookup f churchBuiltinFunctions) ++" "++
     churchNodeRef `spaced` js ++")"
@@ -90,7 +91,8 @@ churchPNode (Loop _ (Lambda dag body) _) =
 churchDAG :: DAG -> String
 churchDAG dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   let name = churchId $ Internal (dagLevel dag) i
-  in "("++ name ++" "++ churchNode name n ++")"
+      val = churchNode name n
+  in if null val then "" else "("++ name ++" "++ val ++")"
 
 churchConstraint :: LVal -> ConstVal -> String
 churchConstraint (LVar k) v | dimension v == 1 =
@@ -128,22 +130,19 @@ churchProgram prog
                   | otherwise = "(model)"
         printedConds = [churchConstraint k v | (k,(v,t)) <- Map.toList given]
 
--- | sample a random vector via Church
-simChurchVec :: (Read t, ExprType t) => P (Expression [t]) -> IO [t]
-simChurchVec prog = withSystemTempDirectory "church" $ \tmpDir -> do
+runChurch :: (ExprTuple t) => P t -> IO [String]
+runChurch prog = withSystemTempDirectory "church" $ \tmpDir -> do
   pwd <- getCurrentDirectory
   let fname = tmpDir ++"/program.church"
   fname `writeFile` churchProgram prog
-  out <- readProcess (pwd ++"/webchurch/church") [fname] ""
+  out <- readProcess (pwd ++"/church.sh") [fname] ""
   let samples = words $ drop 1 $ take (length out - 2) out
-  return $ map read samples
+  return samples
+
+-- | sample a random vector via Church
+simChurchVec :: (Read t, ExprType t) => P (Expression [t]) -> IO [t]
+simChurchVec prog = map read <$> runChurch prog
 
 -- | Metropolis-Hastings inference via the Church code generation backend
 mhChurch :: (ExprTuple t, Read t) => P t -> IO [t]
-mhChurch prog = withSystemTempDirectory "church" $ \tmpDir -> do
-  pwd <- getCurrentDirectory
-  let fname = tmpDir ++"/program.church"
-  fname `writeFile` churchProgram prog
-  out <- readProcess (pwd ++"/webchurch/church") [fname] ""
-  let samples = words $ drop 1 $ take (length out - 2) out
-  return $ map read samples
+mhChurch prog = map read <$> runChurch prog

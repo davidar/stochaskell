@@ -9,5 +9,8 @@
 stochaskell/.stack-work/
 stochaskell/cache/
 stochaskell/docs/
+stochaskell/edward/env/
+stochaskell/pymc3/env/
+stochaskell/webchurch/node_modules/
 stochaskell/stochaskell.cabal
 _scrap/
