@@ -132,6 +132,7 @@ kernelSE lsv lls2 a b =
 to ensure the definition is sufficiently polymorphic.
 
 Although it is possible to use the provided `normal` primitive to sample from a multivariate Gaussian distribution,
+[^fig-gp]
 it is also possible to do so more explicitly by transforming a vector of (univariate) standard normal samples,
 which can be useful for fine-tuning inference efficiency.
 The following program defines such a transformation with the aid of a Cholesky decomposition [@kroese11, sec. 4.3]:
@@ -162,6 +163,10 @@ gpClassifier kernel n x = do
 In this example, `gpChol` is itself a probabilistic program,
 defined much like the `gp` program earlier, but utilising the `normalChol` program instead of the `normal` primitive.
 This demonstrates how sub-programs can be easily composed in Stochaskell, another benefit we obtain for free from embedding.
+
+[^fig-gp]: {-}
+![](gp.svg)
+Plot of five independent simulations of `gp kernelSE1`.
 
 Now for a somewhat different example,
 this program implements the stick-breaking process of @sethuraman94 with concentration parameter $\alpha>0$:
@@ -245,6 +250,7 @@ compiling the resulting code with [CmdStan](https://mc-stan.org/users/interfaces
 then executing the compiled model and parsing the results so that they can be further processed within Haskell.
 This allows the user to offload inference to Stan with a single line of code,
 receiving a list of posterior samples in return:
+[^fig-stan]
 
 ```hs
 samples <- hmcStan posterior
@@ -260,13 +266,19 @@ then iteratively updates it by looping over the elements of the vector.
 
 Similar backends are also provided for integration with [PyMC3](https://docs.pymc.io/) and [Edward](http://edwardlib.org/).
 
+[^fig-stan]: {-}
+![](gp-stan.svg)
+Plot of posterior samples from the Gaussian process classification model program
+from [the previous section](#probabilistic-modelling),
+sampled via the Stan backend.
+
 ### Church Integration
 
 To demonstrate the portability of Stochaskell across a variety of probabilistic programming paradigms,
 we also provide integration with Church.
 The implementation and usage of this is quite similar to the Stan backend,
 allowing inference to be easily offloaded:
-[^fig-imm]
+[^fig-dp]
 
 ```hs
 samples <- mhChurch posterior
@@ -277,9 +289,10 @@ In particular, random arrays --- constructed with the `joint` keyword in Stochas
 
 The figure on the right illustrates a simulation of the DP mixture model program presented in [the previous section](#probabilistic-modelling), sampled via the Church backend.
 
-[^fig-imm]: {-}
-![](imm.svg)
-Histogram of $n=10^4$ samples from the Dirichlet process mixture model program from [the previous section](#probabilistic-modelling),
+[^fig-dp]: {-}
+![](dpmm.svg)
+Histogram of $n=10^4$ samples from the Dirichlet process mixture model program
+from [the previous section](#probabilistic-modelling),
 via the [WebChurch](https://github.com/probmods/webchurch) implementation of Church.
 
 ### Metropolis--Hastings
