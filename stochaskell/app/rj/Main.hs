@@ -4,8 +4,6 @@ module Main where
 import Language.Stochaskell
 import Language.Stochaskell.Expression
 
-import Control.Monad hiding (guard)
-import Control.Monad.HT (iterateLimit)
 import System.IO
 
 -- https://cran.r-project.org/web/packages/engsoccerdata/README.html

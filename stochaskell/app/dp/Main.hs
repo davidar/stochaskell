@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleContexts, MonadComprehensions, NoMonomorphismRestriction, RebindableSyntax #-}
 
 module Main where
-
 import Language.Stochaskell
 import Language.Church
 

@@ -8,7 +8,12 @@ Stability   : experimental
 module Language.Stochaskell (
   -- * Re-exported modules
     module Prelude
+  , module Control.Monad
   , module Data.Boolean.Overload
+  , module Data.Either.Utils
+  , module Data.List
+  , module Data.List.Utils
+  , module Data.Maybe
   , module Data.Monoid
   , module Data.Number.Transfinite
   , module GHC.Exts
@@ -83,6 +88,7 @@ module Language.Stochaskell (
   , debug
   , fromRight'
   , interpolate
+  , iterateLimit
   , loop
   , mean
   , qfDiag
@@ -96,13 +102,19 @@ module Language.Stochaskell (
 import Prelude hiding (
   (==),(/=),(<),(>),(<=),(>=),(<*),(*>),(&&),(||),
   max,min,not,foldl,foldr,scanl,scanr)
+import Control.Monad hiding (guard)
 import Control.Monad.Guard
+import Control.Monad.HT (iterateLimit)
 import Data.Array.Abstract
 import Data.Boolean.Overload hiding (boolean) -- TODO: no infix declaration
+import Data.Either.Utils
 import Data.Expression hiding (apply,const)
 import Data.Expression.Case
 import Data.Expression.Const hiding (isScalar)
 import Data.Expression.Const.IO
+import Data.List hiding (foldl,foldr,scanl,scanr)
+import Data.List.Utils hiding (join)
+import Data.Maybe
 import Data.Monoid
 import Data.Number.Transfinite hiding (log,isNaN,isInfinite)
 import Data.Program

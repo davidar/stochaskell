@@ -1,12 +1,11 @@
 {-# LANGUAGE RebindableSyntax, MonadComprehensions,
              NoMonomorphismRestriction, FlexibleContexts, TypeFamilies #-}
 module Main where
+import Language.Stochaskell
 
-import Data.List (sort)
 import Graphics.Rendering.Chart.Easy
     ( plot, line, points, def, setColors, black, withOpacity )
 import Graphics.Rendering.Chart.Backend.Cairo ( toFile )
-import Language.Stochaskell
 
 xyData :: [(Double,Double)]
 xyData = [

@@ -8,9 +8,6 @@ import Language.Edward
 import Language.PyMC3
 import Language.Stan
 
-import Data.Either.Utils
-import Data.List (transpose)
-import Data.Maybe
 import Data.Time.Clock.POSIX
 
 logreg :: Z -> Z -> P (RMat,RVec,R,BVec)

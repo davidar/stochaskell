@@ -1,12 +1,10 @@
 {-# LANGUAGE FlexibleContexts, MonadComprehensions, NoMonomorphismRestriction, RebindableSyntax #-}
 
 module Main where
+import Language.Stochaskell
 
-import Control.Monad hiding (guard)
-import Data.List (sort)
 import Graphics.Rendering.Chart.Easy (plot,line,points,def)
 import Graphics.Rendering.Chart.Backend.Cairo (toFile)
-import Language.Stochaskell
 import System.Random
 
 noise = 1e-3
