@@ -45,6 +45,9 @@ jobs:
       - restore_cache:
           key: dependency-cache-repo2docker
       - checkout
+      - run:
+          name: Git submodules
+          command: git submodule update --init --recursive
       - setup_remote_docker
       - run:
           name: Load Docker image layer cache
