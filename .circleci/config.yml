@@ -113,7 +113,7 @@ jobs:
             fi
             echo "Saving ${CONTAINER_NAME}:${DOCKER_TAG} to container.tar.gz"
             mkdir -p /tmp/cache
-            docker save ${CONTAINER_NAME}:${DOCKER_TAG} \
+            docker save $(docker history -q ${CONTAINER_NAME}:${DOCKER_TAG} | tr -d '<missing>') \
               | pigz -2 -p 3 > /tmp/cache/container.tar.gz
       - persist_to_workspace:
           root: /tmp
