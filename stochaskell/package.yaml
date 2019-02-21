@@ -65,6 +65,11 @@ executables:
     source-dirs: app/dp
     dependencies:
     - stochaskell
+  mgp-exe:
+    main: Main.hs
+    source-dirs: app/mgp
+    dependencies:
+    - stochaskell
   poly-exe:
     main: Main.hs
     source-dirs: app/poly
