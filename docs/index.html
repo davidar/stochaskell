@@ -142,7 +142,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <a class="sourceLine" id="cb4-3" title="3">kernelSE lsv lls2 a b <span class="fu">=</span></a>
 <a class="sourceLine" id="cb4-4" title="4">  <span class="fu">exp</span> (lsv <span class="fu">-</span> (a <span class="fu">-</span> b)<span class="fu">^</span><span class="dv">2</span> <span class="fu">/</span> (<span class="dv">2</span> <span class="fu">*</span> <span class="fu">exp</span> lls2))</a>
 <a class="sourceLine" id="cb4-5" title="5">  <span class="fu">+</span> <span class="kw">if</span> a <span class="fu">==</span> b <span class="kw">then</span> <span class="fl">1e-6</span> <span class="kw">else</span> <span class="dv">0</span></a></code></pre></div>
-<p>Although it is possible to use the provided <code>normal</code> primitive to sample from a multivariate Gaussian distribution,<span><label for="sn-8" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-8" class="margin-toggle"/><span class="marginnote"> <img src="gp.svg" /> Plot of five independent simulations of <code>gp kernelSE1</code>.<br />
+<p>Although it is possible to use the provided <code>normal</code> primitive to sample from a multivariate Gaussian distribution,<span><label for="sn-8" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-8" class="margin-toggle"/><span class="marginnote"> <img src="gp.svg" /> Plot of five independent simulations of <code>gp kernelSE1</code>. <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=gp.ipynb"><img src="https://mybinder.org/badge_logo.svg" alt="Binder" /></a><br />
 <br />
 </span></span> it is also possible to do so more explicitly by transforming a vector of (univariate) standard normal samples, which can be useful for fine-tuning inference efficiency. The following program defines such a transformation with the aid of a Cholesky decomposition <span class="citation" data-cites="kroese11">(Kroese, Taimre, and Botev <a href="#ref-kroese11">2011</a>, sec. 4.3)</span>:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode hs"><code class="sourceCode haskell"><a class="sourceLine" id="cb5-1" title="1"><span class="ot">normalChol ::</span> <span class="dt">Z</span> <span class="ot">-&gt;</span> <span class="dt">RVec</span> <span class="ot">-&gt;</span> <span class="dt">RMat</span> <span class="ot">-&gt;</span> <span class="dt">P</span> <span class="dt">RVec</span></a>
@@ -196,7 +196,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <p>Stochaskell supports programmable inference, as introduced by <span class="citation" data-cites="mansinghka14">Mansinghka, Selsam, and Perov (<a href="#ref-mansinghka14">2014</a>)</span>, with inference strategies expressed in the same language as the model, i.e. Haskell. This allows us to seamlessly combine different inference methods, be they provided by native Haskell code or external probabilistic programming systems. In the latter case, runtime code generation allows us to offload inference of different parts of a model without any manual code duplication.</p>
 <section id="stan-integration" class="level3">
 <h3>Stan Integration</h3>
-<p>Stochaskell integrates with Stan, to provide high-performance inference for (conditionally) fixed-dimensional, continuous model parameters. This is achieved by automatically translating Stochaskell programs into Stan code, compiling the resulting code with <a href="https://mc-stan.org/users/interfaces/cmdstan">CmdStan</a>, then executing the compiled model and parsing the results so that they can be further processed within Haskell. This allows the user to offload inference to Stan with a single line of code, receiving a list of posterior samples in return:<span><label for="sn-10" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-10" class="margin-toggle"/><span class="marginnote"> <img src="gp-stan.svg" /> Plot of posterior samples from the Gaussian process classification model program from <a href="#probabilistic-modelling">the previous section</a>, sampled via the Stan backend.<br />
+<p>Stochaskell integrates with Stan, to provide high-performance inference for (conditionally) fixed-dimensional, continuous model parameters. This is achieved by automatically translating Stochaskell programs into Stan code, compiling the resulting code with <a href="https://mc-stan.org/users/interfaces/cmdstan">CmdStan</a>, then executing the compiled model and parsing the results so that they can be further processed within Haskell. This allows the user to offload inference to Stan with a single line of code, receiving a list of posterior samples in return:<span><label for="sn-10" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-10" class="margin-toggle"/><span class="marginnote"> <img src="gp-stan.svg" /> Plot of posterior samples from the Gaussian process classification model program from <a href="#probabilistic-modelling">the previous section</a>, sampled via the Stan backend. <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=gp.ipynb"><img src="https://mybinder.org/badge_logo.svg" alt="Binder" /></a><br />
 <br />
 </span></span></p>
 <div class="sourceCode" id="cb11"><pre class="sourceCode hs"><code class="sourceCode haskell"><a class="sourceLine" id="cb11-1" title="1">samples <span class="ot">&lt;-</span> hmcStan posterior</a></code></pre></div>
@@ -205,7 +205,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 </section>
 <section id="church-integration" class="level3">
 <h3>Church Integration</h3>
-<p>To demonstrate the portability of Stochaskell across a variety of probabilistic programming paradigms, we also provide integration with Church. The implementation and usage of this is quite similar to the Stan backend, allowing inference to be easily offloaded:<span><label for="sn-11" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-11" class="margin-toggle"/><span class="marginnote"> <img src="dpmm.svg" /> Histogram of <span class="math inline">n=10^4</span> samples from the Dirichlet process mixture model program from <a href="#probabilistic-modelling">the previous section</a>, via the <a href="https://github.com/probmods/webchurch">WebChurch</a> implementation of Church.<br />
+<p>To demonstrate the portability of Stochaskell across a variety of probabilistic programming paradigms, we also provide integration with Church. The implementation and usage of this is quite similar to the Stan backend, allowing inference to be easily offloaded:<span><label for="sn-11" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-11" class="margin-toggle"/><span class="marginnote"> <img src="dpmm.svg" /> Histogram of <span class="math inline">n=10^4</span> samples from the Dirichlet process mixture model program from <a href="#probabilistic-modelling">the previous section</a>, via the <a href="https://github.com/probmods/webchurch">WebChurch</a> implementation of Church. <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=dp.ipynb"><img src="https://mybinder.org/badge_logo.svg" alt="Binder" /></a><br />
 <br />
 </span></span></p>
 <div class="sourceCode" id="cb12"><pre class="sourceCode hs"><code class="sourceCode haskell"><a class="sourceLine" id="cb12-1" title="1">samples <span class="ot">&lt;-</span> mhChurch posterior</a></code></pre></div>
@@ -242,17 +242,19 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <section id="reversible-jump-markov-chain-monte-carlo" class="level3">
 <h3>Reversible Jump Markov Chain Monte Carlo</h3>
 <p>See <span class="citation" data-cites="roberts19">Roberts, Gallagher, and Taimre (<a href="#ref-roberts19">2019</a>)</span>.</p>
-<!--
-## Usage
-
-### Docker
-
-```sh
-docker build -t stochaskell:latest .
-docker run -it -p8888:8888 stochaskell:latest
-```
--->
 </section>
+</section>
+<section id="usage" class="level2">
+<h2>Usage</h2>
+<p>To quickly get started using Stochaskell, it can be <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master">launched via Binder</a>. It can also be launched on a local machine by <a href="https://docs.docker.com/install/">installing Docker</a> and running the following commands:</p>
+<pre><code>docker pull <a href="https://hub.docker.com/r/davidar/stochaskell">davidar/stochaskell</a>
+docker run -it -p8888:8888 davidar/stochaskell
+</code></pre>
+<p>To build from source, rather than using a pre-built image, run the following commands:</p>
+<pre><code>git clone --recursive <a href="https://github.com/davidar/stochaskell.git">https://github.com/davidar/stochaskell.git</a>
+docker build -t stochaskell:latest stochaskell/
+docker run -it -p8888:8888 stochaskell:latest
+</code></pre>
 </section>
 <section id="references" class="level2 unnumbered">
 <h2>References</h2>

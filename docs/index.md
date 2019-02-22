@@ -167,6 +167,7 @@ This demonstrates how sub-programs can be easily composed in Stochaskell, anothe
 [^fig-gp]: {-}
 ![](gp.svg)
 Plot of five independent simulations of `gp kernelSE1`.
+[![Binder]](https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=gp.ipynb)
 
 Now for a somewhat different example,
 this program implements the stick-breaking process of @sethuraman94 with concentration parameter $\alpha>0$:
@@ -271,6 +272,7 @@ Similar backends are also provided for integration with [PyMC3](https://docs.pym
 Plot of posterior samples from the Gaussian process classification model program
 from [the previous section](#probabilistic-modelling),
 sampled via the Stan backend.
+[![Binder]](https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=gp.ipynb)
 
 ### Church Integration
 
@@ -294,6 +296,7 @@ The figure on the right illustrates a simulation of the DP mixture model program
 Histogram of $n=10^4$ samples from the Dirichlet process mixture model program
 from [the previous section](#probabilistic-modelling),
 via the [WebChurch](https://github.com/probmods/webchurch) implementation of Church.
+[![Binder]](https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=dp.ipynb)
 
 ### Metropolis--Hastings
 
@@ -355,17 +358,24 @@ where `n` is the number of iterations and `x0` is some initial state.
 
 See @roberts19.
 
-<!--
 ## Usage
 
-### Docker
+To quickly get started using Stochaskell, it can be [launched via Binder](https://mybinder.org/v2/gh/davidar/stochaskell/master).
+It can also be launched on a local machine by [installing Docker](https://docs.docker.com/install/) and running the following commands:
 
-```sh
-docker build -t stochaskell:latest .
+<pre><code>docker pull <a href="https://hub.docker.com/r/davidar/stochaskell">davidar/stochaskell</a>
+docker run -it -p8888:8888 davidar/stochaskell
+</code></pre>
+
+To build from source, rather than using a pre-built image, run the following commands:
+
+<pre><code>git clone --recursive <a href="https://github.com/davidar/stochaskell.git">https://github.com/davidar/stochaskell.git</a>
+docker build -t stochaskell:latest stochaskell/
 docker run -it -p8888:8888 stochaskell:latest
-```
--->
+</code></pre>
 
 ## References {-}
 
 <div id="refs" class="references fullwidth"></div>
+
+[Binder]: https://mybinder.org/badge_logo.svg
