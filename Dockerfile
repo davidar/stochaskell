@@ -54,5 +54,5 @@ RUN stack build && stack install
 RUN ihaskell install --stack
 ENV STOCHASKELL_DIRECTORY ${HOME}/stochaskell
 
-COPY --chown=1000 docs/*.ipynb LICENSE ./
+COPY --chown=1000 *.ipynb LICENSE ./
 CMD ["jupyter", "notebook", "--ip", "0.0.0.0"]
