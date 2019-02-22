@@ -39,7 +39,7 @@ jobs:
           command: apk add --no-cache pigz python3
       - restore_cache:
           keys:
-            - docker-v1-{{ .Branch }}
+            - docker-{{ .Environment.CACHE_VERSION }}-{{ .Branch }}
           paths:
             - /tmp/cache/container.tar.gz
       - restore_cache:
@@ -130,7 +130,7 @@ jobs:
       - attach_workspace:
           at: /tmp
       - save_cache:
-         key: docker-v1-{{ .Branch }}
+         key: docker-{{ .Environment.CACHE_VERSION }}-{{ .Branch }}
          paths:
             - /tmp/cache/container.tar.gz
 
