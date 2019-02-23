@@ -1,21 +1,11 @@
 FROM fpco/stack-build:lts-11.19
 
-RUN apt-get update && apt-get install -y \
-      gcc g++ \
-      libblas-dev \
-      libcairo2-dev \
-      libgmp-dev \
-      liblapack-dev \
-      libmagic-dev \
-      libpango1.0-dev \
-      libtinfo-dev \
-      libzmq3-dev \
-      python-dev \
-      python3-pip \
-      virtualenv \
-      && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python-dev=2.7.* \
+      virtualenv=15.0.* \
+ && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install -U jupyter
+RUN pip3 install --no-cache-dir notebook==5.*
 
 RUN adduser --disabled-password --gecos "Default user" --uid 1000 jovyan
 
@@ -26,6 +16,7 @@ WORKDIR ${HOME}
 
 RUN stack --resolver lts-11.19 setup && stack config set system-ghc --global true
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash
 ENV NVM_DIR ${HOME}/.nvm
 RUN . ${NVM_DIR}/nvm.sh && nvm install 0.10.26
@@ -33,7 +24,9 @@ RUN . ${NVM_DIR}/nvm.sh && nvm install 0.10.26
 RUN mkdir stochaskell
 
 COPY --chown=1000 stochaskell/webchurch stochaskell/webchurch
-RUN cd stochaskell/webchurch && ./compile.sh && cd
+WORKDIR ${HOME}/stochaskell/webchurch
+RUN ./compile.sh
+WORKDIR ${HOME}
 
 COPY --chown=1000 stochaskell/edward stochaskell/edward
 COPY --chown=1000 stochaskell/pymc3 stochaskell/pymc3
