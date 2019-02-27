@@ -2,9 +2,7 @@
 
 module Main where
 import Language.Stochaskell
-
-import Graphics.Rendering.Chart.Easy (plot,line,points,def)
-import Graphics.Rendering.Chart.Backend.Cairo (toFile)
+import Language.Stochaskell.Plot
 
 noise = 1e-6
 
@@ -33,21 +31,26 @@ covTree t n s lmax cs kappa etas eta0 = go lmax where
     where c' = 2^l - 1
           cs' = vector [cs!(i * 2^(lmax-l)) | i <- 1...integer c']
 
-mGP :: R -> Z -> Int -> RVec -> P (RVec,RVec)
-mGP t n lmax cs = do
+mGP :: R -> Z -> Int -> P (R,R,RVec,RVec,RVec,RVec)
+mGP t n lmax = do
   kappa <- gamma 1 1
   eta0 <- gamma 1 1
   etas <- joint vector [ gamma 1 1 | _ <- 1...integer lmax ]
+  let k = 2^lmax - 1
+  cs <- orderedSample (integer k) (uniform 0 t)
   s <- orderedSample n (uniform 0 t)
   let mu  = vector [ 0 | _ <- 1...n ]
       cov = covTree t n s lmax cs kappa etas eta0
             + matrix [ if i == j then noise else 0 | i <- 1...n, j <- 1...n ]
   g <- normal mu cov
-  return (s,g)
+  return (kappa,eta0,etas,cs,s,g)
 
 main = do
   let t = 10
       n = 100
-  (s,g) <- simulate $ mGP t n 2 (list [2.5,5,7.5])
-  toFile def "mgp_data.png" $ do
+      lmax = 2
+  (kappa,eta0,etas,cs,s,g) <- simulate $ mGP t n lmax
+  toPNG "mgp_data" . toRenderable $ do
     plot $ line "data" [sort $ zip (list s :: [Double]) (list g :: [Double])]
+  let cov = list $ covTree t n s lmax cs kappa etas eta0 :: [[Double]]
+  toPNG "mgp_cov.png" . renderAxis2 $ heatMap' cov

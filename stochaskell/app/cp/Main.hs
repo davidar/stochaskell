@@ -2,9 +2,7 @@
 
 module Main where
 import Language.Stochaskell
-
-import Graphics.Rendering.Chart.Easy (plot,line,points,def)
-import Graphics.Rendering.Chart.Backend.Cairo (toFile)
+import Language.Stochaskell.Plot
 
 noise = 1e-6
 
@@ -42,7 +40,7 @@ main = do
       t = 10
       n = 100
   (etas,ilss,cs,s,g) <- simulate (gpChangepoint k t n)
-  toFile def "cp_data.png" $ do
+  toPNG "cp_data" . toRenderable $ do
     plot $ line "data" [sort $ zip (list s :: [Double]) (list g :: [Double])]
   samples <- hmcStanInit 100 [cs' | (etas',ilss',cs',s',g') <- gpChangepoint k t n
                                   , s' == s, g' == g] $ fromList [3,7]

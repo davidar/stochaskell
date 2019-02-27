@@ -4,5 +4,8 @@ packages:
 - '.'
 system-ghc: false
 extra-deps:
+- Chart-1.9
+- Chart-cairo-1.9
 - lazy-csv-0.5.1
-resolver: lts-11.19
+- plots-0.1.0.2
+resolver: lts-12.26

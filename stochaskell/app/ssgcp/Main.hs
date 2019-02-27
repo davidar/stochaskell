@@ -2,9 +2,8 @@
 
 module Main where
 import Language.Stochaskell
+import Language.Stochaskell.Plot
 
-import Graphics.Rendering.Chart.Easy (plot,line,points,def)
-import Graphics.Rendering.Chart.Backend.Cairo (toFile)
 import System.Random
 
 noise = 1e-3
@@ -176,7 +175,7 @@ genData' t = do
   let f = [ 2 * exp (-x/15) + exp (-((x-25)/10)^2) | x <- s ]
   phi <- sequence [ bernoulli (y / cap) | y <- f ]
   let dat = s `selectItems` phi
-  toFile def "ssgcp_data.png" $ do
+  toPNG "ssgcp_data" . toRenderable $ do
     plot $ line "truth" [sort $ zip s f]
     plot . points "data" $ zip dat (repeat 1.9)
     plot . points "rejections" $ zip (s `selectItems` map not phi) (repeat 0.1)
@@ -223,7 +222,7 @@ main = do
     let f = (real cap *) . sigmoid . real . gpTrigPoly t m eta ils z a b . real
         fs = f <$> xs :: [Double]
 
-    toFile def ("ssgcp-figs/"++ show iter ++".png") $ do
+    toPNG ("ssgcp-figs/"++ show iter) . toRenderable $ do
       plot $ line "rate" [zip xs fs]
       plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 :: Double | y <- toList phi]
     return ((z,a,b,eta,ils,cap,n,s,phi), fs:accum)
@@ -231,7 +230,7 @@ main = do
   let fmean = mean accum
       fmean2 = mean (map (**2) <$> accum)
       fsd = sqrt <$> fmean2 - map (**2) fmean
-  toFile def "ssgcp_mean.png" $ do
+  toPNG "ssgcp_mean" . toRenderable $ do
     plot $ line "mean" [zip (xs :: [Double]) fmean]
     plot $ line "sd" [zip (xs :: [Double]) $ zipWith (+) fmean fsd
                      ,zip (xs :: [Double]) $ zipWith (-) fmean fsd]

@@ -191,6 +191,8 @@ stanNode name (Apply "id" [a] _) =
     name ++" = "++ stanNodeRef a ++";"
 stanNode name (Apply "&&s" js _) =
     name ++" = "++ intercalate " && " (stanNodeRef <$> js) ++";"
+stanNode name (Apply "+s" js _) =
+    name ++" = "++ intercalate " + " (stanNodeRef <$> js) ++";"
 stanNode name (Apply "ifThenElse" [a,b,c] _) =
     name ++" = "++ stanNodeRef a ++" ? "++ stanNodeRef b ++" : "++ stanNodeRef c ++";"
 stanNode name (Apply "tr'" [a] _) =
@@ -204,6 +206,8 @@ stanNode name (Apply "findSortedInsertIndex" [x,v] _) =
         name ++" = "++ i ++"; break; }")
     where ArrayT _ sh@[(Const 1 IntT,n)] _ = typeRef v
           i = name ++"_i"
+stanNode name (Apply "*" [i,j] IntT) =
+    name ++" = "++ stanNodeRef i ++" * "++ stanNodeRef j ++";"
 stanNode name (Apply op [i,j] _)
   | isJust $ lookup op stanOperators,
     (ArrayT _ [(Const 1 IntT, Const m IntT), (Const 1 IntT, Const 1 IntT)] _) <- typeRef i,

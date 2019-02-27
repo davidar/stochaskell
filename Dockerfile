@@ -37,7 +37,7 @@ ENV LANG en_US.UTF-8
 ENV HOME /home/jovyan
 WORKDIR ${HOME}
 
-RUN stack --resolver lts-11.19 setup && stack config set system-ghc --global true
+RUN stack --resolver lts-12.26 setup && stack config set system-ghc --global true
 
 RUN curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash
 ENV NVM_DIR ${HOME}/.nvm

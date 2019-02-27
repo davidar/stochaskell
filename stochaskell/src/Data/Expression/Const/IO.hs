@@ -13,7 +13,6 @@ import Data.Binary.IEEE754
 import Data.Binary.Put
 import qualified Data.ByteString.Lazy.Char8 as LC
 import Data.Expression.Const
-import System.ProgressBar
 import Text.CSV.Lazy.ByteString
 import Util
 
@@ -22,12 +21,11 @@ readRealMatrix :: FilePath -> Interval Integer -> Interval Integer -> IO ConstVa
 readRealMatrix fname (rlo,rhi) (clo,chi) = do
   table <- fromCSVTable . csvTable . parseCSV <$> LC.readFile fname
   a <- newArray ([rlo,clo],[rhi,chi]) 0 :: IO (IOUArray [Integer] Double)
-  let go _ [] = return ()
+  let go :: Integer -> [[LC.ByteString]] -> IO ()
+      go _ [] = return ()
       go i (row:rows) = do
         forM_ (zip [clo..] row) $ \(j,x) ->
           writeArray a [i,j] $ read (LC.unpack x)
-        when (i `mod` 1000 == 0) $
-          progressBar (msg $ "Reading "++ fname) percentage 80 (Progress (i-rlo) (rhi-rlo))
         go (i+1) rows
   go rlo $ take (fromInteger (rhi-rlo+1)) table
   a' <- freeze a

@@ -400,8 +400,8 @@ instance Vector ConstVal Integer ConstVal where
       [(1,n)] -> n
       sh -> error $ "vectorSize "++ show sh
 
-instance Monoid ConstVal where
-    mappend a b = fromMatrix $ toMatrix a <> toMatrix b
+instance Semigroup ConstVal where
+    a <> b = fromMatrix $ toMatrix a <> toMatrix b
 
 instance LinearOperator ConstVal ConstVal where
     m  #> v = fromVector $ toMatrix m  #> toVector v

@@ -2,10 +2,7 @@
              NoMonomorphismRestriction, FlexibleContexts, TypeFamilies #-}
 module Main where
 import Language.Stochaskell
-
-import Graphics.Rendering.Chart.Easy
-    ( plot, line, points, def, setColors, black, withOpacity )
-import Graphics.Rendering.Chart.Backend.Cairo ( toFile )
+import Language.Stochaskell.Plot
 
 xyData :: [(Double,Double)]
 xyData = [
@@ -120,7 +117,7 @@ main = do
 
 plotPoly :: Int -> Z -> RVec -> RVec -> Z -> [(R,RVec)] -> IO ()
 plotPoly t n xData yData d' samples =
-  toFile def ("poly-figs/"++ show t ++".png") $ do
+  toPNG ("poly-figs/"++ show t) . toRenderable $ do
     plot $ points "data" (list xData `zip` list yData)
     setColors [black `withOpacity` 0.02]
     plot $ line ("posterior d="++ show d') $

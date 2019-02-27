@@ -2,6 +2,7 @@
 
 module Main where
 import Language.Stochaskell
+import Language.Stochaskell.Plot
 import Language.Church
 
 stickBreak :: R -> P RVec
@@ -33,3 +34,5 @@ main :: IO ()
 main = do
   values <- simChurchVec $ imm 10000
   print values
+  toPNG "dpmm" . toRenderable . plot . return . histToPlot $ defaultPlotHist
+    { _plot_hist_values = values, _plot_hist_bins = 100, _plot_hist_range = Just (0,100) }

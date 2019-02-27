@@ -258,8 +258,8 @@ instance Matrix (ShapedMatrix Double) Integer Double where
     blockMatrix rows = ShMat (1, fromIntegral r) (1, fromIntegral c) m'
       where m' = LAD.fromBlocks [[m | ShMat (1,r) (1,c) m <- row, r > 0, c > 0] | row <- rows]
             (r,c) = LAD.size m'
-instance Monoid (ShapedMatrix Double) where
-    mappend a@(ShMat r c m) b@(ShMat r' c' m')
+instance Semigroup (ShapedMatrix Double) where
+    a@(ShMat r c m) <> b@(ShMat r' c' m')
       | c == r' = ShMat r c' $ (LA.<>) m m'
       | otherwise = error $ "cannot multiply "++ show a ++" with "++ show b
 

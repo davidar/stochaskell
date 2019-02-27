@@ -1456,10 +1456,10 @@ instance AA.Matrix DExpr DExpr DExpr where
 
 typeMatrixProduct (ArrayT _ [r,_] t) (ArrayT _ [_,c] _) = ArrayT (Just "matrix") [r,c] t
 
-instance (ExprType e) => Monoid (Expression [[e]]) where
-    mappend a b = Expression $ erase a `mappend` erase b
-instance Monoid DExpr where
-    mappend a b = DExpr $ do
+instance (ExprType e) => Semigroup (Expression [[e]]) where
+    a <> b = Expression $ erase a <> erase b
+instance Semigroup DExpr where
+    a <> b = DExpr $ do
         i <- fromDExpr a
         j <- fromDExpr b
         simplify . Apply "<>" [i,j] $ typeRef i `typeMatrixProduct` typeRef j
