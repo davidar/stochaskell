@@ -28,4 +28,6 @@ env: edward/env pymc3/env
 
 doc: build
 	stack haddock
-	standalone-haddock -o docs --package-db=$(shell stack path --snapshot-pkg-db) --package-db=$(shell stack path --local-pkg-db) . || true
+	stack exec --no-ghc-package-path -- standalone-haddock -o docs \
+		--package-db=$(shell stack path --snapshot-pkg-db) \
+		--package-db=$(shell stack path --local-pkg-db) .

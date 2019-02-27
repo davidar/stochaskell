@@ -49,6 +49,7 @@ library:
   - Language.Stochaskell
   - Language.Stochaskell.Expression
   - Language.Stochaskell.Plot
+  - Language.Stochaskell.Prelude
   - Language.Church
   - Language.Edward
   - Language.PyMC3

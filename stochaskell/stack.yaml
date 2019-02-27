@@ -1,7 +1,8 @@
 flags: {}
 extra-package-dbs: []
 packages:
-- '.'
+- .
+- ./standalone-haddock
 system-ghc: false
 extra-deps:
 - Chart-1.9

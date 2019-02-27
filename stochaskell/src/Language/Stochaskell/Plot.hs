@@ -8,8 +8,11 @@ Stability   : experimental
 -}
 module Language.Stochaskell.Plot
   ( ToPNG(..), renderAxis2
+  -- * Re-exports
+  -- ** "Graphics.Rendering.Chart.Easy"
   , module Graphics.Rendering.Chart.Easy
   , module Graphics.Rendering.Chart.Plot.Histogram
+  -- ** "Plots"
   , module Plots
   ) where
 
