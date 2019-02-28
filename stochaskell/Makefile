@@ -1,10 +1,10 @@
 .PHONY: build
 
 build: env
-	stack build
+	stack build --interleaved-output
 
 trace: env
-	stack build --trace
+	stack build --interleaved-output --trace
 
 %-exe: build
 	stack exec $@

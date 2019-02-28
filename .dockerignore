@@ -1,4 +1,4 @@
-.git/
+**/.git/
 **/*.png
 **/*.imports
 **/*_flymake.*
@@ -6,7 +6,7 @@
 **/*.bak
 **/*~
 **/*.tix
-stochaskell/.stack-work/
+**/.stack-work/
 stochaskell/cache/
 stochaskell/docs/
 stochaskell/edward/env/

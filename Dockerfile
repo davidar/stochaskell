@@ -60,7 +60,7 @@ RUN make -C stochaskell env
 COPY --chown=1000 stochaskell/cmdstan stochaskell/cmdstan
 RUN make -C stochaskell/cmdstan build
 
-COPY --chown=1000 docker-stack.yaml stack.yaml
+COPY --chown=1000 stack.yaml stack.yaml
 COPY --chown=1000 ihaskell ihaskell
 COPY --chown=1000 stochaskell/package.yaml stochaskell/package.yaml
 RUN stack setup && stack build --only-snapshot

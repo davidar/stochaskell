@@ -70,10 +70,6 @@ module Language.Stochaskell
   , hmcStan, hmcStanInit, mh, mh', mhRatio, rjmc, rjmcC
 
   -- * Miscellaneous
-  , module Data.Either.Utils
-  , module Data.List.Utils
-  , module Data.Number.Transfinite
-  , module GHC.Exts
   , binarize
   , chain
   , chainRange
@@ -89,6 +85,14 @@ module Language.Stochaskell
   , slice
   , square
   , stochaskell
+  -- ** Re-exports
+  , module Data.Either.Utils
+  -- *** "Data.List.Utils"
+  , module Data.List.Utils
+  -- *** "Data.Number.Transfinite"
+  , module Data.Number.Transfinite
+  -- *** "GHC.Exts"
+  , module GHC.Exts
   ) where
 
 import Prelude ()
