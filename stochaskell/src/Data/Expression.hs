@@ -121,9 +121,11 @@ unconstrainedLike es = DExpr $ do
   ts <- sequence $ typeDExpr <$> es
   return . Unconstrained $ coerces ts
 
+-- | create a symbolic variable
 symbol :: forall t. (ExprType t) => String -> Expression t
 symbol name = expr . return $ Var (Symbol name False) t
   where TypeIs t = typeOf :: TypeOf t
+-- | create a list of (one-letter) 'symbol's
 symbols :: (ExprType t) => String -> [Expression t]
 symbols names = symbol . return <$> names
 
@@ -659,6 +661,9 @@ coerce m@(ArrayT (Just "matrix") [(Const 1 IntT,n),_] s)
        v@(ArrayT (Just "vector") [(Const 1 IntT,k)] t)
   | n == k, s == t = m
 coerce v@(ArrayT (Just "vector") _ _) m@(ArrayT (Just "matrix") _ _) = coerce m v
+coerce r@(ArrayT (Just "row_vector") _ _) (ArrayT (Just "vector") sh t) =
+  coerce r (ArrayT (Just "row_vector") sh t)
+coerce v@(ArrayT (Just "vector") _ _) r@(ArrayT (Just "row_vector") _ _) = coerce r v
 coerce s t = error $ "cannot coerce "++ show s ++" with "++ show t
 
 coerces :: [Type] -> Type
