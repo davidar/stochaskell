@@ -363,6 +363,11 @@ See @roberts19.
 To quickly get started using Stochaskell, it can be [launched via Binder](https://mybinder.org/v2/gh/davidar/stochaskell/master).
 It can also be launched on a local machine by [installing Docker](https://docs.docker.com/install/) and running the following commands:
 
+^[{-}
+[![](https://images.microbadger.com/badges/image/davidar/stochaskell.svg)](https://microbadger.com/images/davidar/stochaskell)
+[![](https://img.shields.io/circleci/project/github/davidar/stochaskell/master.svg)](https://circleci.com/gh/davidar/stochaskell/tree/master)
+]
+
 <pre><code>docker pull <a href="https://hub.docker.com/r/davidar/stochaskell">davidar/stochaskell</a>
 docker run -it -p8888:8888 davidar/stochaskell
 </code></pre>
