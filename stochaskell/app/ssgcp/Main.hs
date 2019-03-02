@@ -4,8 +4,6 @@ module Main where
 import Language.Stochaskell
 import Language.Stochaskell.Plot
 
-import System.Random
-
 noise = 1e-3
 
 kernelSE' eta ils x y =
@@ -200,7 +198,7 @@ main :: IO ()
 main = do
   let t = 50
       m = 20
-  setStdGen (mkStdGen 3)
+  setRandomSeed 3
   dat <- genData' t
   let k = integer (length dat)
       xs = [0.5*x | x <- [0..100]]

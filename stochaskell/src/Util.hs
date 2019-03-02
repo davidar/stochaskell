@@ -9,12 +9,15 @@ import Data.Boolean
 import qualified Data.ByteString as B
 import Data.List
 import qualified Data.Number.LogFloat as LF
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Debug.Trace
 import GHC.Exts
 import Numeric.SpecFunctions
 import System.IO
 import qualified System.IO.Unsafe
 import System.Process
+import System.Random
 import Text.Printf (printf)
 
 type Label = String
@@ -127,6 +130,22 @@ interpolate ((x0,y0):(x1,y1):xys) x
   | x < x1 = y0 + (y1 - y0) * (x - x0) / (x1 - x0)
   | otherwise = interpolate ((x1,y1):xys) x
 interpolate [(_,y)] _ = y
+
+-- | sets the global random seed
+--
+-- Warning: does not yet cover all sources of randomness
+setRandomSeed :: Int -> IO ()
+setRandomSeed = setStdGen . mkStdGen
+
+-- | start a stopwatch
+tic :: IO NominalDiffTime
+tic = getPOSIXTime
+
+-- | read a stopwatch
+toc :: NominalDiffTime -> IO NominalDiffTime
+toc t = do
+  t' <- getPOSIXTime
+  return (t' - t)
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)

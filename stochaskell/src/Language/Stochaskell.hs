@@ -82,9 +82,12 @@ module Language.Stochaskell
   , qfDiag
   , readRealMatrix
   , selectItems
+  , setRandomSeed
   , slice
   , square
   , stochaskell
+  , tic
+  , toc
   -- ** Re-exports
   , module Data.Either.Utils
   -- *** "Data.List.Utils"

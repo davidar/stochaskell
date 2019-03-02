@@ -8,8 +8,6 @@ import Language.Edward
 import Language.PyMC3
 import Language.Stan
 
-import Data.Time.Clock.POSIX
-
 logreg :: Z -> Z -> P (RMat,RVec,R,BVec)
 logreg n d = do
   -- TODO: automatic vectorisation
@@ -206,7 +204,7 @@ birats' = do
   print (bmSample,yvSample)
 
 benchStanHMC numSamp numSteps stepSize p init = do
-  ticStan <- getPOSIXTime
+  t <- tic
   let method = defaultStanMethod
         { numSamples = numSamp
         , numWarmup = 0
@@ -217,13 +215,13 @@ benchStanHMC numSamp numSteps stepSize p init = do
         , hmcStepSize = stepSize
         }
   samples <- runStan method p init
-  tocStan <- getPOSIXTime
+  s <- toc t
   let means = map mean . transpose $ map (map (fromRight . eval_ . Expression) . fromExprTuple) samples
-  return $ "STAN:\t"++ show means ++" took "++ show (tocStan - ticStan)
+  return $ "STAN:\t"++ show means ++" took "++ show s
 
 benchPyMC3HMC numSamp numSteps stepSize p init = do
   putStrLn $ pmProgram p
-  ticPyMC3 <- getPOSIXTime
+  t <- tic
   let method = defaultPyMC3Inference
         { pmDraws = numSamp
         , pmStep = Just HamiltonianMC
@@ -235,18 +233,18 @@ benchPyMC3HMC numSamp numSteps stepSize p init = do
         , pmTune = 0
         }
   samples <- runPyMC3 method p init
-  tocPyMC3 <- getPOSIXTime
+  s <- toc t
   let aPyMC3 = mean (map fst samples)
       bPyMC3 = mean (map snd samples)
-  return $ "PYMC3:\t"++  show (aPyMC3,  bPyMC3)  ++" took "++ show (tocPyMC3  - ticPyMC3)
+  return $ "PYMC3:\t"++  show (aPyMC3,  bPyMC3)  ++" took "++ show s
 
 benchEdwardHMC numSamp numSteps stepSize p init = do
   putStrLn $ edProgram numSamp numSteps stepSize p init
-  ticEdward <- getPOSIXTime
+  t <- tic
   samples <- hmcEdward numSamp numSteps stepSize p init
-  tocEdward <- getPOSIXTime
+  s <- toc t
   let aEdward = mean (map fst samples)
       bEdward = mean (map snd samples)
-  return $ "EDWARD:\t"++ show (aEdward, bEdward) ++" took "++ show (tocEdward - ticEdward)
+  return $ "EDWARD:\t"++ show (aEdward, bEdward) ++" took "++ show s
 
 main = birats'

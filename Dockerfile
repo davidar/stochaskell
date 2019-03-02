@@ -55,7 +55,7 @@ WORKDIR ${HOME}
 COPY --chown=1000 stochaskell/edward stochaskell/edward
 COPY --chown=1000 stochaskell/pymc3 stochaskell/pymc3
 COPY --chown=1000 stochaskell/Makefile stochaskell/Makefile
-RUN make -C stochaskell env
+RUN make -C stochaskell env && rm -rf .cache
 
 COPY --chown=1000 stochaskell/cmdstan stochaskell/cmdstan
 RUN make -C stochaskell/cmdstan build
@@ -63,12 +63,12 @@ RUN make -C stochaskell/cmdstan build
 COPY --chown=1000 stack.yaml stack.yaml
 COPY --chown=1000 ihaskell ihaskell
 COPY --chown=1000 stochaskell/package.yaml stochaskell/package.yaml
-RUN stack setup && stack build --only-snapshot
+RUN stack setup && stack build --trace --only-snapshot && rm -rf .stack/indices
 ENV PATH $(stack path --local-install-root)/bin:$(stack path --snapshot-install-root)/bin:$(stack path --compiler-bin):${HOME}/.local/bin:${PATH}
 
+COPY --chown=1000 Makefile Makefile
 COPY --chown=1000 stochaskell stochaskell
-RUN stack build && stack install
-RUN ihaskell install --stack
+RUN make install && rm -rf .stack/indices
 ENV STOCHASKELL_DIRECTORY ${HOME}/stochaskell
 
 COPY --chown=1000 *.ipynb LICENSE ./

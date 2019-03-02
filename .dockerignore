@@ -12,5 +12,6 @@ stochaskell/docs/
 stochaskell/edward/env/
 stochaskell/pymc3/env/
 stochaskell/webchurch/node_modules/
+stochaskell/app/*.cabal
 stochaskell/stochaskell.cabal
 _scrap/

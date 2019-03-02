@@ -46,52 +46,11 @@ dependencies:
 library:
   source-dirs: src
   exposed-modules:
-  - Language.Stochaskell
-  - Language.Stochaskell.Expression
-  - Language.Stochaskell.Plot
-  - Language.Stochaskell.Prelude
   - Language.Church
   - Language.Edward
   - Language.PyMC3
   - Language.Stan
-executables:
-  benchmark-exe:
-    main: Main.hs
-    source-dirs: app/benchmark
-    dependencies:
-    - stochaskell
-  cp-exe:
-    main: Main.hs
-    source-dirs: app/cp
-    dependencies:
-    - stochaskell
-  dp-exe:
-    main: Main.hs
-    source-dirs: app/dp
-    dependencies:
-    - stochaskell
-  mgp-exe:
-    main: Main.hs
-    source-dirs: app/mgp
-    dependencies:
-    - stochaskell
-  poly-exe:
-    main: Main.hs
-    source-dirs: app/poly
-    dependencies:
-    - stochaskell
-  rj-exe:
-    main: Main.hs
-    source-dirs: app/rj
-    dependencies:
-    - stochaskell
-  sgcp-exe:
-    main: Main.hs
-    source-dirs: app/sgcp
-    dependencies:
-    - stochaskell
-  ssgcp-exe:
-    main: Main.hs
-    source-dirs: app/ssgcp
-    dependencies:
-    - stochaskell
+  - Language.Stochaskell
+  - Language.Stochaskell.Expression
+  - Language.Stochaskell.Plot
+  - Language.Stochaskell.Prelude
