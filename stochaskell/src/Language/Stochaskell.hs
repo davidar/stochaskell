@@ -83,6 +83,7 @@ module Language.Stochaskell
   , readRealMatrix
   , selectItems
   , setRandomSeed
+  , silence'
   , slice
   , square
   , stochaskell

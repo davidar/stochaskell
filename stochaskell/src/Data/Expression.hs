@@ -1605,7 +1605,7 @@ instance AA.SquareMatrix DExpr DExpr where
         i <- fromDExpr m
         case i of
           Unconstrained{} -> return $ Unconstrained UnknownType
-          _ -> let (ArrayT _ _ t) = trace ("logDet "++ show i) $ typeRef i
+          _ -> let (ArrayT _ _ t) = typeRef i
                in simplify $ Apply "log_det" [i] t
 instance AA.SquareMatrix (Expression [[e]]) (Expression e) where
     chol   = Expression . AA.chol   . erase

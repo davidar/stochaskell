@@ -39,6 +39,7 @@ dependencies:
 - process
 - random
 - random-fu
+- silently
 - split
 - temporary
 - time

@@ -15,6 +15,7 @@ import Debug.Trace
 import GHC.Exts
 import Numeric.SpecFunctions
 import System.IO
+import System.IO.Silently
 import qualified System.IO.Unsafe
 import System.Process
 import System.Random
@@ -146,6 +147,10 @@ toc :: NominalDiffTime -> IO NominalDiffTime
 toc t = do
   t' <- getPOSIXTime
   return (t' - t)
+
+-- | prevent console output
+silence' :: IO a -> IO a
+silence' = hSilence [stdout, stderr]
 
 instance (Num t) => Num [t] where
     (+) = zipWith (+)

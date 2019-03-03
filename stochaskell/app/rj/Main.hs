@@ -74,7 +74,7 @@ pvnbStep :: Z -> Model -> IO Model
 pvnbStep n = \m -> do
   putStr "."
   hFlush stdout
-  m' <- pvnbHMC n m
+  m' <- silence' $ pvnbHMC n m
   m'' <- kernel $ fromConcrete m'
   return . fromRight' $ eval' m''
   where kernel = runCC $ pvnb n `rjmcC` pvnbJump
