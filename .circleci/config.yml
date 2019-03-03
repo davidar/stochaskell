@@ -93,8 +93,12 @@ jobs:
                 echo "Repository name found defined for build: ${REPO_NAME}"
             fi
             echo "2. Running jupyter-repo2docker..."
-            echo "jupyter-repo2docker --debug --user-name jovyan --user-id 1000 --no-run --image-name ${CONTAINER_NAME}:${DOCKER_TAG} ${REPO_NAME}"
-            jupyter-repo2docker --debug --user-name jovyan --user-id 1000 --no-run --image-name "${CONTAINER_NAME}:${DOCKER_TAG}" "${REPO_NAME}"
+            set -x
+            if docker pull "${CONTAINER_NAME}:${DOCKER_TAG}"; then
+              jupyter-repo2docker --debug --user-name jovyan --user-id 1000 --no-run --image-name "${CONTAINER_NAME}:${DOCKER_TAG}" --cache-from "${CONTAINER_NAME}:${DOCKER_TAG}" "${REPO_NAME}"
+            else
+              jupyter-repo2docker --debug --user-name jovyan --user-id 1000 --no-run --image-name "${CONTAINER_NAME}:${DOCKER_TAG}" "${REPO_NAME}"
+            fi
             docker ps
             docker images
       - run:
