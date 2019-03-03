@@ -37,8 +37,6 @@ ENV LANG en_US.UTF-8
 ENV HOME /home/jovyan
 WORKDIR ${HOME}
 
-RUN stack --resolver lts-12.26 setup && stack config set system-ghc --global true
-
 RUN curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash
 ENV NVM_DIR ${HOME}/.nvm
 ENV NODE_VERSION 0.10.26
@@ -60,11 +58,13 @@ RUN make -C stochaskell env && rm -rf .cache
 COPY --chown=1000 stochaskell/cmdstan stochaskell/cmdstan
 RUN make -C stochaskell/cmdstan build
 
+RUN stack --resolver lts-12.26 setup \
+ && rm -rf .stack/programs/*-linux/ghc-*{.tar.xz,/share}
+
 COPY --chown=1000 stack.yaml stack.yaml
 COPY --chown=1000 ihaskell ihaskell
 COPY --chown=1000 stochaskell/package.yaml stochaskell/package.yaml
-RUN stack setup && stack build --trace --only-snapshot && rm -rf .stack/indices
-ENV PATH $(stack path --local-install-root)/bin:$(stack path --snapshot-install-root)/bin:$(stack path --compiler-bin):${HOME}/.local/bin:${PATH}
+RUN stack build --trace --only-snapshot && rm -rf .stack/indices
 
 COPY --chown=1000 Makefile Makefile
 COPY --chown=1000 stochaskell stochaskell
