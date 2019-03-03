@@ -1394,8 +1394,12 @@ blockMatrix' [[r]] = return r
 blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent: "++ show k) $
                   return $ Unconstrained UnknownType
                 | otherwise = do
-  r <- simplify $ Apply "+s" rs IntT
-  c <- simplify $ Apply "+s" cs IntT
+  r <- if saneRow `all` k
+       then simplify $ Apply "+s" rs IntT
+       else return $ Unconstrained UnknownType
+  c <- if saneCol `all` transpose k
+       then simplify $ Apply "+s" cs IntT
+       else return $ Unconstrained UnknownType
   let t = ArrayT (Just "matrix") [(Const 1 IntT,r),(Const 1 IntT,c)] $
         coerces [t' | ArrayT _ _ t' <- typeRef <$> concat k]
   return . flip BlockArray t $ A.array bnd
@@ -1417,7 +1421,7 @@ blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent
             _ | isScalar t -> Const 1 IntT
             ArrayT _ [_,(Const 1 IntT,hi)] _ -> hi
             _ -> error $ "blockMatrix'.cs "++ show t
-        sane = allSame (map length k) && saneRow `all` k && saneCol `all` transpose k
+        sane = allSame (map length k)
         saneRow row = allSame' $ do
           t <- typeRef <$> row
           return $ case t of

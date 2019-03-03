@@ -658,12 +658,13 @@ pdf p = exp . lpdf p
 
 -- | compute log pdf of distribution represented by probabilistic program
 lpdf :: (ExprTuple t, Show t) => P t -> t -> R
-lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - adjust
+lpdf prog vals = subst (substEEnv env') $ pdfPBlock True env' pb - adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "lpdf" prog
         EEnv env = solveTuple block rets vals emptyEEnv
         env' = EEnv $ Map.filterWithKey p env
         p (LVar (Volatile "lpdf" _ _)) _ = True
-        p _ _ = False
+        p LVar{} _ = False
+        p _ _ = True
         jacobian =
           [ [ derivNodeRef env' block r (Var (Volatile ns 0 i) (typePNode d))
             | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
@@ -681,12 +682,13 @@ lpdf prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb - adjust
 
 -- | compute joint pdf of primitive random variables within the given program
 lpdfAux :: (ExprTuple t, Show t) => P t -> t -> R
-lpdfAux prog vals = subst (substEEnv env') $ pdfPBlock True (EEnv env) pb
+lpdfAux prog vals = subst (substEEnv env') $ pdfPBlock True env' pb
   where (rets, pb) = runProgExprs "lpdfAux" prog
         EEnv env = solveTuple (definitions pb) rets vals emptyEEnv
         env' = EEnv $ Map.filterWithKey p env
         p (LVar (Volatile "lpdfAux" _ _)) _ = True
-        p _ _ = False
+        p LVar{} _ = False
+        p _ _ = True
 
 lpdfAuxC :: (Constructor t, Show t) => P (Expression t) -> Expression t -> R
 lpdfAuxC = caseOf . lpdfAux
