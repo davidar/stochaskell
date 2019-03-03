@@ -244,12 +244,16 @@ optimiseDet lg a t = do
       isZ (Var j@Internal{} _) | Apply "zeros" _ _ <- lookupBlock j block = True
       isZ _ = False
       z = map isZ <$> a
+      rotate = optimiseDet lg (tail a ++ [head a]) t
   if | and (tail $ head z), notNull (tail <$> tail a), notNull `all` (tail <$> tail a) -> do
         x <- det' [[head $ head a]]
         y <- det' (tail <$> tail a)
         simplify $ Apply (if lg then "+" else "*") [x,y] t
-     | head $ head z, or (not . head <$> tail z) ->
-        optimiseDet lg (tail a ++ [head a]) t
+     | and (head <$> tail z) -> optimiseDet lg (transpose a) t
+     | head $ head z, or (not . head <$> tail z) -> rotate
+     | or [not (head zrow) && and (tail zrow) | zrow <- z] -> rotate
+     | otherwise -> error $ "optimiseDet "++ showBlock' block (show a) ++"\n"++
+                            "z = "++ show z
   where det x | isScalarD x = if lg then log x else x
               | lg        = AA.logDet x
               | otherwise = AA.det x

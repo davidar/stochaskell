@@ -273,6 +273,8 @@ deriveBlock d b@(Block ds) = Block (d:parent)
 showBlock :: [DAG] -> String -> String
 showBlock (dag:block) r = showBlock block $ showLet' dag r
 showBlock [] r = r
+showBlock' :: Block -> String -> String
+showBlock' (Block ds) = showBlock ds
 
 -- | dynamically typed Stochaskell expression
 data DExpr = DExpr { fromDExpr :: State Block NodeRef }
@@ -926,7 +928,7 @@ simplify (Apply s js t) | s == "+" || s == "+s" = do
   where simplifySum block refs = sort $ do
           ref <- refs
           case ref of
-            Const 0 _ -> mzero
+            Const c _ | isZeros c -> mzero
             Var i@Internal{} _ | Apply f js _ <- lookupBlock i block
                               , f `elem` ["+","+s"] -> simplifySum block js
             _ -> return ref
