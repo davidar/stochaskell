@@ -165,7 +165,7 @@ defined much like the `gp` program earlier, but utilising the `normalChol` progr
 This demonstrates how sub-programs can be easily composed in Stochaskell, another benefit we obtain for free from embedding.
 
 [^fig-gp]: {-}
-![](gp.svg)
+![](images/gp.svg)
 Plot of five independent simulations of `gp kernelSE1`.
 [![Binder]](https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=gp.ipynb)
 
@@ -268,7 +268,7 @@ then iteratively updates it by looping over the elements of the vector.
 Similar backends are also provided for integration with [PyMC3](https://docs.pymc.io/) and [Edward](http://edwardlib.org/).
 
 [^fig-stan]: {-}
-![](gp-stan.svg)
+![](images/gp-stan.svg)
 Plot of posterior samples from the Gaussian process classification model program
 from [the previous section](#probabilistic-modelling),
 sampled via the Stan backend.
@@ -292,7 +292,7 @@ In particular, random arrays --- constructed with the `joint` keyword in Stochas
 The figure on the right illustrates a simulation of the DP mixture model program presented in [the previous section](#probabilistic-modelling), sampled via the Church backend.
 
 [^fig-dp]: {-}
-![](dpmm.svg)
+![](images/dpmm.svg)
 Histogram of $n=10^4$ samples from the Dirichlet process mixture model program
 from [the previous section](#probabilistic-modelling),
 via the [WebChurch](https://github.com/probmods/webchurch) implementation of Church.
@@ -346,6 +346,8 @@ proposal x = do
   return (x + z)
 ```
 
+[^fig-rj]
+
 we can sample from the distribution represented by some `program` via M--H as follows:
 
 ```hs
@@ -357,6 +359,11 @@ where `n` is the number of iterations and `x0` is some initial state.
 ### Reversible Jump Markov Chain Monte Carlo
 
 See @roberts19.
+
+[^fig-rj]: {-}
+![](images/soccer.svg)
+Replication of @green09 [fig. 1] with a Reversible Jump sampler automatically derived by Stochaskell using the method described in @roberts19.
+[![Binder]](https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=rj.ipynb)
 
 ## Usage
 

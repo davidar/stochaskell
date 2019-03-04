@@ -11,6 +11,7 @@ module Language.Stochaskell.Plot
   -- * Re-exports
   -- ** "Graphics.Rendering.Chart.Easy"
   , module Graphics.Rendering.Chart.Easy
+  , module Graphics.Rendering.Chart.Grid
   , module Graphics.Rendering.Chart.Plot.Histogram
   -- ** "Plots"
   , module Plots
@@ -23,7 +24,8 @@ import qualified Diagrams.Core
 import qualified Diagrams.Path
 import Diagrams.TwoD
 import Graphics.Rendering.Chart.Backend.Cairo
-import Graphics.Rendering.Chart.Easy hiding ((...),Plot,AxisStyle,Legend,magma)
+import Graphics.Rendering.Chart.Easy hiding ((...),Plot,AxisStyle,Legend,beside,magma)
+import Graphics.Rendering.Chart.Grid
 import Graphics.Rendering.Chart.Plot.Histogram
 import qualified Graphics.Rendering.Chart.Renderable
 import Plots hiding (Plot,AxisStyle,Legend,magma)

@@ -152,6 +152,17 @@ references:
   container-title: Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics
   page: 770-778
   URL: http://jmlr.org/proceedings/papers/v15/wingate11a.html
+- id: green09
+  type: report
+  author:
+  - family: Green
+    given: Peter J.
+  - family: Hastie
+    given: David I.
+  issued:
+  - year: 2009
+  title: Reversible jump MCMC
+  URL: https://people.maths.bris.ac.uk/~mapjg/papers/rjmcmc_20090613.pdf
 - id: roberts19
   type: paper-conference
   author:
