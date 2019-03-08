@@ -62,13 +62,28 @@ RUN stack --resolver lts-12.26 setup \
  && rm -rf .stack/programs/*-linux/ghc-*{.tar.xz,/share}
 
 COPY --chown=1000 stack.yaml stack.yaml
-COPY --chown=1000 ihaskell ihaskell
+RUN echo '{}' > stochaskell/package.yaml \
+ && stack build --trace \
+    ihaskell \
+    ihaskell-aeson \
+    ihaskell-blaze \
+    ihaskell-charts \
+    ihaskell-diagrams \
+    ihaskell-gnuplot \
+    ihaskell-hatex \
+    ihaskell-juicypixels \
+    ihaskell-magic \
+    ihaskell-plot \
+    ihaskell-static-canvas \
+    ihaskell-widgets \
+ && stack clean \
+ && rm -rf .stack/indices .stack-work/downloaded
 COPY --chown=1000 stochaskell/package.yaml stochaskell/package.yaml
-RUN stack build --trace --only-snapshot && rm -rf .stack/indices
+RUN stack build --trace --only-snapshot && stack clean && rm -rf .stack/indices
 
 COPY --chown=1000 Makefile Makefile
 COPY --chown=1000 stochaskell stochaskell
-RUN make install && rm -rf .stack/indices
+RUN make install && stack clean && rm -rf .stack/indices
 ENV STOCHASKELL_DIRECTORY ${HOME}/stochaskell
 
 COPY --chown=1000 *.ipynb LICENSE ./

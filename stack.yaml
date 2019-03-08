@@ -1,22 +1,6 @@
-flags: {}
-packages:
-    - ./ihaskell
-    - ./ihaskell/ipython-kernel
-    - ./ihaskell/ghc-parser
-    - ./ihaskell/ihaskell-display/ihaskell-aeson
-    - ./ihaskell/ihaskell-display/ihaskell-blaze
-    - ./ihaskell/ihaskell-display/ihaskell-charts
-    - ./ihaskell/ihaskell-display/ihaskell-diagrams
-    - ./ihaskell/ihaskell-display/ihaskell-gnuplot
-    - ./ihaskell/ihaskell-display/ihaskell-hatex
-    - ./ihaskell/ihaskell-display/ihaskell-juicypixels
-    - ./ihaskell/ihaskell-display/ihaskell-magic
-    - ./ihaskell/ihaskell-display/ihaskell-plot
-    - ./ihaskell/ihaskell-display/ihaskell-static-canvas
-#    - ./ihaskell/ihaskell-display/ihaskell-widgets
-    - ./stochaskell
 resolver: lts-12.26
-allow-newer: true
+packages:
+- stochaskell
 extra-deps:
 - Chart-1.9
 - Chart-cairo-1.9
@@ -24,3 +8,20 @@ extra-deps:
 - magic-1.1
 - plot-0.2.3.9
 - plots-0.1.0.2
+- github: gibiansky/IHaskell
+  commit: 910119f65f52f327f0305d432740d62aa9f50a2e
+  subdirs:
+  - .
+  - ipython-kernel
+  - ghc-parser
+  - ihaskell-display/ihaskell-aeson
+  - ihaskell-display/ihaskell-blaze
+  - ihaskell-display/ihaskell-charts
+  - ihaskell-display/ihaskell-diagrams
+  - ihaskell-display/ihaskell-gnuplot
+  - ihaskell-display/ihaskell-hatex
+  - ihaskell-display/ihaskell-juicypixels
+  - ihaskell-display/ihaskell-magic
+  - ihaskell-display/ihaskell-plot
+  - ihaskell-display/ihaskell-static-canvas
+  - ihaskell-display/ihaskell-widgets

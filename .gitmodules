@@ -7,9 +7,6 @@
 [submodule "stochaskell/variant"]
 	path = stochaskell/variant
 	url = https://github.com/mpark/variant.git
-[submodule "stochaskell/IHaskell"]
-	path = ihaskell
-	url = https://github.com/gibiansky/IHaskell.git
 [submodule "stochaskell/backward-cpp"]
 	path = stochaskell/backward-cpp
 	url = https://github.com/bombela/backward-cpp.git

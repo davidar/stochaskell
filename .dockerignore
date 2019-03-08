@@ -4,6 +4,7 @@
 **/*_flymake.*
 **/*.prof
 **/*.bak
+**/*.swp
 **/*~
 **/*.tix
 **/.stack-work/
