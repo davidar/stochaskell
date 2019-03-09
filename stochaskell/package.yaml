@@ -41,9 +41,11 @@ dependencies:
 - random-fu
 - silently
 - split
+- statistics
 - temporary
 - time
 - utility-ht
+- vector
 library:
   source-dirs: src
   exposed-modules:

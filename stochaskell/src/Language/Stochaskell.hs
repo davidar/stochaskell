@@ -77,6 +77,7 @@ module Language.Stochaskell
   , fromRight'
   , interpolate
   , iterateLimit
+  , linspace
   , loop
   , mean
   , qfDiag
@@ -86,6 +87,7 @@ module Language.Stochaskell
   , silence'
   , slice
   , square
+  , staircase
   , stochaskell
   , tic
   , toc

@@ -65,8 +65,9 @@ delete :: (Eq k) => k -> [(k,v)] -> [(k,v)]
 delete k = filter p
   where p (k',_) = k' /= k
 
-linspace :: (IsList l, e ~ Item l, Fractional e, Integral i) => e -> e -> i -> l
-linspace lo hi n = fromList [lo + step * fromIntegral i | i <- [0..n-1]]
+-- | evenly spaced points over interval
+linspace :: (IsList l, e ~ Item l, Fractional e, Integral i) => (e,e) -> i -> l
+linspace (lo,hi) n = fromList [lo + step * fromIntegral i | i <- [0..n-1]]
   where step = (hi - lo)/(fromIntegral n - 1)
 
 system_ :: String -> IO ()
@@ -131,6 +132,12 @@ interpolate ((x0,y0):(x1,y1):xys) x
   | x < x1 = y0 + (y1 - y0) * (x - x0) / (x1 - x0)
   | otherwise = interpolate ((x1,y1):xys) x
 interpolate [(_,y)] _ = y
+
+-- | step function
+staircase :: (Ord a) => [a] -> [a] -> a -> a
+staircase s g x = case findIndex (x <) s of
+  Just j -> g !! j
+  Nothing -> last g
 
 -- | sets the global random seed
 --
