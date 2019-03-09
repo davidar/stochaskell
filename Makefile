@@ -1,5 +1,7 @@
 export STOCHASKELL_DIRECTORY = $(CURDIR)/stochaskell
 
+TRACE = # --trace
+
 IHASKELL = \
 	ihaskell \
 	ihaskell-aeson \
@@ -16,11 +18,11 @@ IHASKELL = \
 
 IHASKELL_BIN = $(shell stack path --local-install-root)/bin/ihaskell
 
-$(IHASKELL_BIN):
-	stack build --trace $(IHASKELL)
-
 build:
-	stack build --interleaved-output --trace
+	stack build --interleaved-output $(TRACE)
+
+$(IHASKELL_BIN):
+	stack build $(TRACE) $(IHASKELL)
 
 install: build $(IHASKELL_BIN)
 	stack exec -- ihaskell install --stack
