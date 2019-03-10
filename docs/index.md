@@ -346,8 +346,6 @@ proposal x = do
   return (x + z)
 ```
 
-[^fig-rj]
-
 we can sample from the distribution represented by some `program` via M--H as follows:
 
 ```hs
@@ -360,10 +358,29 @@ where `n` is the number of iterations and `x0` is some initial state.
 
 See @roberts19.
 
-[^fig-rj]: {-}
-![](images/soccer.svg)
+***
+
+<figure>
+^[{-}
 Replication of @green09 [fig. 1] with a Reversible Jump sampler automatically derived by Stochaskell using the method described in @roberts19.
 [![Binder]](https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=rj.ipynb)
+]
+![](images/soccer.svg){width=100%}
+</figure>
+
+<figure>
+^[{-}
+Replication of @green95 [figs. 1--4], as above.
+[![Binder]](https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=rj-coal.ipynb)
+]
+<table style="border-width:1px; border-color:#ccc"><tr>
+<td>![](images/coal-mean.svg)</td>
+<td>![](images/coal-n.svg)</td>
+</tr><tr>
+<td>![](images/coal-s.svg)</td>
+<td>![](images/coal-g.svg)</td>
+</tr></table>
+</figure>
 
 ## Usage
 

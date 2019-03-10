@@ -163,6 +163,19 @@ references:
   - year: 2009
   title: Reversible jump MCMC
   URL: https://people.maths.bris.ac.uk/~mapjg/papers/rjmcmc_20090613.pdf
+- id: green95
+  type: article-journal
+  author:
+  - family: Green
+    given: Peter J.
+  issued:
+  - year: 1995
+  title: Reversible jump Markov chain Monte Carlo computation and Bayesian model determination
+  container-title: Biometrika
+  page: 711-732
+  volume: '82'
+  issue: '4'
+  DOI: 10.1093/biomet/82.4.711
 - id: roberts19
   type: paper-conference
   author:

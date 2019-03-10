@@ -235,9 +235,6 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <a class="sourceLine" id="cb14-2" title="2">proposal x <span class="fu">=</span> <span class="kw">do</span></a>
 <a class="sourceLine" id="cb14-3" title="3">  z <span class="ot">&lt;-</span> normal <span class="dv">0</span> <span class="dv">1</span></a>
 <a class="sourceLine" id="cb14-4" title="4">  <span class="fu">return</span> (x <span class="fu">+</span> z)</a></code></pre></div>
-<p><span><label for="sn-13" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-13" class="margin-toggle"/><span class="marginnote"> <img src="images/soccer.svg" /> Replication of <span class="citation" data-cites="green09">Green and Hastie (<a href="#ref-green09">2009</a>, fig. 1)</span> with a Reversible Jump sampler automatically derived by Stochaskell using the method described in <span class="citation" data-cites="roberts19">Roberts, Gallagher, and Taimre (<a href="#ref-roberts19">2019</a>)</span>. <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=rj.ipynb"><img src="https://mybinder.org/badge_logo.svg" alt="Binder" /></a><br />
-<br />
-</span></span></p>
 <p>we can sample from the distribution represented by some <code>program</code> via M–H as follows:</p>
 <div class="sourceCode" id="cb15"><pre class="sourceCode hs"><code class="sourceCode haskell"><a class="sourceLine" id="cb15-1" title="1">x <span class="ot">&lt;-</span> chain n (program <span class="ot">`mh`</span> proposal) x0</a></code></pre></div>
 <p>where <code>n</code> is the number of iterations and <code>x0</code> is some initial state.</p>
@@ -245,12 +242,41 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <section id="reversible-jump-markov-chain-monte-carlo" class="level3">
 <h3>Reversible Jump Markov Chain Monte Carlo</h3>
 <p>See <span class="citation" data-cites="roberts19">Roberts, Gallagher, and Taimre (<a href="#ref-roberts19">2019</a>)</span>.</p>
+<hr />
+<figure>
+<span><label for="sn-13" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-13" class="margin-toggle"/><span class="marginnote"> Replication of <span class="citation" data-cites="green09">Green and Hastie (<a href="#ref-green09">2009</a>, fig. 1)</span> with a Reversible Jump sampler automatically derived by Stochaskell using the method described in <span class="citation" data-cites="roberts19">Roberts, Gallagher, and Taimre (<a href="#ref-roberts19">2019</a>)</span>. <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=rj.ipynb"><img src="https://mybinder.org/badge_logo.svg" alt="Binder" /></a><br />
+<br />
+</span></span> <img src="images/soccer.svg" style="width:100.0%" />
+</figure>
+<figure>
+<span><label for="sn-14" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-14" class="margin-toggle"/><span class="marginnote"> Replication of <span class="citation" data-cites="green95">Green (<a href="#ref-green95">1995</a>, fig. 1–4)</span>, as above. <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=rj-coal.ipynb"><img src="https://mybinder.org/badge_logo.svg" alt="Binder" /></a><br />
+<br />
+</span></span>
+<table style="border-width:1px; border-color:#ccc">
+<tr>
+<td>
+<img src="images/coal-mean.svg" />
+</td>
+<td>
+<img src="images/coal-n.svg" />
+</td>
+</tr>
+<tr>
+<td>
+<img src="images/coal-s.svg" />
+</td>
+<td>
+<img src="images/coal-g.svg" />
+</td>
+</tr>
+</table>
+</figure>
 </section>
 </section>
 <section id="usage" class="level2">
 <h2>Usage</h2>
 <p>To quickly get started using Stochaskell, it can be <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master">launched via Binder</a>. It can also be launched on a local machine by <a href="https://docs.docker.com/install/">installing Docker</a> and running the following commands:</p>
-<p><span><label for="sn-14" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-14" class="margin-toggle"/><span class="marginnote"> <a href="https://microbadger.com/images/davidar/stochaskell"><img src="https://images.microbadger.com/badges/image/davidar/stochaskell.svg" /></a> <a href="https://circleci.com/gh/davidar/stochaskell/tree/master"><img src="https://img.shields.io/circleci/project/github/davidar/stochaskell/master.svg" /></a><br />
+<p><span><label for="sn-15" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-15" class="margin-toggle"/><span class="marginnote"> <a href="https://microbadger.com/images/davidar/stochaskell"><img src="https://images.microbadger.com/badges/image/davidar/stochaskell.svg" /></a> <a href="https://circleci.com/gh/davidar/stochaskell/tree/master"><img src="https://img.shields.io/circleci/project/github/davidar/stochaskell/master.svg" /></a><br />
 <br />
 </span></span></p>
 <pre><code>docker pull <a href="https://hub.docker.com/r/davidar/stochaskell">davidar/stochaskell</a>
@@ -270,6 +296,9 @@ docker run -it -p8888:8888 stochaskell:latest
 </div>
 <div id="ref-goodman08">
 <p>Goodman, Noah D, Vikash K Mansinghka, Daniel M Roy, Keith Bonawitz, and Joshua B Tenenbaum. 2008. “Church: A Language for Generative Models.” In <em>Proceedings of the 24th Conference in Uncertainty in Artificial Intelligence</em>, 220–29. <a href="https://dblp.org/rec/html/conf/uai/GoodmanMRBT08">https://dblp.org/rec/html/conf/uai/GoodmanMRBT08</a>.</p>
+</div>
+<div id="ref-green95">
+<p>Green, Peter J. 1995. “Reversible Jump Markov Chain Monte Carlo Computation and Bayesian Model Determination.” <em>Biometrika</em> 82 (4): 711–32. <a href="https://doi.org/10.1093/biomet/82.4.711">https://doi.org/10.1093/biomet/82.4.711</a>.</p>
 </div>
 <div id="ref-green09">
 <p>Green, Peter J., and David I. Hastie. 2009. “Reversible Jump MCMC.” <a href="https://people.maths.bris.ac.uk/~mapjg/papers/rjmcmc_20090613.pdf">https://people.maths.bris.ac.uk/~mapjg/papers/rjmcmc_20090613.pdf</a>.</p>
