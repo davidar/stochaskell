@@ -75,7 +75,7 @@ RUN echo '{}' > stochaskell/package.yaml \
     ihaskell-magic \
     ihaskell-plot \
     ihaskell-static-canvas \
-    ihaskell-widgets \
+#    ihaskell-widgets \
  && stack clean \
  && rm -rf .stack/indices .stack-work/downloaded
 COPY --chown=1000 stochaskell/package.yaml stochaskell/package.yaml
