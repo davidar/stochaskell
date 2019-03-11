@@ -291,7 +291,7 @@ chain' n p = chainRange' (1,n) (\_ -> p)
 -- > mixture [(0.7, uniform 0 1), (0.3, normal 0 1)]
 mixture :: forall t. (ExprTuple t) => [(R, P t)] -> P t
 mixture qps = do
-  k <- categorical qv :: P Z
+  k <- pmf qv :: P Z
   toExprTuple <$> caseP n (erase k) (const . fmap fromExprTuple <$> progs)
   where (qs,progs) = unzip qps
         qv = blockVector [cast q | q <- qs] :: RVec
@@ -301,7 +301,7 @@ mixture qps = do
 -- that uses a case expression rather than a switch statement
 mixture' :: (ExprTuple t) => [(R, P t)] -> P t
 mixture' qps = do
-  k <- categorical qv
+  k <- pmf qv
   rs <- sequence progs
   return $ caseZ k rs
   where (qs,progs) = unzip qps
@@ -412,11 +412,6 @@ instance Distribution Beta (R,R) P R where
         i <- fromExpr a
         j <- fromExpr b
         return $ Dist "beta" [i,j] RealT
-
-instance Distribution Categorical RVec P Z where
-    sample (Categorical q) = dist $ do
-        i <- fromExpr q
-        return $ Dist "categorical" [i] IntT
 
 instance Distribution Cauchy (R,R) P R where
     sample (Cauchy (a,b)) = dist $ do
@@ -820,7 +815,7 @@ densityPNode env block (Dist "bernoulliLogit" [l] _) a
   where x = toRational a
         l' = toDouble . fromRight' $ evalNodeRef env block l
         p = 1 / (1 + exp (-l'))
-densityPNode env block (Dist "categorical" [q] _) x = LF.logFloat p
+densityPNode env block (Dist "pmf" [q] _) x = LF.logFloat p
   where q' = map toDouble . toList . fromRight' $ evalNodeRef env block q
         p = fromMaybe 0 . lookup x $ zip [1..] q'
 densityPNode env block (Dist "gamma" [a,b] _) x
@@ -935,7 +930,7 @@ samplePNode env block (Dist "bernoulliLogits" [l] _) = do
   z <- sequence $ map bernoulliLogit l'
   return $ fromList (map fromBool z)
   where l' = map toDouble . toList . fromRight' $ evalNodeRef env block l
-samplePNode env block (Dist "categorical" [q] _) = fromInteger <$> categorical q'
+samplePNode env block (Dist "pmf" [q] _) = fromInteger <$> pmf q'
   where q' = map toDouble . toList . fromRight' $ evalNodeRef env block q
 samplePNode env block (Dist "cauchy" [m,s] _) = fromDouble <$> cauchy m' s'
   where m' = toDouble . fromRight' $ evalNodeRef env block m

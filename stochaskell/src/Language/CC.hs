@@ -285,7 +285,7 @@ ccPNode' name pn = ccPNode name pn
 ccPNode :: Label -> PNode -> String
 ccPNode name (Dist "bernoulli" [p] _) =
   name ++" = std::bernoulli_distribution("++ ccNodeRef p ++")(gen);"
-ccPNode name (Dist "categorical" [ps] _) =
+ccPNode name (Dist "pmf" [ps] _) =
   name ++" = 1 + std::discrete_distribution<>("++ ccNodeRef ps ++")(gen);"
 ccPNode name (Dist "gamma" [a,b] _) =
   name ++" = std::gamma_distribution<>("++ ccNodeRef a ++", "++ q ++")(gen);"

@@ -41,11 +41,6 @@ instance Distribution Beta (Double,Double) IO Double where
     sample (Beta (a,b)) = Rand.sample (Beta.Beta a b)
 beta a b = sample $ Beta (a,b)
 
-newtype Categorical a = Categorical a
-instance Distribution Categorical [Double] IO Integer where
-    sample (Categorical q) = Rand.sample . Categorical.fromList $ zip q [1..]
-categorical q = sample $ Categorical q
-
 newtype Cauchy a = Cauchy a
 instance Distribution Cauchy (Double,Double) IO Double where
   sample (Cauchy (a,b)) = do
@@ -136,6 +131,8 @@ newtype OrderedSample a = OrderedSample a
 orderedSample n d = sample $ OrderedSample (n,d)
 
 newtype PMF a = PMF a
+instance Distribution PMF [Double] IO Integer where
+    sample (PMF q) = Rand.sample . Categorical.fromList $ zip q [1..]
 -- | distribution over indices given by vector of probabilities
 pmf a = sample $ PMF a
 

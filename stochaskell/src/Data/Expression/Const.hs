@@ -90,7 +90,7 @@ constFuns = Map.fromList
   ,("bernoulli_lpdf",    \[b,p]   -> log $ if toBool b then p else 1-p)
   ,("bernoulliLogit_lpdf", \[b,l] -> let p = 1/(1 + exp (-l)) in
                                      log $ if toBool b then p else 1-p)
-  ,("categorical_lpdf",  \[k,ps]  -> log $ toList ps !! (integer k - 1))
+  ,("pmf_lpdf",          \[k,ps]  -> log $ toList ps !! (integer k - 1))
   ,("gamma_lpdf",        \[g,a,b] -> real $ lpdfGamma (real g) (real a) (real b))
   ,("neg_binomial_lpdf", \[k,a,b] -> real $ lpdfNegBinomial (integer k) (real a) (real b))
   ,("poisson_lpdf",      \[k,l]   -> real $ lpdfPoisson (integer k) (real l))
