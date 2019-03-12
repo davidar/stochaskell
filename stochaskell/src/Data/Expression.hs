@@ -347,6 +347,8 @@ instance (Eq t) => Eq (Expression t) where
 instance (Ord t) => Ord (Expression t) where
   e `compare` f = runExpr e `compare` runExpr f
 
+instance (ExprTuple a, ExprType t) => Show (a -> Expression t) where
+  show f = "\\input ->\n"++ (indent . show . erase $ f (entuple $ symbol "input"))
 instance (ExprTuple a, ExprTuple b, ExprType t) => Show (a -> b -> Expression t) where
   show f = "\\input_a input_b ->\n"++ (indent . show . erase $
     f (entuple $ symbol "input_a") (entuple $ symbol "input_b"))
@@ -1555,7 +1557,10 @@ instance AA.LinearOperator DExpr DExpr where
         i <- fromDExpr m
         j <- fromDExpr v
         let (ArrayT _ [_,c] t) = typeRef i
-        simplify $ Apply "<\\>" [i,j] (ArrayT (Just "vector") [c] t)
+            t' = case typeRef j of
+              ArrayT _ [_]   _ -> ArrayT (Just "vector") [c] t
+              ArrayT _ [_,n] _ -> ArrayT (Just "matrix") [c,n] t
+        simplify $ Apply "<\\>" [i,j] t'
     diag v = DExpr $ do
         i <- fromDExpr v
         let (ArrayT _ [n] t) = typeRef i

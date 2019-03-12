@@ -598,7 +598,9 @@ instance forall r f. ExprType r =>
           runState (head <$> fromProgExprs p) $
             PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
         TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
-        loopType = ArrayT Nothing sh t
+        loopType = case t of
+          ArrayT _ sh' t -> ArrayT Nothing (sh ++ sh') t
+          _ -> ArrayT Nothing sh t
         loop = Loop sh (Lambda dag act) loopType
     put $ PBlock (Block block') (loop:dists) given ns
     let name = Volatile ns (d-1) (length dists)

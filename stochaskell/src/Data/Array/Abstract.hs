@@ -243,6 +243,12 @@ class Matrix m i e | m -> i e where
     matrixRows :: m -> i
     -- | number of columns
     matrixCols :: m -> i
+    -- | pack vectors as rows of a matrix
+    designMatrix :: (Indexable v i e, Num i) => i -> AbstractArray i v -> m
+    designMatrix n a = matrix $ do
+        v <- a
+        i <- 1...n
+        return (v!i)
 
 data ShapedMatrix t = ShMat (Interval Integer) (Interval Integer) (LAD.Matrix t)
 instance (Show t, LA.Element t) => Show (ShapedMatrix t) where

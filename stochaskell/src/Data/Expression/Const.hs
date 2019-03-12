@@ -280,9 +280,18 @@ isZeros (Exact  a) = (0 ==) `all` elems a
 isZeros (Approx a) = (0 ==) `all` elems a
 
 listArray' :: [Interval Integer] -> [ConstVal] -> ConstVal
-listArray' sh xs = if any isApprox xs
+listArray' sh xs | isScalar `all` xs = if any isApprox xs
   then Approx $ listArray (unzip sh) (real    <$> xs)
   else Exact  $ listArray (unzip sh) (integer <$> xs)
+listArray' sh xs | ((lo',hi') ==) `all` bs' = if any isApprox xs
+  then Approx $ array (lo ++ lo', hi ++ hi')
+    [(is ++ js, real    (x!js)) | (is,x) <- range (lo,hi) `zip` xs
+                                , js <- range (lo',hi')]
+  else Exact  $ array (lo ++ lo', hi ++ hi')
+    [(is ++ js, integer (x!js)) | (is,x) <- range (lo,hi) `zip` xs
+                                , js <- range (lo',hi')]
+  where (lo,hi) = unzip sh
+        (lo',hi'):bs' = map bounds xs
 
 -- TODO: Exact when possible
 arrayStrings :: [([Integer], LC.ByteString)] -> ConstVal

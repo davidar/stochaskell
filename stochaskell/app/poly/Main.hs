@@ -57,14 +57,14 @@ xyData = [
   ( 3.91,   8.54),
   ( 3.96,  14.60)]
 
-designMatrix :: Z -> Z -> RVec -> RMat
-designMatrix n d x = matrix [ let p = cast (j-1) in (x!i)**p
-                            | i <- 1...n, j <- 1...(d+1) ]
+designMatrix' :: Z -> Z -> RVec -> RMat
+designMatrix' n d x = matrix [ let p = cast (j-1) in (x!i)**p
+                             | i <- 1...n, j <- 1...(d+1) ]
 
 poly :: Z -> Z -> P (RVec,R,RVec,RVec)
 poly n d = do
   x <- joint vector [ uniform (-4) 4 | i <- 1...n ]
-  let design = designMatrix n d x
+  let design = designMatrix' n d x
 
   let v = 10
   alpha <- invGamma 1 v
@@ -122,5 +122,5 @@ plotPoly t n xData yData d' samples =
     setColors [black `withOpacity` 0.02]
     plot $ line ("posterior d="++ show d') $
       map (sort . zip (list xData) . list . extract) samples
-  where design = designMatrix n d' xData
+  where design = designMatrix' n d' xData
         extract (_,beta) = design #> beta

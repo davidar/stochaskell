@@ -509,6 +509,10 @@ solveNode env block (Apply "**" [a,b] _) val =
   trace ("WARN assuming "++ show a ++" ** "++ show b ++" = "++ "[...]" {-show val-}) emptyEEnv
 solveNode env block (Apply "#>" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (reDExpr env block a <\> val)
+solveNode env block (Apply "<>" [a,b] _) val | evaluable env block a =
+  solveNodeRef env block b (reDExpr env block a <\> val)
+solveNode env block (Apply "<>" [a,b] _) val | evaluable env block b =
+  solveNodeRef env block a (tr' $ tr' (reDExpr env block b) <\> tr' val)
 solveNode env block (Apply "==" [a,b] _) val = EEnv $
   Map.singleton (LConstr $ ifB val (a' ==* b') (a' /=* b')) true
   where a' = reDExpr env block a
