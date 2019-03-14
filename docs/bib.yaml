@@ -1,23 +1,4 @@
 references:
-- id: borgstrom11
-  type: paper-conference
-  author:
-  - family: Borgström
-    given: Johannes
-  - family: Gordon
-    given: Andrew D.
-  - family: Greenberg
-    given: Michael
-  - family: Margetson
-    given: James
-  - family: Gael
-    given: Jurgen Van
-  issued:
-  - year: 2011
-  title: Measure transformer semantics for bayesian machine learning
-  container-title: Programming languages and systems
-  page: 77-96
-  DOI: 10.1007/978-3-642-19718-5\_5
 - id: goodman08
   type: paper-conference
   author:
@@ -37,41 +18,6 @@ references:
   container-title: Proceedings of the 24th Conference in Uncertainty in Artificial Intelligence
   page: 220-229
   URL: https://dblp.org/rec/html/conf/uai/GoodmanMRBT08
-- id: kroese11
-  type: book
-  author:
-  - family: Kroese
-    given: Dirk P.
-  - family: Taimre
-    given: Thomas
-  - family: Botev
-    given: Zdravko I.
-  issued:
-  - year: 2011
-  title: Handbook of Monte Carlo methods
-  publisher: John Wiley and Sons
-  publisher-place: New York, New York
-  ISBN: 978-0-470-17793-8
-  URL: http://montecarlohandbook.org
-- id: narayanan16
-  type: paper-conference
-  author:
-  - family: Narayanan
-    given: Praveen
-  - family: Carette
-    given: Jacques
-  - family: Romano
-    given: Wren
-  - family: Shan
-    given: Chung-chieh
-  - family: Zinkov
-    given: Robert
-  issued:
-  - year: 2016
-  title: Probabilistic inference by program transformation in Hakaru (system description)
-  container-title: Proceedings of the 13th International Symposium on Functional and Logic Programming
-  page: 62-79
-  DOI: 10.1007/978-3-319-29604-3_5
 - id: mansinghka14
   type: report
   author:
@@ -85,19 +31,6 @@ references:
   - year: 2014
   title: 'Venture: A higher-order probabilistic programming platform with programmable inference'
   URL: http://arxiv.org/abs/1404.0099
-- id: neal00
-  type: article-journal
-  author:
-  - family: Neal
-    given: Radford M.
-  issued:
-  - year: 2000
-  title: Markov chain sampling methods for Dirichlet process mixture models
-  container-title: Journal of Computational and Graphical Statistics
-  page: 249-265
-  volume: '9'
-  issue: '2'
-  DOI: 10.1080/10618600.2000.10474879
 - id: paige14
   type: paper-conference
   author:
@@ -111,32 +44,6 @@ references:
   container-title: Proceedings of The 31st International Conference on Machine Learning
   page: 1935-1943
   URL: http://jmlr.org/proceedings/papers/v32/paige14.html
-- id: rasmussen06
-  type: book
-  author:
-  - family: Rasmussen
-    given: C E
-  - family: Williams
-    given: C K I
-  issued:
-  - year: 2006
-  title: Gaussian processes for machine learning
-  publisher: University Press Group Limited
-  URL: http://gaussianprocess.org/gpml
-  ISBN: '9780262182539'
-- id: sethuraman94
-  type: article-journal
-  author:
-  - family: Sethuraman
-    given: Jayaram
-  issued:
-  - year: 1994
-  title: A constructive definition of Dirichlet priors
-  container-title: Statistica Sinica
-  page: 639-650
-  volume: '4'
-  issue: '2'
-  URL: http://www.jstor.org/stable/24305538
 - id: wingate11
   type: paper-conference
   author:
@@ -152,30 +59,6 @@ references:
   container-title: Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics
   page: 770-778
   URL: http://jmlr.org/proceedings/papers/v15/wingate11a.html
-- id: green09
-  type: report
-  author:
-  - family: Green
-    given: Peter J.
-  - family: Hastie
-    given: David I.
-  issued:
-  - year: 2009
-  title: Reversible jump MCMC
-  URL: https://people.maths.bris.ac.uk/~mapjg/papers/rjmcmc_20090613.pdf
-- id: green95
-  type: article-journal
-  author:
-  - family: Green
-    given: Peter J.
-  issued:
-  - year: 1995
-  title: Reversible jump Markov chain Monte Carlo computation and Bayesian model determination
-  container-title: Biometrika
-  page: 711-732
-  volume: '82'
-  issue: '4'
-  DOI: 10.1093/biomet/82.4.711
 - id: roberts19
   type: paper-conference
   author:

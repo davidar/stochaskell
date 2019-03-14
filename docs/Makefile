@@ -14,6 +14,7 @@ all: index.html
 		--katex \
 		--section-divs \
 		--from markdown+tex_math_single_backslash \
+		--filter pwcite \
 		--filter pandoc-citeproc \
 		--filter pandoc-sidenote \
 		--to html5+smart \

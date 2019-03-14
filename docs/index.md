@@ -1,8 +1,19 @@
 ---
 title: Stochaskell
 author: David A Roberts
-bibliography: bib.yaml
+bibliography:
+- bib.yaml
+- wcite.json
 link-citations: true
+citekeys:
+  borgstrom11: Q62035685
+  green95: Q29039791
+  green09: Q62050913
+  kroese11: Q62035817
+  narayanan16: Q60712709
+  neal00: Q62035686
+  rasmussen06: Q56662583
+  sethuraman94: Q62035977
 ---
 
 <section>

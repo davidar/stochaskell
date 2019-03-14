@@ -1,0 +1,268 @@
+[
+  {
+    "DOI": "10.1093/BIOMET/82.4.711",
+    "_wikiId": "Q29039791",
+    "author": [
+      {
+        "_ordinal": 1,
+        "family": "Green",
+        "given": "Peter J."
+      }
+    ],
+    "container-title": "Biometrika",
+    "id": "Q29039791",
+    "issue": "4",
+    "issued": {
+      "date-parts": [
+        [
+          1995,
+          1,
+          1
+        ]
+      ]
+    },
+    "page": "711-732",
+    "title": "Reversible jump Markov chain Monte Carlo computation and Bayesian model determination",
+    "type": "article-journal",
+    "volume": "82"
+  },
+  {
+    "ISBN": "978-0-262-18253-9",
+    "URL": "http://www.gaussianprocess.org/gpml/chapters/",
+    "_wikiId": "Q56662583",
+    "author": [
+      {
+        "_ordinal": 1,
+        "family": "Rasmussen",
+        "given": "Carl Edward"
+      },
+      {
+        "_ordinal": 2,
+        "family": "Williams",
+        "given": "C. K. I."
+      }
+    ],
+    "id": "Q56662583",
+    "issued": {
+      "date-parts": [
+        [
+          2006,
+          1,
+          1
+        ]
+      ]
+    },
+    "number-of-pages": "272",
+    "publisher": "MIT Press",
+    "title": "Gaussian Processes for Machine Learning",
+    "type": "book"
+  },
+  {
+    "DOI": "10.1007/978-3-319-29604-3_5",
+    "_wikiId": "Q60712709",
+    "author": [
+      {
+        "_ordinal": 1,
+        "family": "Narayanan",
+        "given": "Praveen"
+      },
+      {
+        "_ordinal": 2,
+        "family": "Carette",
+        "given": "Jacques"
+      },
+      {
+        "_ordinal": 3,
+        "family": "Romano",
+        "given": "Wren"
+      },
+      {
+        "_ordinal": 4,
+        "family": "Shan",
+        "given": "Chung-chieh"
+      },
+      {
+        "_ordinal": 5,
+        "family": "Zinkov",
+        "given": "Robert"
+      }
+    ],
+    "container-title": "Functional and Logic Programming",
+    "id": "Q60712709",
+    "issued": {
+      "date-parts": [
+        [
+          2016,
+          1,
+          1
+        ]
+      ]
+    },
+    "page": "62-79",
+    "title": "Probabilistic Inference by Program Transformation in Hakaru (System Description)",
+    "type": "paper-conference"
+  },
+  {
+    "DOI": "10.1007/978-3-642-19718-5_5",
+    "_wikiId": "Q62035685",
+    "author": [
+      {
+        "_ordinal": 1,
+        "family": "Borgström",
+        "given": "Johannes"
+      },
+      {
+        "_ordinal": 2,
+        "family": "Gordon",
+        "given": "Andrew D."
+      },
+      {
+        "_ordinal": 3,
+        "family": "Greenberg",
+        "given": "Michael"
+      },
+      {
+        "_ordinal": 4,
+        "family": "Margetson",
+        "given": "James"
+      },
+      {
+        "_ordinal": 5,
+        "family": "Van Gael",
+        "given": "Jurgen"
+      }
+    ],
+    "container-title": "Programming Languages and Systems",
+    "id": "Q62035685",
+    "issued": {
+      "date-parts": [
+        [
+          2011,
+          1,
+          1
+        ]
+      ]
+    },
+    "page": "77-96",
+    "title": "Measure Transformer Semantics for Bayesian Machine Learning",
+    "type": "paper-conference"
+  },
+  {
+    "DOI": "10.1080/10618600.2000.10474879",
+    "_wikiId": "Q62035686",
+    "author": [
+      {
+        "_ordinal": 1,
+        "family": "Neal",
+        "given": "Radford M."
+      }
+    ],
+    "container-title": "Journal of Computational and Graphical Statistics",
+    "id": "Q62035686",
+    "issue": "2",
+    "issued": {
+      "date-parts": [
+        [
+          2000,
+          1,
+          1
+        ]
+      ]
+    },
+    "page": "249-265",
+    "title": "Markov Chain Sampling Methods for Dirichlet Process Mixture Models",
+    "type": "article-journal",
+    "volume": "9"
+  },
+  {
+    "ISBN": "978-0-470-17793-8",
+    "_wikiId": "Q62035817",
+    "author": [
+      {
+        "_ordinal": -1,
+        "family": "Kroese",
+        "given": "Dirk P."
+      },
+      {
+        "_ordinal": -1,
+        "family": "Taimre",
+        "given": "Thomas"
+      },
+      {
+        "_ordinal": -1,
+        "family": "Botev",
+        "given": "Zdravko I."
+      }
+    ],
+    "id": "Q62035817",
+    "issued": {
+      "date-parts": [
+        [
+          2011,
+          1,
+          1
+        ]
+      ]
+    },
+    "number-of-pages": "772",
+    "publisher": "Wiley",
+    "publisher-place": "New York",
+    "title": "Handbook of Monte Carlo Methods",
+    "type": "book"
+  },
+  {
+    "URL": "http://www.jstor.org/stable/24305538",
+    "_wikiId": "Q62035977",
+    "author": [
+      {
+        "_ordinal": 1,
+        "family": "Sethuraman",
+        "given": "Jayaram"
+      }
+    ],
+    "container-title": "Statistica Sinica",
+    "id": "Q62035977",
+    "issue": "2",
+    "issued": {
+      "date-parts": [
+        [
+          1994,
+          1,
+          1
+        ]
+      ]
+    },
+    "page": "639-650",
+    "title": "A constructive definition of Dirichlet priors",
+    "type": "article-journal",
+    "volume": "4"
+  },
+  {
+    "URL": "https://people.maths.bris.ac.uk/~mapjg/papers/rjmcmc_20090613.pdf",
+    "_wikiId": "Q62050913",
+    "author": [
+      {
+        "_ordinal": -1,
+        "family": "Green",
+        "given": "Peter J."
+      },
+      {
+        "_ordinal": -1,
+        "family": "Hastie",
+        "given": "David I."
+      }
+    ],
+    "id": "Q62050913",
+    "issued": {
+      "date-parts": [
+        [
+          2009,
+          6,
+          13
+        ]
+      ]
+    },
+    "title": "Reversible jump MCMC",
+    "type": "report"
+  }
+]
