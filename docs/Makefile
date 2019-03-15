@@ -2,7 +2,8 @@ STYLES := \
 	tufte-pandoc-css/tufte-css/tufte.css \
 	tufte-pandoc-css/pandoc.css \
 	tufte-pandoc-css/pandoc-solarized.css \
-	tufte-pandoc-css/tufte-extra.css
+	tufte-pandoc-css/tufte-extra.css \
+	refs.css
 
 all: index.html
 	$(MAKE) -C ../stochaskell doc

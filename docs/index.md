@@ -5,6 +5,7 @@ bibliography:
 - bib.yaml
 - wcite.json
 link-citations: true
+wikidata-links: https://tools.wmflabs.org/reasonator/?q=
 citekeys:
   borgstrom11: Q62035685
   green95: Q29039791
