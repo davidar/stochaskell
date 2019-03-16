@@ -15,6 +15,10 @@ citekeys:
   neal00: Q62035686
   rasmussen06: Q56662583
   sethuraman94: Q62035977
+  goodman08: DBLP:conf/uai/GoodmanMRBT08
+  mansinghka14: DBLP:journals/corr/MansinghkaSP14
+  paige14: DBLP:conf/icml/PaigeW14
+  wingate11: DBLP:journals/jmlr/WingateSG11
 ---
 
 <section>

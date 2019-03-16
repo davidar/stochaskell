@@ -16,6 +16,7 @@ all: index.html
 		--section-divs \
 		--from markdown+tex_math_single_backslash \
 		--filter pwcite \
+		--lua-filter dblp-cite.lua \
 		--filter pandoc-citeproc \
 		--filter pandoc-sidenote \
 		--to html5+smart \

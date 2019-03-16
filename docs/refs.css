@@ -1,13 +1,13 @@
 #refs > :target {
   background: #FDF6E3;
 }
-a.wikidata-link {
+a.wikidata-link, a.dblp-link {
   float: right;
   height: 1.25em;
   background-position: center !important;
   opacity: 0.1;
   transition: opacity 0.4s ease;
 }
-a.wikidata-link:hover {
+a.wikidata-link:hover, a.dblp-link:hover {
   opacity: 1;
 }

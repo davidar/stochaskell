@@ -100,10 +100,10 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <h2>Motivation</h2>
 <p>At one end of the probabilistic programming spectrum, systems like <a href="https://mc-stan.org/">Stan</a> produce high-performance inference programs utilising sampling algorithms such as Hamiltonian Monte Carlo (HMC). However, a consequence of this is that Stan does not support sampling discrete model parameters, requiring users to manually marginalise them out of the model prior to implementing it in Stan.<span><label for="sn-1" class="margin-toggle sidenote-number"></label><input type="checkbox" id="sn-1" class="margin-toggle"/><span class="sidenote">See <a href="https://mc-stan.org/docs/2_18/stan-users-guide/latent-discrete-chapter.html">§7 of <em>Stan User’s Guide</em></a>.<br />
 <br />
-</span></span> In particular, this precludes the ability to perform inference on models in which the dimensionality of the parameter space is itself a random variable. At the other end of the spectrum, implementations of Church <span class="citation" data-cites="goodman08">(Goodman et al. <a href="#ref-goodman08">2008</a>)</span> emphasise the ability to perform inference with few limitations on the models permitted.</p>
+</span></span> In particular, this precludes the ability to perform inference on models in which the dimensionality of the parameter space is itself a random variable. At the other end of the spectrum, implementations of Church <span class="citation" data-cites="DBLP:conf/uai/GoodmanMRBT08">(Goodman et al. <a href="#ref-DBLP:conf/uai/GoodmanMRBT08">2008</a>)</span> emphasise the ability to perform inference with few limitations on the models permitted.</p>
 <p>Unfortunately, the model specification language is often tightly coupled with the system for translating the specification into an executable inference program. This requires users to rewrite their models in a number of different languages in order to fully take advantage of the variety of available probabilistic programming systems. Not only is this a burden on the user, but it also limits the ability to integrate a number of different probabilistic programming systems in the implementation of a single model. For instance, it may be desirable to infer continuous model parameters with Stan, whilst delegating the discrete and trans-dimensional parameters of the same model to a more universally applicable method.</p>
 <p>Here we present Stochaskell, a probabilistic programming language designed for portability, allowing models and inference strategies to be written in a single language, but inference to be performed by a variety of probabilistic programming systems. This is achieved through runtime code generation, whereby code is automatically produced to perform inference via an external probabilistic programming system on subsets of the model specified by the user. In this way, users can benefit from the diverse probabilistic programming ecosystem without the cost of manually rewriting models in multiple different languages.</p>
-<p>Many probabilistic programming systems — particularly those implementing the technique described by <span class="citation" data-cites="wingate11">Wingate, Stuhlmueller, and Goodman (<a href="#ref-wingate11">2011</a>)</span> — rely on code generation by translating probabilistic programs to a <em>general-purpose</em> programming language. Probabilistic C <span class="citation" data-cites="paige14">(Paige and Wood <a href="#ref-paige14">2014</a>)</span> goes further by positioning itself as a code generation <em>target</em> language for other probabilistic programming systems. Hakaru <span class="citation" data-cites="Q60712709">(Narayanan et al. <a href="#ref-Q60712709">2016</a>)</span> performs inference through program transformation, but both the source and target are expressed in the same probabilistic programming language. The Fun language <span class="citation" data-cites="Q62035685">(Borgström et al. <a href="#ref-Q62035685">2011</a>)</span> is implemented through compilation to Infer.NET programs. To the best of our knowledge, Stochaskell is the first probabilistic programming language capable of generating code for multiple probabilistic programming systems, spanning diverse probabilistic programming paradigms.</p>
+<p>Many probabilistic programming systems — particularly those implementing the technique described by <span class="citation" data-cites="DBLP:journals/jmlr/WingateSG11">Wingate, Stuhlmüller, and Goodman (<a href="#ref-DBLP:journals/jmlr/WingateSG11">2011</a>)</span> — rely on code generation by translating probabilistic programs to a <em>general-purpose</em> programming language. Probabilistic C <span class="citation" data-cites="DBLP:conf/icml/PaigeW14">(Paige and Wood <a href="#ref-DBLP:conf/icml/PaigeW14">2014</a>)</span> goes further by positioning itself as a code generation <em>target</em> language for other probabilistic programming systems. Hakaru <span class="citation" data-cites="Q60712709">(Narayanan et al. <a href="#ref-Q60712709">2016</a>)</span> performs inference through program transformation, but both the source and target are expressed in the same probabilistic programming language. The Fun language <span class="citation" data-cites="Q62035685">(Borgström et al. <a href="#ref-Q62035685">2011</a>)</span> is implemented through compilation to Infer.NET programs. To the best of our knowledge, Stochaskell is the first probabilistic programming language capable of generating code for multiple probabilistic programming systems, spanning diverse probabilistic programming paradigms.</p>
 </section>
 <section id="probabilistic-modelling" class="level2">
 <h2>Probabilistic Modelling</h2>
@@ -194,7 +194,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <br />
 </span></span> for instance given a probabilistic program <code>prior</code> and some <code>observed</code> data:</p>
 <div class="sourceCode" id="cb10"><pre class="sourceCode hs"><code class="sourceCode haskell"><a class="sourceLine" id="cb10-1" title="1">posterior <span class="fu">=</span> [ z <span class="fu">|</span> (z,y) <span class="ot">&lt;-</span> prior, y <span class="fu">==</span> observed ]</a></code></pre></div>
-<p>Stochaskell supports programmable inference, as introduced by <span class="citation" data-cites="mansinghka14">Mansinghka, Selsam, and Perov (<a href="#ref-mansinghka14">2014</a>)</span>, with inference strategies expressed in the same language as the model, i.e. Haskell. This allows us to seamlessly combine different inference methods, be they provided by native Haskell code or external probabilistic programming systems. In the latter case, runtime code generation allows us to offload inference of different parts of a model without any manual code duplication.</p>
+<p>Stochaskell supports programmable inference, as introduced by <span class="citation" data-cites="DBLP:journals/corr/MansinghkaSP14">Mansinghka, Selsam, and Perov (<a href="#ref-DBLP:journals/corr/MansinghkaSP14">2014</a>)</span>, with inference strategies expressed in the same language as the model, i.e. Haskell. This allows us to seamlessly combine different inference methods, be they provided by native Haskell code or external probabilistic programming systems. In the latter case, runtime code generation allows us to offload inference of different parts of a model without any manual code duplication.</p>
 <section id="stan-integration" class="level3">
 <h3>Stan Integration</h3>
 <p>Stochaskell integrates with Stan, to provide high-performance inference for (conditionally) fixed-dimensional, continuous model parameters. This is achieved by automatically translating Stochaskell programs into Stan code, compiling the resulting code with <a href="https://mc-stan.org/users/interfaces/cmdstan">CmdStan</a>, then executing the compiled model and parsing the results so that they can be further processed within Haskell. This allows the user to offload inference to Stan with a single line of code, receiving a list of posterior samples in return:<span><label for="sn-10" class="margin-toggle">&#8853;</label><input type="checkbox" id="sn-10" class="margin-toggle"/><span class="marginnote"> <img src="images/gp-stan.svg" /> Plot of posterior samples from the Gaussian process classification model program from <a href="#probabilistic-modelling">the previous section</a>, sampled via the Stan backend. <a href="https://mybinder.org/v2/gh/davidar/stochaskell/master?filepath=gp.ipynb"><img src="https://mybinder.org/badge_logo.svg" alt="Binder" /></a><br />
@@ -210,7 +210,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <br />
 </span></span></p>
 <div class="sourceCode" id="cb12"><pre class="sourceCode hs"><code class="sourceCode haskell"><a class="sourceLine" id="cb12-1" title="1">samples <span class="ot">&lt;-</span> mhChurch posterior</a></code></pre></div>
-<p>The main conceptual difference from the Stan code generation is that for Church, arrays are represented by <em>memoised functions</em>. In particular, random arrays — constructed with the <code>joint</code> keyword in Stochaskell — utilise Church’s support for <em>stochastic memoisation</em> <span class="citation" data-cites="goodman08">(Goodman et al. <a href="#ref-goodman08">2008</a>, sec. 2.1)</span>.</p>
+<p>The main conceptual difference from the Stan code generation is that for Church, arrays are represented by <em>memoised functions</em>. In particular, random arrays — constructed with the <code>joint</code> keyword in Stochaskell — utilise Church’s support for <em>stochastic memoisation</em> <span class="citation" data-cites="DBLP:conf/uai/GoodmanMRBT08">(Goodman et al. <a href="#ref-DBLP:conf/uai/GoodmanMRBT08">2008</a>, sec. 2.1)</span>.</p>
 <p>The figure on the right illustrates a simulation of the DP mixture model program presented in <a href="#probabilistic-modelling">the previous section</a>, sampled via the Church backend.</p>
 </section>
 <section id="metropolishastings" class="level3">
@@ -295,8 +295,8 @@ docker run -it -p8888:8888 stochaskell:latest
 <div id="ref-Q62035685">
 <p>Borgström, Johannes, Andrew D. Gordon, Michael Greenberg, James Margetson, and Jurgen Van Gael. 2011. “Measure Transformer Semantics for Bayesian Machine Learning.” In <em>Programming Languages and Systems</em>, 77–96. <a href="https://doi.org/10.1007/978-3-642-19718-5_5">https://doi.org/10.1007/978-3-642-19718-5_5</a>.</p>
 </div>
-<div id="ref-goodman08">
-<p>Goodman, Noah D, Vikash K Mansinghka, Daniel M Roy, Keith Bonawitz, and Joshua B Tenenbaum. 2008. “Church: A Language for Generative Models.” In <em>Proceedings of the 24th Conference in Uncertainty in Artificial Intelligence</em>, 220–29. <a href="https://dblp.org/rec/html/conf/uai/GoodmanMRBT08">https://dblp.org/rec/html/conf/uai/GoodmanMRBT08</a>.</p>
+<div id="ref-DBLP:conf/uai/GoodmanMRBT08">
+<p>Goodman, Noah D., Vikash K. Mansinghka, Daniel M. Roy, Keith Bonawitz, and Joshua B. Tenenbaum. 2008. “Church: A Language for Generative Models.” In <em>UAI 2008, Proceedings of the 24th Conference in Uncertainty in Artificial Intelligence, Helsinki, Finland, July 9-12, 2008</em>, edited by David A. McAllester and Petri Myllymäki, 220–29. AUAI Press. <a href="https://dslpitt.org/uai/displayArticleDetails.jsp?mmnu=1&amp;smnu=2&amp;article_id=1346&amp;proceeding_id=24">https://dslpitt.org/uai/displayArticleDetails.jsp?mmnu=1&amp;smnu=2&amp;article_id=1346&amp;proceeding_id=24</a>.</p>
 </div>
 <div id="ref-Q29039791">
 <p>Green, Peter J. 1995. “Reversible Jump Markov Chain Monte Carlo Computation and Bayesian Model Determination.” <em>Biometrika</em> 82 (4): 711–32. <a href="https://doi.org/10.1093/BIOMET/82.4.711">https://doi.org/10.1093/BIOMET/82.4.711</a>.</p>
@@ -307,8 +307,8 @@ docker run -it -p8888:8888 stochaskell:latest
 <div id="ref-Q62035817">
 <p>Kroese, Dirk P., Thomas Taimre, and Zdravko I. Botev. 2011. <em>Handbook of Monte Carlo Methods</em>. New York: Wiley.</p>
 </div>
-<div id="ref-mansinghka14">
-<p>Mansinghka, Vikash, Daniel Selsam, and Yura Perov. 2014. “Venture: A Higher-Order Probabilistic Programming Platform with Programmable Inference.” <a href="http://arxiv.org/abs/1404.0099">http://arxiv.org/abs/1404.0099</a>.</p>
+<div id="ref-DBLP:journals/corr/MansinghkaSP14">
+<p>Mansinghka, Vikash K., Daniel Selsam, and Yura N. Perov. 2014. “Venture: A Higher-Order Probabilistic Programming Platform with Programmable Inference.” <em>CoRR</em> abs/1404.0099. <a href="http://arxiv.org/abs/1404.0099">http://arxiv.org/abs/1404.0099</a>.</p>
 </div>
 <div id="ref-Q60712709">
 <p>Narayanan, Praveen, Jacques Carette, Wren Romano, Chung-chieh Shan, and Robert Zinkov. 2016. “Probabilistic Inference by Program Transformation in Hakaru (System Description).” In <em>Functional and Logic Programming</em>, 62–79. <a href="https://doi.org/10.1007/978-3-319-29604-3_5">https://doi.org/10.1007/978-3-319-29604-3_5</a>.</p>
@@ -316,8 +316,8 @@ docker run -it -p8888:8888 stochaskell:latest
 <div id="ref-Q62035686">
 <p>Neal, Radford M. 2000. “Markov Chain Sampling Methods for Dirichlet Process Mixture Models.” <em>Journal of Computational and Graphical Statistics</em> 9 (2): 249–65. <a href="https://doi.org/10.1080/10618600.2000.10474879">https://doi.org/10.1080/10618600.2000.10474879</a>.</p>
 </div>
-<div id="ref-paige14">
-<p>Paige, Brooks, and Frank Wood. 2014. “A Compilation Target for Probabilistic Programming Languages.” In <em>Proceedings of the 31st International Conference on Machine Learning</em>, 1935–43. <a href="http://jmlr.org/proceedings/papers/v32/paige14.html">http://jmlr.org/proceedings/papers/v32/paige14.html</a>.</p>
+<div id="ref-DBLP:conf/icml/PaigeW14">
+<p>Paige, Brooks, and Frank D. Wood. 2014. “A Compilation Target for Probabilistic Programming Languages.” In <em>Proceedings of the 31th International Conference on Machine Learning, ICML 2014, Beijing, China, 21-26 June 2014</em>, 32:1935–43. JMLR Workshop and Conference Proceedings. JMLR.org. <a href="http://jmlr.org/proceedings/papers/v32/paige14.html">http://jmlr.org/proceedings/papers/v32/paige14.html</a>.</p>
 </div>
 <div id="ref-Q56662583">
 <p>Rasmussen, Carl Edward, and C. K. I. Williams. 2006. <em>Gaussian Processes for Machine Learning</em>. MIT Press. <a href="http://www.gaussianprocess.org/gpml/chapters/">http://www.gaussianprocess.org/gpml/chapters/</a>.</p>
@@ -328,8 +328,8 @@ docker run -it -p8888:8888 stochaskell:latest
 <div id="ref-Q62035977">
 <p>Sethuraman, Jayaram. 1994. “A Constructive Definition of Dirichlet Priors.” <em>Statistica Sinica</em> 4 (2): 639–50. <a href="http://www.jstor.org/stable/24305538">http://www.jstor.org/stable/24305538</a>.</p>
 </div>
-<div id="ref-wingate11">
-<p>Wingate, David, Andreas Stuhlmueller, and Noah D. Goodman. 2011. “Lightweight Implementations of Probabilistic Programming Languages via Transformational Compilation.” In <em>Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics</em>, 770–78. <a href="http://jmlr.org/proceedings/papers/v15/wingate11a.html">http://jmlr.org/proceedings/papers/v15/wingate11a.html</a>.</p>
+<div id="ref-DBLP:journals/jmlr/WingateSG11">
+<p>Wingate, David, Andreas Stuhlmüller, and Noah D. Goodman. 2011. “Lightweight Implementations of Probabilistic Programming Languages via Transformational Compilation.” In <em>Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics, AISTATS 2011, Fort Lauderdale, Usa, April 11-13, 2011</em>, edited by Geoffrey J. Gordon, David B. Dunson, and Miroslav Dudı́k, 15:770–78. JMLR Proceedings. JMLR.org. <a href="http://www.jmlr.org/proceedings/papers/v15/wingate11a/wingate11a.pdf">http://www.jmlr.org/proceedings/papers/v15/wingate11a/wingate11a.pdf</a>.</p>
 </div>
 </div>
 </section>
@@ -349,6 +349,28 @@ docker run -it -p8888:8888 stochaskell:latest
 </script>
 <style type="text/css">a.wikidata-link {
   background: url(data:image/svg+xml;charset=utf-8;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMiIgd2lkdGg9IjEwNTAiIGhlaWdodD0iNTkwIj4NCiAgPHBhdGggZD0ibSAxMjAsNTQ1IGggMzAgViA0NSBIIDEyMCBWIDU0NSB6IG0gNjAsMCBoIDkwIFYgNDUgSCAxODAgViA1NDUgeiBNIDMwMCw0NSBWIDU0NSBoIDkwIFYgNDUgaCAtOTAgeiIgc3R5bGU9ImZpbGw6Izk5MDAwMCIgLz4NCiAgPHBhdGggZD0ibSA4NDAsNTQ1IGggMzAgViA0NSBIIDg0MCBWIDU0NSB6IE0gOTAwLDQ1IFYgNTQ1IGggMzAgViA0NSBIIDkwMCB6IE0gNDIwLDU0NSBoIDMwIFYgNDUgSCA0MjAgViA1NDUgeiBNIDQ4MCw0NSBWIDU0NSBoIDMwIFYgNDUgaCAtMzAgeiIgc3R5bGU9ImZpbGw6IzMzOTk2NiIgLz4NCiAgPHBhdGggZD0ibSA1NDAsNTQ1IGggOTAgViA0NSBoIC05MCBWIDU0NSB6IG0gMTIwLDAgaCAzMCBWIDQ1IEggNjYwIFYgNTQ1IHogTSA3MjAsNDUgViA1NDUgaCA5MCBWIDQ1IEggNzIwIHoiIHN0eWxlPSJmaWxsOiMwMDY2OTkiIC8+DQo8L3N2Zz4=) no-repeat;
+  background-size: contain;
+  padding-left: 1.8em;
+  margin-right: 0.2em;
+}
+</style>
+<script>
+(refs => {
+  const base = 'https://dblp.org/rec/html/'
+  Array.from(refs).filter(e => (e.id || '').match(/^ref-DBLP:.+$/))
+    .forEach(div => {
+      var did = div.id.substr(9)
+      var a = document.createElement('a')
+      a.className = 'dblp-link'
+      a.href = base + did
+      var p = div.firstElementChild
+      p.insertBefore(a, p.firstChild)
+    })
+})(document.getElementById('refs').childNodes || [])
+</script>
+<style type="text/css">
+a.dblp-link {
+  background: url(https://dblp.org/img/dblp.icon.192x192.png) no-repeat;
   background-size: contain;
   padding-left: 1.8em;
   margin-right: 0.2em;

@@ -1,0 +1,22 @@
+<script>
+(refs => {
+  const base = 'https://dblp.org/rec/html/'
+  Array.from(refs).filter(e => (e.id || '').match(/^ref-DBLP:.+$/))
+    .forEach(div => {
+      var did = div.id.substr(9)
+      var a = document.createElement('a')
+      a.className = 'dblp-link'
+      a.href = base + did
+      var p = div.firstElementChild
+      p.insertBefore(a, p.firstChild)
+    })
+})(document.getElementById('refs').childNodes || [])
+</script>
+<style type="text/css">
+a.dblp-link {
+  background: url(https://dblp.org/img/dblp.icon.192x192.png) no-repeat;
+  background-size: contain;
+  padding-left: 1.8em;
+  margin-right: 0.2em;
+}
+</style>
