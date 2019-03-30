@@ -14,7 +14,7 @@ module Language.Stochaskell
   -- ** Recursion
   , foldl, foldr, scanl, scanr
   -- *** Helpers
-  , find', findSortedInsertIndex, min', sum', symbol, symbols
+  , constSymbol, d, find', findSortedInsertIndex, min', solve_, solveP_, sum', symbol, symbols
 
   -- * Linear algebra
   , InnerProduct(..)
@@ -109,6 +109,7 @@ import Data.Expression hiding (apply,const)
 import Data.Expression.Case
 import Data.Expression.Const hiding (isScalar)
 import Data.Expression.Const.IO
+import Data.Expression.Eval
 import Data.List.Utils hiding (join)
 import Data.Number.Transfinite hiding (log,isNaN,isInfinite)
 import Data.Program

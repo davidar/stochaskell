@@ -78,6 +78,7 @@ stanNodeRef a | isBlockMatrix a =
   foldl1 appendRow [foldl1 appendCol (stanNodeRef <$> row) | row <- fromBlockMatrix a]
   where appendCol a b = "append_col("++ a ++", "++ b ++")"
         appendRow a b = "append_row("++ a ++", "++ b ++")"
+stanNodeRef Unconstrained{} = "UNCONSTRAINED"
 stanNodeRef r = error $ "stanNodeRef "++ show r
 
 

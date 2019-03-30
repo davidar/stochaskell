@@ -125,6 +125,10 @@ unconstrainedLike es = DExpr $ do
 symbol :: forall t. (ExprType t) => String -> Expression t
 symbol name = expr . return $ Var (Symbol name False) t
   where TypeIs t = typeOf :: TypeOf t
+-- | create a 'symbol' assumed to have a known value
+constSymbol :: forall t. (ExprType t) => String -> Expression t
+constSymbol name = expr . return $ Var (Symbol name True) t
+  where TypeIs t = typeOf :: TypeOf t
 -- | create a list of (one-letter) 'symbol's
 symbols :: (ExprType t) => String -> [Expression t]
 symbols names = symbol . return <$> names
@@ -288,9 +292,6 @@ instance Show DExpr where
   show e = showBlock block $ show ret
     where (ret, Block block) = runDExpr e
 
-fromDExprs :: [DExpr] -> State Block [NodeRef]
-fromDExprs = sequence . map fromDExpr
-
 data LVal = LVar Id
           | LSub Id [DExpr]
           | LField Id Type Tag Int
@@ -347,6 +348,9 @@ instance (Eq t) => Eq (Expression t) where
 instance (Ord t) => Ord (Expression t) where
   e `compare` f = runExpr e `compare` runExpr f
 
+runExprs :: (ExprTuple t) => t -> ([NodeRef], Block)
+runExprs = flip runState emptyBlock . mapM fromDExpr . fromExprTuple
+
 instance (ExprTuple a, ExprType t) => Show (a -> Expression t) where
   show f = "\\input ->\n"++ (indent . show . erase $ f (entuple $ symbol "input"))
 instance (ExprTuple a, ExprTuple b, ExprType t) => Show (a -> b -> Expression t) where
@@ -401,6 +405,8 @@ instance Show Type where
   show (SubrangeT t a b) = unwords ["Subrange", show t, show a, show b]
   show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
   --show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
+  show (ArrayT (Just "vector") _ t) | isScalar t = show t ++"Vec"
+  show (ArrayT (Just "matrix") _ t) | isScalar t = show t ++"Mat"
   show (ArrayT (Just name) _ t) = name ++" "++ show t
   show (TupleT ts) = show ts
   show (UnionT ts) = "Union"++ show ts
@@ -821,8 +827,8 @@ getNextLevel = do
 
 condD :: [(DExpr,DExpr)] -> DExpr
 condD cvs = DExpr $ do
-  is <- fromDExprs cs
-  js <- fromDExprs vs
+  is <- mapM fromDExpr cs
+  js <- mapM fromDExpr vs
   return $ Cond [(i,j) | (i,j) <- zip is js, getConstVal i /= Just 0] $
     coerces $ typeRef <$> js
   where (cs,vs) = unzip cvs

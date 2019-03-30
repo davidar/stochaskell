@@ -599,7 +599,9 @@ instance forall r f. ExprType r =>
             PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
         TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
         loopType = case t of
-          ArrayT _ sh' t -> ArrayT Nothing (sh ++ sh') t
+          ArrayT{} ->
+            let ArrayT _ sh' t = typeRef . fst . runExpr . fst . runProg "joint" $ ar!1
+            in ArrayT Nothing (sh ++ sh') t
           _ -> ArrayT Nothing sh t
         loop = Loop sh (Lambda dag act) loopType
     put $ PBlock (Block block') (loop:dists) given ns
@@ -649,6 +651,9 @@ solveP :: (ExprTuple t) => String -> P t -> t -> EEnv -> EEnv
 solveP ns prog vals = solveTuple block rets vals
   where (rets, pb) = runProgExprs ns prog
         block = definitions pb
+
+solveP_ :: (ExprTuple t) => P t -> t -> EEnv
+solveP_ prog vals = solveP "solve" prog vals emptyEEnv
 
 pdf :: (ExprTuple t, Show t) => P t -> t -> R
 pdf p = exp . lpdf p
@@ -1076,11 +1081,11 @@ mhAdjust adjust target proposal x = do
 -- | like 'mh' but returns a Stochaskell probabilistic program that can be
 -- used with 'Language.Stochaskell.compileCC', etc
 mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t)
-    => String -> P t -> (t -> P t) -> t -> P t
-mh' msg target proposal x = do
+    => P t -> (t -> P t) -> t -> P t
+mh' target proposal x = do
   let a = mhRatio target proposal
-  y <- debug (msg ++" proposing") <$> proposal x
-  accept <- bernoulli (min' 1 (debug (msg ++" acceptance ratio") $ a x y))
+  y <- debug "proposing" <$> proposal x
+  accept <- bernoulli (min' 1 (debug "acceptance ratio" $ a x y))
   return $ ifB accept y x
 
 -- | compute the M-H acceptance ratio

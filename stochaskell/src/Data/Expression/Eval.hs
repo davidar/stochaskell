@@ -389,8 +389,9 @@ solveD :: DExpr -> DExpr -> EEnv -> EEnv
 solveD e val env = aggregateLVals $ env `unionEEnv` solveNodeRef env block ret val
   where (ret, block) = runDExpr e
 
-solve_ :: Expression t -> Expression t -> EEnv
-solve_ a b = solve a b emptyEEnv
+solve_ :: (ExprTuple t) => t -> t -> EEnv
+solve_ a b = solveTuple block rets b emptyEEnv
+  where (rets, block) = runExprs a
 
 solveTupleD :: Block -> [NodeRef] -> [DExpr] -> EEnv -> EEnv
 solveTupleD block rets vals = aggregateLVals . compose
