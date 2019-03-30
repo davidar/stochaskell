@@ -7,11 +7,12 @@ Maintainer  : d@vidr.cc
 Stability   : experimental
 -}
 module Language.Stochaskell.Plot
-  ( ToPNG(..), kdeplot, renderAxis2
+  ( ToPNG(..), kde, kdeplot, renderAxis2, xlabel, xlim, ylabel, ylim
   -- * Re-exports
   -- ** "Graphics.Rendering.Chart.Easy"
   , module Graphics.Rendering.Chart.Easy
   , module Graphics.Rendering.Chart.Grid
+  , module Graphics.Rendering.Chart.Plot.FillBetween
   , module Graphics.Rendering.Chart.Plot.Histogram
   -- ** "Plots"
   , module Plots
@@ -29,6 +30,7 @@ import Graphics.Rendering.Chart.Backend.Cairo
 import Graphics.Rendering.Chart.Easy hiding (
   (...),Plot,AxisStyle,Legend,Vector,beside,magma)
 import Graphics.Rendering.Chart.Grid
+import Graphics.Rendering.Chart.Plot.FillBetween
 import Graphics.Rendering.Chart.Plot.Histogram
 import qualified Graphics.Rendering.Chart.Renderable
 import Plots hiding (Plot,AxisStyle,Legend,magma)
@@ -46,7 +48,10 @@ instance ToPNG (Diagrams.Core.QDiagram Cairo V2 Double Any) where
   toPNG f = renderCairo (f ++".png") $ mkSizeSpec2D (Just 800) (Just 600)
 
 kdeplot :: String -> Double -> [Double] -> EC (Layout Double Double) ()
-kdeplot s bw vals = plot $ line s [V.toList (fromPoints x) `zip` V.toList y]
+kdeplot s bw vals = plot $ line s [kde bw vals]
+
+kde :: Double -> [Double] -> [(Double,Double)]
+kde bw vals = V.toList (fromPoints x) `zip` V.toList y
   where dat = V.fromList vals :: Vector Double
         x = choosePoints 256 (bw * 3) dat
         y = estimatePDF gaussianKernel bw dat x
@@ -54,3 +59,8 @@ kdeplot s bw vals = plot $ line s [V.toList (fromPoints x) `zip` V.toList y]
 renderAxis2 :: State (Axis Cairo V2 Double) ()
             -> Diagrams.Core.QDiagram Cairo V2 Double Any
 renderAxis2 = renderAxis . flip execState r2Axis
+
+xlim l = layout_x_axis . laxis_generate .= scaledAxis def l
+ylim l = layout_y_axis . laxis_generate .= scaledAxis def l
+xlabel s = layout_x_axis . laxis_title .= s
+ylabel s = layout_y_axis . laxis_title .= s
