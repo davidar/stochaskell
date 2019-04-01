@@ -647,6 +647,7 @@ dirac c = do
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
 
+-- | 'solve' applied to program outputs
 solveP :: (ExprTuple t) => P t -> t -> EEnv
 solveP prog vals = solveP' "solve" prog vals emptyEEnv
 

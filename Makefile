@@ -27,5 +27,8 @@ $(IHASKELL_BIN):
 install: build $(IHASKELL_BIN)
 	stack exec -- ihaskell install --stack
 
+uninstall:
+	rm -f $(IHASKELL_BIN)
+
 jupyter: install
 	jupyter notebook

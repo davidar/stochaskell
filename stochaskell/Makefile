@@ -29,5 +29,7 @@ env: edward/env pymc3/env
 doc: build
 	stack haddock
 	stack exec --no-ghc-package-path -- standalone-haddock -o docs \
+		--compiler-exe=$(shell stack path --compiler-exe) \
+		--dist-dir=$(shell stack path --dist-dir) \
 		--package-db=$(shell stack path --snapshot-pkg-db) \
 		--package-db=$(shell stack path --local-pkg-db) .

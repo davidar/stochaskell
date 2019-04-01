@@ -7,7 +7,7 @@ Stability   : experimental
 -}
 module Language.Stochaskell.Expression
   ( Constructor(..), ConstVal, DExpr, Eval, Expression(..)
-  , Env, Expr, ExprTuple(..), ExprType(..), Id, LVal(LVar), NodeRef
+  , EEnv, Env, Expr, ExprTuple(..), ExprType(..), Id, LVal(LVar), NodeRef
   , Tag, Tags(..), TupleSize(..), Type(..), TypeOf(..), TypesOf(..)
   , boolT, tupleT, vecT, matT
   , eval_, eval'

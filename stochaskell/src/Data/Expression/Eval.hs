@@ -387,6 +387,7 @@ solveD :: DExpr -> DExpr -> EEnv -> EEnv
 solveD e val env = aggregateLVals $ env `unionEEnv` solveNodeRef env block ret val
   where (ret, block) = runDExpr e
 
+-- | equation solver / transformation inverter
 solve :: (ExprTuple t) => t -> t -> EEnv
 solve a b = solveTuple block rets b emptyEEnv
   where (rets, block) = runExprs a
@@ -613,6 +614,9 @@ deriv env e = Expression . derivNodeRef env block ret . fst . runExpr
 deriv_ :: Expression s -> Expression t -> RMat
 deriv_ = deriv emptyEEnv
 
+-- | automatic differentiation, eg:
+--
+-- > (z**2) `d` z
 d :: (ExprTuple s, ExprTuple t) => s -> t -> RMat
 d x y = subst emptyEEnv $ deriv_ (detuple x) (detuple y)
 
