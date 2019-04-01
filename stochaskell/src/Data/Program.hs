@@ -647,13 +647,13 @@ dirac c = do
 -- PROBABILITY DENSITIES                                                    --
 ------------------------------------------------------------------------------
 
-solveP :: (ExprTuple t) => String -> P t -> t -> EEnv -> EEnv
-solveP ns prog vals = solveTuple block rets vals
+solveP :: (ExprTuple t) => P t -> t -> EEnv
+solveP prog vals = solveP' "solve" prog vals emptyEEnv
+
+solveP' :: (ExprTuple t) => String -> P t -> t -> EEnv -> EEnv
+solveP' ns prog = solveTuple block rets
   where (rets, pb) = runProgExprs ns prog
         block = definitions pb
-
-solveP_ :: (ExprTuple t) => P t -> t -> EEnv
-solveP_ prog vals = solveP "solve" prog vals emptyEEnv
 
 pdf :: (ExprTuple t, Show t) => P t -> t -> R
 pdf p = exp . lpdf p

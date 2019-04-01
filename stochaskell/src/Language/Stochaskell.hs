@@ -14,7 +14,7 @@ module Language.Stochaskell
   -- ** Recursion
   , foldl, foldr, scanl, scanr
   -- *** Helpers
-  , constSymbol, d, find', findSortedInsertIndex, min', solve_, solveP_, sum', symbol, symbols
+  , constSymbol, d, find', findSortedInsertIndex, min', solve, solveP, sum', symbol, symbols
 
   -- * Linear algebra
   , InnerProduct(..)

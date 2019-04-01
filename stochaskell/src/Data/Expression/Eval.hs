@@ -383,14 +383,12 @@ aggregateConds' (EEnv env) = EEnv $ Map.union env' env
                 return (c &&* c',v)
           return (lval, substD emptyEEnv . condD $ conds')
 
-solve :: Expression t -> Expression t -> EEnv -> EEnv
-solve e val = solveD (erase e) (erase val)
 solveD :: DExpr -> DExpr -> EEnv -> EEnv
 solveD e val env = aggregateLVals $ env `unionEEnv` solveNodeRef env block ret val
   where (ret, block) = runDExpr e
 
-solve_ :: (ExprTuple t) => t -> t -> EEnv
-solve_ a b = solveTuple block rets b emptyEEnv
+solve :: (ExprTuple t) => t -> t -> EEnv
+solve a b = solveTuple block rets b emptyEEnv
   where (rets, block) = runExprs a
 
 solveTupleD :: Block -> [NodeRef] -> [DExpr] -> EEnv -> EEnv
