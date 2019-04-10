@@ -19,6 +19,13 @@ kernelCP n t cs kappa eta x y = go 1 where
                             && (cs!(k-1)) <= y && y < (cs!k)
                             then kernel kappa eta (cs!k - cs!(k-1)) x y
                             else go (k+1)
+{-
+kernelCP n t cs kappa eta x y =
+  if i == j then kernel kappa eta (cs' i - cs' (i-1)) x y else 0
+  where i = findSortedInsertIndex x cs
+        j = findSortedInsertIndex y cs
+        cs' i = if i == 0 then 0 else if i == integer (n+1) then t else (cs!i)
+-}
 
 covTree :: R -> Z -> RVec -> Int -> RVec -> R -> RVec -> R -> RMat
 covTree t n s lmax cs kappa etas eta0 = go lmax where
@@ -37,7 +44,7 @@ mGP t n lmax s = do
   etas <- joint vector [ gamma 1 1 | _ <- 1...integer lmax ]
   let k = 2^lmax - 1
   cs <- orderedSample (integer k) (uniform 0 t)
-  mu <- normal (vector [ 0 | _ <- 1...n ]) $
+  mu <- normalChol n (vector [ 0 | _ <- 1...n ]) $
     matrix [ kernel kappa eta0 t (s!i) (s!j) + if i == j then 1e-6 else 0
            | i <- 1...n, j <- 1...n ]
   return (kappa,eta0,etas,cs,mu)
@@ -46,9 +53,9 @@ prior :: R -> Z -> Z -> Int -> RVec -> R -> P (R,R,RVec,RVec,RVec,RMat)
 prior t n k lmax s noise = do
   (kappa,eta0,etas,cs,mu) <- mGP t n lmax s
   let cov = covTree t n s lmax cs kappa etas eta0
-            + matrix [ if i == j then noise else 0 | i <- 1...n, j <- 1...n ]
-  --gs <- normalsChol k n mu cov
-  gs <- joint (designMatrix n) [ normal mu cov :: P RVec | _ <- 1...k ]
+            + matrix [ if i == j then 1e-6 else 0 | i <- 1...n, j <- 1...n ]
+  gs' <- normalsChol k n mu cov
+  gs <- joint matrix [ normal (gs'!i!j) noise | i <- 1...k, j <- 1...n ]
   return (kappa,eta0,etas,cs,mu,gs)
 
 cut :: Z -> RMat -> Z -> R
@@ -106,16 +113,9 @@ stepC t n k lmax s (kappa,eta0,etas,cs,mu,gs) = do
     j | j == 2^lmax -> t
       | otherwise -> cs!integer j
 
-main = do
-  let t = 10
-      n = 100
-      lmax = 2
-      noise = 8e-3
-      k = 100
-  --let s = vector [ t * cast i / cast n | i <- 1...n ] :: RVec
-  let s = linspace (0, real t) $ integer n :: [Double]
-  (kappa,eta0,etas,cs,mu) <- simulate $ mGP t n lmax (list s)
 
+genData t n k lmax s noise = do
+  (kappa,eta0,etas,cs,mu) <- simulate $ mGP t n lmax (list s)
   let cov = covTree t n (list s) lmax cs kappa etas eta0
             + matrix [ if i == j then noise else 0 | i <- 1...n, j <- 1...n ]
   toPNG "mgp_cov" . renderAxis2 . heatMap' $ toList cov
@@ -127,9 +127,24 @@ main = do
   toPNG "mgp_incut" . toRenderable $
     plot $ line "" [[(i, real . incut n (abs ecov') $ integer i) :: (Int,Double)
                     | i <- [1..integer n-1]]]
+  return (cs,gs)
 
-  let s' = symbol "s"
-  print $ prior t n k lmax s' noise
-  print $ lpdf $ prior t n k lmax s' noise
-  print $ stepC t n k lmax s'
-  print $ mh' "" (prior t n k lmax s' noise) (stepC t n k lmax s')
+main = do
+  let t = 10
+      n = 100
+      lmax = 2
+      noise = 8e-3
+      k = 10
+  let s = linspace (0, real t) $ integer n :: [Double]
+  (cs,gs) <- genData t n k lmax s noise
+
+  let s' = vector [ t * cast i / cast n | i <- 1...n ] :: RVec
+  samples <- hmcStanInit 100
+    [ (kappa',eta0',etas',mu')
+    | (kappa',eta0',etas',cs',mu',gs') <- prior t n k lmax s' noise
+    , gs' == gs, cs' == cs ]
+    (1, 1, list (replicate lmax 1), list (replicate (integer n) 0))
+  let (kappa,eta0,etas,mu) = last samples
+  let cov = covTree t n (list s) lmax cs kappa etas eta0
+            + matrix [ if i == j then noise else 0 | i <- 1...n, j <- 1...n ]
+  toPNG "mgp_cov_post" . renderAxis2 . heatMap' $ toList cov
