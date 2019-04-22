@@ -1,6 +1,7 @@
 ---
 title: Stochaskell
 author: David A Roberts
+csl: styles/chicago-author-date.csl
 bibliography:
 - bib.yaml
 - wcite.json

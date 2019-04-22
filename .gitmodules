@@ -16,3 +16,9 @@
 [submodule "stochaskell/standalone-haddock"]
 	path = stochaskell/standalone-haddock
 	url = https://github.com/davidar/standalone-haddock.git
+[submodule "docs/styles"]
+	path = docs/styles
+	url = https://github.com/citation-style-language/styles.git
+[submodule "docs/poster/gemini"]
+	path = docs/poster/gemini
+	url = https://github.com/anishathalye/gemini.git
