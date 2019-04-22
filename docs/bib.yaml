@@ -8,8 +8,16 @@ references:
     given: Marcus
   - family: Taimre
     given: Thomas
+  editor:
+  - family: Chaudhuri
+    given: Kamalika
+  - family: Sugiyama
+    given: Masashi
   issued:
   - year: 2019
   title: Reversible Jump Probabilistic Programming
   container-title: Proceedings of the 22nd International Conference on Artificial Intelligence and Statistics
-  page: to appear
+  publisher: PMLR
+  page: 634-643
+  volume: '89'
+  URL: http://proceedings.mlr.press/v89/roberts19a.html

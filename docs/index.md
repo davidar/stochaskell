@@ -24,6 +24,10 @@ citekeys:
 
 <section>
 
+^[{-}
+[![AISTATS 2019 poster](poster/poster.svg)](poster/poster.pdf)
+]
+
 Probabilistic programming systems automate the task of translating specifications of probabilistic models into executable inference procedures.
 Here we present *Stochaskell*, an embedded domain-specific language for specifying probabilistic programs
 that can be compiled to multiple existing probabilistic programming languages.
