@@ -1,4 +1,5 @@
 STYLES := \
+	normalize.css/normalize.css \
 	tufte-pandoc-css/tufte-css/tufte.css \
 	tufte-pandoc-css/pandoc.css \
 	tufte-pandoc-css/pandoc-solarized.css \

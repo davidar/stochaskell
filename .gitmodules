@@ -22,3 +22,6 @@
 [submodule "docs/poster/gemini"]
 	path = docs/poster/gemini
 	url = https://github.com/anishathalye/gemini.git
+[submodule "docs/normalize.css"]
+	path = docs/normalize.css
+	url = https://github.com/necolas/normalize.css.git
