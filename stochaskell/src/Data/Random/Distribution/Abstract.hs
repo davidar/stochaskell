@@ -95,6 +95,13 @@ instance Distribution LKJ (Double, Interval Integer) IO (ShapedMatrix Double) wh
     return . ShMat (1,2) (1,2) $ LAD.matrix 2 [1,r,r,1]
 corrLKJ v sh = sample $ LKJ (v,sh)
 
+newtype Logistic a = Logistic a
+instance Distribution Logistic (Double,Double) IO Double where
+  sample (Logistic (m,s)) = do
+    u <- uniform 0 1
+    return $ m + s * log (u / (1 - u))
+logistic m s = sample $ Logistic (m,s)
+
 newtype NegBinomial a = NegBinomial a
 instance Distribution NegBinomial (Double, Double) IO Integer where
   sample (NegBinomial (a,b)) = do

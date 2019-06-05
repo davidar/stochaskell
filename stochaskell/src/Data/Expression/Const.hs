@@ -80,6 +80,7 @@ constFuns = Map.fromList
   ,("not", notB . head)
   ,("min", \[a,b] -> if a < b then a else b)
   ,("max", \[a,b] -> if a > b then a else b)
+  ,("floor", floor . head)
   ,("id", head)
   ,("deleteIndex", \[a,i]   -> deleteIndex a [integer i])
   ,("insertIndex", \[a,i,x] -> insertIndex a [integer i] x)
@@ -355,6 +356,10 @@ instance Integral ConstVal where
     quotRem c k = let (q,r) = quotRem (toInteger c) (toInteger k)
                   in (fromInteger q, fromInteger r)
 
+instance RealFrac ConstVal where
+    floor (Exact a) = integer (toScalar a)
+    floor (Approx a) = floor (toScalar a)
+
 instance IsList ConstVal where
     type Item ConstVal = ConstVal
     fromList [] = Exact $ array ([1],[0]) []
@@ -406,7 +411,7 @@ instance Vector ConstVal Integer ConstVal where
       where toVector' x | isScalar x = toVector (list [x])
                         | otherwise  = toVector x
     vectorSize v = case shape v of
-      [(1,n)] -> n
+      (1,n):_ -> n -- TODO: conflated with matrixRows
       sh -> error $ "vectorSize "++ show sh
 
 instance Semigroup ConstVal where

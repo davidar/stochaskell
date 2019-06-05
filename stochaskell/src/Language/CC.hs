@@ -369,6 +369,7 @@ ccRead' l e | UnionT tss <- typeRef e =
      "  break;",
      "}"]) ++"\n}"
   where c = Var (Dummy l 0) IntT
+ccRead' _ e = error $ "ccRead' "++ show (typeRef e)
 
 ccPrint :: Int -> NodeRef -> String
 ccPrint _ e | isScalar (typeRef e) = "cout << "++ ccNodeRef e ++" << ' ';"

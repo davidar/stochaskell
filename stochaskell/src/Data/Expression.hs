@@ -1275,6 +1275,10 @@ find' p def v = foldr f def v where f i j = ifB (p i) i j
 sum' :: (ExprType a, Num a) => Expression [a] -> Expression a
 sum' = foldl (+) 0
 
+-- | Stochaskell equivalent of 'Prelude.floor'
+floor' :: R -> Z
+floor' x = apply "floor" IntT [x]
+
 -- | given a value and a sorted vector, find the index at which we could
 -- 'Data.Array.Abstract.insertAt' the value whilst keeping the vector sorted
 findSortedInsertIndex :: R -> RVec -> Z

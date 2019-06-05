@@ -1,4 +1,5 @@
 .PHONY: build
+.PRECIOUS: %.prof
 
 build: env
 	stack build --interleaved-output

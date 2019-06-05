@@ -307,11 +307,19 @@ mixture' qps = do
   where (qs,progs) = unzip qps
         qv = blockVector [cast q | q <- qs] :: RVec
 
+conditionGuards :: B -> P t -> P t
+conditionGuards c p = P $ do
+  r <- fromProg p
+  PBlock block dists given ns <- get
+  let given' = Map.mapKeys (\k -> LCond True k $ erase c) given
+  put $ PBlock block dists given' ns
+  return r
+
 type instance BooleanOf (P t) = B
 instance (IfB t, BooleanOf t ~ B) => IfB (P t) where
   ifB c p q = do
-    x <- p
-    y <- q
+    x <- conditionGuards c p
+    y <- conditionGuards (notB c) q
     return $ ifB c x y
 
 
@@ -448,6 +456,12 @@ instance Distribution LKJ (R, Interval Z) P RMat where
         l <- fromExpr a
         h <- fromExpr b
         return $ Dist "lkj_corr" [i] (ArrayT (Just "corr_matrix") [(l,h),(l,h)] RealT)
+
+instance Distribution Logistic (R,R) P R where
+    sample (Logistic (m,s)) = dist $ do
+        i <- fromExpr m
+        j <- fromExpr s
+        return $ Dist "logistic" [i,j] RealT
 
 instance Distribution NegBinomial (R,R) P Z where
     sample (NegBinomial (a,b)) = dist $ do
@@ -623,16 +637,18 @@ instance forall r f. ExprType r =>
 
 type instance ConditionOf (P ()) = Expression Bool
 instance MonadGuard P where
-    guard cond = P $ do -- TODO: weaker assumptions
+    guard = P . go where
+      go cond = do
         (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
         PBlock block dists given ns <- get
         let dag = topDAG block
         assert (i == length (nodes dag) - 1) $ return ()
-        let (Just (Apply "==" [Var j t, Const a _] _)) =
-              lookup i $ nodes dag
-            dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
-        put $ PBlock (deriveBlock dag' block) dists
+        case lookup i (nodes dag) of
+          Just (Apply "==" [Var j t, Const a _] _) ->
+            let dag' = dag { bimap = Bimap.deleteR i (bimap dag) }
+            in put $ PBlock (deriveBlock dag' block) dists
                      (Map.insert (LVar j) (a,t) given) ns
+          _ -> go (cond ==* true)
 
 dirac :: (Expression t) -> P (Expression t)
 dirac c = do
@@ -722,7 +738,7 @@ pdfPNode r lg env block (Loop _ lam _) a
   | lg        = E.foldl (\l e -> l + f e) 0 idxs
   | otherwise = E.foldl (\p e -> p * f e) 1 idxs
   where n = Expression $ vectorSize a
-        idxs = vector [ i | i <- 1...n ]
+        idxs = vector [ i | i <- 1...n ] :: ZVec
         f e = let j = erase e in pdfJoint r lg env block lam [j] (a!j)
 pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
   i <- fromDExpr x
@@ -901,15 +917,24 @@ sampleP' env p = fromConstVals <$> samplePBlock env pb rets
   where (rets, pb) = runProgExprs "sim" p
 
 samplePBlock :: Env -> PBlock -> [NodeRef] -> IO [ConstVal]
-samplePBlock env (PBlock block refs _ ns) rets = do
-    env' <- samplePNodes env block idents
-    let env'' = Map.filterWithKey (const . p' . getId') env'
-    return $ map (fromRight' . evalNodeRef env'' block) rets
-  where idents = [ (Volatile ns (dagLevel $ topDAG block) i, d)
-                 | (i,d) <- zip [0..] $ reverse refs ]
-        p' (Just Internal{}) = False
-        p' Nothing = False
-        p' _ = True
+samplePBlock env (PBlock block refs given ns) rets = go where
+  go = do
+    env' <- samplePNodes (evalBlock block env) block idents
+    let check (k@LVar{},(v,t)) = case Map.lookup k env' of
+          Nothing -> error $ "couldn't find "++ show k ++" in "++ show env'
+          Just c -> v == c
+        check (LCond _ k c,(v,t)) =
+          let c' = fromRight' $ evalD env' c
+          in c' == 0 || check (k,(v,t))
+        env'' = Map.filterWithKey (const . p' . getId') env'
+    if check `all` Map.toList given
+    then return $ map (fromRight' . evalNodeRef env'' block) rets
+    else trace "rejecting sample due to failed conditions" go
+  idents = [ (Volatile ns (dagLevel $ topDAG block) i, d)
+           | (i,d) <- zip [0..] $ reverse refs ]
+  p' (Just Internal{}) = False
+  p' Nothing = False
+  p' _ = True
 
 samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
 samplePNodes env _ [] = return env
@@ -960,6 +985,9 @@ samplePNode env block (Dist "geometric" [p] _) = fromInteger <$> geometric 0 p'
 samplePNode env block (Dist "lkj_corr" [v] (ArrayT _ sh _)) = fromMatrix <$> corrLKJ v' (head sh')
   where v' = toDouble . fromRight' $ evalNodeRef env block v
         sh' = evalShape env block sh
+samplePNode env block (Dist "logistic" [m,s] _) = fromDouble <$> logistic m' s'
+  where m' = toDouble . fromRight' $ evalNodeRef env block m
+        s' = toDouble . fromRight' $ evalNodeRef env block s
 samplePNode env block (Dist "neg_binomial" [a,b] _) = fromInteger <$> negBinomial a' b'
   where a' = toDouble . fromRight' $ evalNodeRef env block a
         b' = toDouble . fromRight' $ evalNodeRef env block b

@@ -14,7 +14,15 @@ module Language.Stochaskell
   -- ** Recursion
   , foldl, foldr, scanl, scanr
   -- *** Helpers
-  , constSymbol, d, find', findSortedInsertIndex, min', solve, solveP, sum', symbol, symbols
+  , constSymbol
+  , d
+  , factorial', logFactorial'
+  , find', findSortedInsertIndex
+  , floor'
+  , min'
+  , solve, solveP
+  , sum'
+  , symbol, symbols
 
   -- * Linear algebra
   , InnerProduct(..)
@@ -44,8 +52,8 @@ module Language.Stochaskell
   , Geometric, NegBinomial, PMF, Poisson
   , geometric, negBinomial, pmf, poisson
   -- *** Continuous
-  , Beta, Cauchy, Gamma, InvGamma, Normal, Normals, Uniform, Uniforms
-  , beta, cauchy, gamma, invGamma, normal, normals, uniform, uniforms
+  , Beta, Cauchy, Gamma, InvGamma, Logistic, Normal, Normals, Uniform, Uniforms
+  , beta, cauchy, gamma, invGamma, logistic, normal, normals, uniform, uniforms
   -- *** Vector
   , OrderedSample, PoissonProcess
   , orderedSample, poissonProcess
