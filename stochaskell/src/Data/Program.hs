@@ -352,24 +352,34 @@ distDs n s = P $ do
 -- | truncate distribution to given bounds
 truncated :: (Expression t) -> (Expression t) -> P (Expression t) -> P (Expression t)
 truncated a b p = P $ do
+  rollback <- get
   i <- liftExprBlock $ fromExpr a
   j <- liftExprBlock $ fromExpr b
   x <- fromProg p
   (Var name t) <- liftExprBlock $ fromExpr x
   PBlock block (d:rhs) given ns <- get
-  when (name /= Volatile ns (dagLevel $ topDAG block) (length rhs)) $
-    error "truncated: program does not appear to be primitive"
-  let g k | (Const c _) <- k, isInfinite c = Nothing
-          | otherwise = Just k
-      t' = SubrangeT t (g i) (g j)
-      d' = d { typePNode = t' }
-      Block (dag:par) = block
-      Just ptr = Apply "getExternal" [Var name t] t `Bimap.lookup` bimap dag
-      dag' = dag {bimap =
-        Apply "getExternal" [Var name t'] t' `Bimap.insert` ptr $ bimap dag}
-      block' = Block (dag':par)
-  put $ PBlock block' (d':rhs) given ns
-  return (expr $ return (Var name t'))
+  if name /= Volatile ns (dagLevel $ topDAG block) (length rhs) then
+    trace "truncated: program does not appear to be primitive, falling back to guard" $ do
+      put rollback
+      fromProg $ truncated' a b p
+  else do
+    let g k | (Const c _) <- k, isInfinite c = Nothing
+            | otherwise = Just k
+        t' = SubrangeT t (g i) (g j)
+        d' = d { typePNode = t' }
+        Block (dag:par) = block
+        Just ptr = Apply "getExternal" [Var name t] t `Bimap.lookup` bimap dag
+        dag' = dag {bimap =
+          Apply "getExternal" [Var name t'] t' `Bimap.insert` ptr $ bimap dag}
+        block' = Block (dag':par)
+    put $ PBlock block' (d':rhs) given ns
+    return (expr $ return (Var name t'))
+
+truncated' :: (Expression t) -> (Expression t) -> P (Expression t) -> P (Expression t)
+truncated' a b p = do
+  x <- p
+  guard $ a <=* x &&* x <=* b
+  return x
 
 {-
 transform :: (ExprTuple t) => P t -> P t
