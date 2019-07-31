@@ -51,6 +51,7 @@ library:
   exposed-modules:
   - Language.Church
   - Language.Edward
+  - Language.Graphviz
   - Language.PyMC3
   - Language.Stan
   - Language.Stochaskell
