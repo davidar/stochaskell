@@ -99,6 +99,7 @@ module Language.Stochaskell
   , stochaskell
   , tic
   , toc
+  , vizIR
   -- ** Re-exports
   , module Data.Either.Utils
   -- *** "Data.List.Utils"
@@ -125,6 +126,7 @@ import Data.Random.Distribution.Abstract
 import Data.Version
 import GHC.Exts (IsList(..))
 import Language.CC
+import Language.Graphviz
 import Language.Stan
 import Language.Stochaskell.Prelude
 import Paths_stochaskell (version)

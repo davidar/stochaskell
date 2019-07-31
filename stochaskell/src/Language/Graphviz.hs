@@ -7,6 +7,7 @@ import Data.List.Utils
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Program
+import System.Process
 import Util
 
 dotId :: [Label] -> Id -> String
@@ -14,6 +15,7 @@ dotId r j = case j of
   Dummy level i       -> prefix level ++"_i_"++ show level ++"_"++ show i
   Volatile ns level i -> prefix level ++"_x_"++ ns ++"_"++ show level ++"_"++ show i
   Internal level i    -> prefix level ++"_v_"++ show level ++"_"++ show i
+  Symbol name _       -> name
   where prefix level = if level == 0 then "" else r !! (level - 1)
 
 dotConst :: [Label] -> ConstVal -> String
@@ -35,7 +37,7 @@ dotNode r name (Array sh (Lambda dag ret) _) =
           | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   "subgraph cluster_array_"++ name ++" {\n"++ indent (
     "label=\"array\"\n"++
-    unlines [dotId r' j ++" [shape=\"rectangle\" label=\"index_"++ show i ++"\"]"
+    unlines [dotId r' j ++" [shape=\"rectangle\" label=\"index "++ show i ++"\"]"
             | (i,j) <- [1..] `zip` inputs dag] ++"\n"++
     dotDAG r' dag (Just ret) ++"\n"++
     name ++ sret ++"style=\"bold\"]"
@@ -68,7 +70,7 @@ dotPBlock :: PBlock -> [NodeRef] -> String
 dotPBlock pb@(PBlock block _ _ _) rets =
   dotDAG [] (topDAG block) Nothing ++"\n"++
   "subgraph cluster_program {\n"++ indent (
-    "label=\"program\"\n"++
+    "style=\"invis\"\n"++
     dotPNodes (pnodes pb) ++"\n"++
     unlines [dotId [] i ++" [style=\"bold\"]" | Var i _ <- rets]
   ) ++"\n}"
@@ -129,3 +131,6 @@ graphviz prog = "/*\n"++ showPBlock pb (show rets) ++"\n*/\n\n"++
   where (rets, pb) = isolateNodeRefPBlock f $ runProgExprs "ns" prog
         f Var{} = False
         f _ = True
+
+vizIR :: (ExprTuple t) => P t -> IO String
+vizIR = readProcess "dot" ["-Tsvg"] . graphviz
