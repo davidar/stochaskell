@@ -22,22 +22,31 @@ dotConst :: [Label] -> ConstVal -> String
 dotConst r c = last r ++"_c_"++ (replace "." "_" $ replace "-" "_" $ show c)
 
 dotConsts :: [Label] -> [NodeRef] -> String
-dotConsts r js =
-  unlines [dotConst r c ++" [shape=\"plain\" label=\""++ show c ++"\"]" | Const c _ <- js]
+dotConsts r js = unlines $ do
+  j <- js
+  case j of
+    Var (Symbol s _) _ -> return $ last r ++ s  ++ prefix ++ s      ++"\"]"
+    Const c _          -> return $ dotConst r c ++ prefix ++ show c ++"\"]"
+    _ -> []
+  where prefix = " [shape=\"plain\" label=\""
 
 dotNodeRef :: [Label] -> Label -> NodeRef -> String
-dotNodeRef r name Index{} = name ++" [label=\"!\"]"
+dotNodeRef r name (Index j js) =
+  name ++" [label=\"!\"]\n"++
+  dotConsts (r ++ [name]) (j:js)
 
 dotNode :: [Label] -> Label -> Node -> String
 dotNode _ _ (Apply "getExternal" _ _) = ""
 dotNode r name (Apply "id" [j] _) = dotNodeRef r name j
-dotNode r name (Apply f js _) = name ++" [label=\""++ f ++"\"]\n"++ dotConsts (r ++ [name]) js
+dotNode r name (Apply f js _) =
+  name ++" [label=\""++ f ++"\"]\n"++
+  dotConsts (r ++ [name]) js
 dotNode r name (Array sh (Lambda dag ret) _) =
-  unlines [dotConsts (r' ++ [dotId r' j]) [lo,hi]
+  unlines [dotConsts (r' ++ [idx j]) [lo,hi]
           | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   "subgraph cluster_array_"++ name ++" {\n"++ indent (
     "label=\"array\"\n"++
-    unlines [dotId r' j ++" [shape=\"rectangle\" label=\"index "++ show i ++"\"]"
+    unlines [idx j ++" [shape=\"rectangle\" label=\"index "++ show i ++"\"]"
             | (i,j) <- [1..] `zip` inputs dag] ++"\n"++
     dotDAG r' dag (Just ret) ++"\n"++
     name ++ sret ++"style=\"bold\"]"
@@ -46,13 +55,14 @@ dotNode r name (Array sh (Lambda dag ret) _) =
         sret = case ret of
           Var i _ -> " ["
           Const c _ -> " [label=\""++ show c ++"\" "
+        idx j = if Just j == getId ret then name else dotId r' j
 dotNode r name (FoldScan _ _ (Lambda dag ret) seed ls _) =
-  dotConsts (r' ++ [dotId r' i]) [ls] ++"\n"++
-  dotConsts (r' ++ [dotId r' j]) [seed] ++"\n"++
+  dotConsts (r' ++ [elemt]) [ls] ++"\n"++
+  dotConsts (r' ++ [accum]) [seed] ++"\n"++
   "subgraph cluster_foldscan_"++ name ++" {\n"++ indent (
     "label=\"fold/scan\"\n"++
-    dotId r' i ++" [shape=\"rectangle\" label=\"elem\"]\n"++
-    dotId r' j ++" [shape=\"rectangle\" label=\"accum\"]\n"++
+    elemt ++" [shape=\"rectangle\" label=\"elem\"]\n"++
+    accum ++" [shape=\"rectangle\" label=\"accum\"]\n"++
     dotDAG r' dag (Just ret) ++"\n"++
     name ++ sret ++"style=\"bold\"]"
   ) ++"\n}"
@@ -61,6 +71,8 @@ dotNode r name (FoldScan _ _ (Lambda dag ret) seed ls _) =
           Var i _ -> " ["
           Const c _ -> " [label=\""++ show c ++"\" "
         [i,j] = inputs dag
+        elemt = if Just i == getId ret then name else dotId r' i
+        accum = if Just j == getId ret then name else dotId r' j
 dotNode _ _ n = error $ "dotNode "++ show n
 
 dotDAG :: [Label] -> DAG -> Maybe NodeRef -> String
@@ -69,7 +81,8 @@ dotDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
       name = case mr of
         Just (Var ret _) | ret == j -> last r
         _ -> dotId r j
-  in dotNode r name n
+  in dotNode r name n ++"\n"++
+  (if typeNode n == UnknownType then name ++" [color=\"red\"]" else "")
 
 dotPNode :: Label -> PNode -> String
 dotPNode name (Dist f js _) =
@@ -95,6 +108,7 @@ edgeNodeRefs :: [Label] -> Label -> [NodeRef] -> String
 edgeNodeRefs r name js = "{"++ unwords (do
   j <- js
   return $ case j of
+    Var (Symbol s _) _ -> name ++ s
     Var i _ -> dotId r i
     Const c _ -> dotConst (r ++ [name]) c
   ) ++"} -> "++ name ++" [style=\"solid\"]"
@@ -107,16 +121,19 @@ edgeNode _ _ (Apply "getExternal" _ _) = ""
 edgeNode r name (Apply "id" [j] _) = edgeNodeRef r name j
 edgeNode r name (Apply f js _) = edgeNodeRefs r name js
 edgeNode r name (Array sh (Lambda dag ret) _) =
-  unlines [edgeNodeRefs r' (dotId r' j) [lo,hi]
+  unlines [edgeNodeRefs r' (idx j) [lo,hi]
           | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   edgeDAG r' dag (Just ret)
   where r' = r ++ [name]
+        idx j = if Just j == getId ret then name else dotId r' j
 edgeNode r name (FoldScan _ _ (Lambda dag ret) seed ls _) =
-  edgeNodeRefs r' (dotId r' i) [ls] ++"\n"++
-  edgeNodeRefs r' (dotId r' j) [seed] ++"\n"++
+  edgeNodeRefs r' elemt [ls] ++"\n"++
+  edgeNodeRefs r' accum [seed] ++"\n"++
   edgeDAG r' dag (Just ret)
   where r' = r ++ [name]
         [i,j] = inputs dag
+        elemt = if Just i == getId ret then name else dotId r' i
+        accum = if Just j == getId ret then name else dotId r' j
 
 edgeDAG :: [Label] -> DAG -> Maybe NodeRef -> String
 edgeDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
@@ -147,6 +164,7 @@ graphviz :: (ExprTuple t) => P t -> String
 graphviz prog = "/*\n"++ showPBlock pb (show rets) ++"\n*/\n\n"++
   "strict digraph {\n"++ indent (
     "compound=\"true\"\n"++
+    "concentrate=\"true\"\n"++
     dotPBlock pb rets ++"\n"++
     edgePBlock pb
   ) ++"\n}"
