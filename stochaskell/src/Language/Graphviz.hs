@@ -46,6 +46,22 @@ dotNode r name (Array sh (Lambda dag ret) _) =
         sret = case ret of
           Var i _ -> " ["
           Const c _ -> " [label=\""++ show c ++"\" "
+dotNode r name (FoldScan _ _ (Lambda dag ret) seed ls _) =
+  dotConsts (r' ++ [dotId r' i]) [ls] ++"\n"++
+  dotConsts (r' ++ [dotId r' j]) [seed] ++"\n"++
+  "subgraph cluster_foldscan_"++ name ++" {\n"++ indent (
+    "label=\"fold/scan\"\n"++
+    dotId r' i ++" [shape=\"rectangle\" label=\"elem\"]\n"++
+    dotId r' j ++" [shape=\"rectangle\" label=\"accum\"]\n"++
+    dotDAG r' dag (Just ret) ++"\n"++
+    name ++ sret ++"style=\"bold\"]"
+  ) ++"\n}"
+  where r' = r ++ [name]
+        sret = case ret of
+          Var i _ -> " ["
+          Const c _ -> " [label=\""++ show c ++"\" "
+        [i,j] = inputs dag
+dotNode _ _ n = error $ "dotNode "++ show n
 
 dotDAG :: [Label] -> DAG -> Maybe NodeRef -> String
 dotDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
@@ -95,6 +111,12 @@ edgeNode r name (Array sh (Lambda dag ret) _) =
           | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   edgeDAG r' dag (Just ret)
   where r' = r ++ [name]
+edgeNode r name (FoldScan _ _ (Lambda dag ret) seed ls _) =
+  edgeNodeRefs r' (dotId r' i) [ls] ++"\n"++
+  edgeNodeRefs r' (dotId r' j) [seed] ++"\n"++
+  edgeDAG r' dag (Just ret)
+  where r' = r ++ [name]
+        [i,j] = inputs dag
 
 edgeDAG :: [Label] -> DAG -> Maybe NodeRef -> String
 edgeDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
