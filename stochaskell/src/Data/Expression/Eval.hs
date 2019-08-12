@@ -21,6 +21,7 @@ import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
 import Data.Monoid
+import Data.Number.Transfinite (isInfinite)
 import qualified Data.Set as Set
 import Debug.Trace
 import GHC.Exts
@@ -155,7 +156,9 @@ evalNodeRef env (Block dags) r = error . showBlock dags $ "evalNodeRef "++ show 
   "where env = "++ show env
 
 evalRange :: Env -> Block -> [(NodeRef,NodeRef)] -> [[ConstVal]]
-evalRange env block sh = range (a,b)
+evalRange env block sh
+  | isInfinite `any` b = error "cannot eval infinite range"
+  | otherwise = range (a,b)
   where (i,j) = unzip sh
         a = fromRight' . evalNodeRef env block <$> i
         b = fromRight' . evalNodeRef env block <$> j

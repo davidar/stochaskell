@@ -1,5 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FlexibleContexts, RankNTypes,
-             TypeFamilies, MonadComprehensions, DeriveGeneric #-}
+             TypeFamilies, MonadComprehensions, DeriveGeneric, DeriveAnyClass #-}
 module Data.Expression.Const where
 
 import Prelude hiding ((<*),(*>),isInfinite)
@@ -125,11 +125,7 @@ type Tag = Int
 data ConstVal = Exact  (UArray [Integer] Int)
               | Approx (UArray [Integer] Double)
               | Tagged Tag [ConstVal]
-              deriving (Generic)
-
-instance (Ix a, IArray UArray b, NFData a, NFData b) => NFData (UArray a b) where
-  rnf x = rnf (bounds x, elems x)
-instance NFData ConstVal
+              deriving (Generic, NFData)
 
 instance Show ConstVal where
     show (Tagged c cs) = "C"++ show c ++ show cs
@@ -390,6 +386,7 @@ instance Indexable ConstVal [Integer] ConstVal where
 instance Ix ConstVal where
     range (Exact a, Exact b) | bounds a == bounds b =
         [ Exact $ listArray (bounds a) c | c <- range (elems a, elems b) ]
+    range r = error $ "range "++ show r
     inRange (Exact a, Exact b) (Exact c)
       | bounds a == bounds b && bounds b == bounds c =
         and $ zipWith3 f (elems a) (elems b) (elems c)

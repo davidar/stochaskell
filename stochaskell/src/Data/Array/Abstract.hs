@@ -30,6 +30,7 @@ module Data.Array.Abstract
   , zipWithA
   ) where
 
+import Control.DeepSeq
 import qualified Data.Array.Unboxed as A
 import Data.Ix
 import Debug.Trace
@@ -37,6 +38,9 @@ import Foreign.Storable (Storable)
 import GHC.Exts
 import qualified Numeric.LinearAlgebra as LA
 import qualified Numeric.LinearAlgebra.Data as LAD
+
+instance (Ix i, A.IArray A.UArray e, NFData i, NFData e) => NFData (A.UArray i e) where
+  rnf x = rnf (A.bounds x, A.elems x)
 
 -- | convert between list types (eg. @['Double']@ to 'Language.Stochaskell.RVec')
 list :: (IsList l, IsList l', Item l ~ Item l') => l -> l'

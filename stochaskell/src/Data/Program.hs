@@ -1034,9 +1034,11 @@ samplePNode env block (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
   where n' = toInteger . fromRight' $ evalNodeRef env block n
         v' = toMatrix . fromRight' $ evalNodeRef env block v
 
-samplePNode env block (Loop shp (Lambda ldag hd) _) =
-  listArray' (evalShape env block shp) <$> sequence arr
-  where block' = deriveBlock ldag block
+samplePNode env block (Loop shp (Lambda ldag hd) _)
+  | isInfinite `any` his = error "cannot sample infinite loop" -- TODO: implement lazily
+  | otherwise = listArray' (evalShape env block shp) <$> sequence arr
+  where his = fromRight' . evalNodeRef env block <$> map snd shp
+        block' = deriveBlock ldag block
         arr = [ let env' = Map.fromList (inputsL ldag `zip` idx) `Map.union` env
                 in samplePNode env' block' hd
               | idx <- evalRange env block shp ]
