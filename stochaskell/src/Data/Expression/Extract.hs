@@ -38,7 +38,7 @@ extractNodeRef fNodeRef fNode env block = go where
       | isJust val -> do
         let e = fromJust val
         t' <- typeDExpr e
-        if compatible t t' then fromDExpr e else error $
+        if compatible t t' then fromDExpr e else flip trace (fromDExpr e) $ "ERROR "++
          "extractNodeRef: type mismatch "++ show r ++" -> "++ show e ++"; with env:\n"++ show env
       | Volatile{} <- i -> do
         t' <- extractType env block t

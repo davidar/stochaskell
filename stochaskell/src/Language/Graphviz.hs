@@ -111,11 +111,11 @@ dotPNodes pn = unlines [dotPNode (dotId [] i) n | (i,n) <- Map.toList pn]
 dotPBlock :: PBlock -> [NodeRef] -> String
 dotPBlock pb@(PBlock block _ _ _) rets =
   dotDAG [] (topDAG block) Nothing ++"\n"++
-  "subgraph cluster_program {\n"++ indent (
-    "style=\"invis\"\n"++
+  --"subgraph cluster_program {\n"++ indent (
+  --  "style=\"invis\"\n"++
     dotPNodes (pnodes pb) ++"\n"++
     unlines [dotId [] i ++" [style=\"bold\"]" | Var i _ <- rets]
-  ) ++"\n}"
+  --) ++"\n}"
 
 edgeNodeRefs :: [Label] -> Label -> [NodeRef] -> String
 edgeNodeRefs r name js = "{"++ unwords (do

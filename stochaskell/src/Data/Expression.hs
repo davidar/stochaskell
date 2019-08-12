@@ -615,7 +615,7 @@ typeRef (BlockArray a t) = t
 typeRef (Index a js) = case typeRef a of
   (ArrayT k sh t) | length js == length sh -> t
                   | otherwise -> ArrayT k (drop (length js) sh) t
-  t -> error $ "cannot index non-array type "++ show t
+  t -> trace ("ERROR cannot index non-array type "++ show t) UnknownType
 typeRef (Extract v c k) | UnionT ts <- typeRef v = ts!!c!!k
 typeRef (Extract v 0 k) | TupleT ts <- typeRef v = ts!!k
 typeRef (Extract v c k) | UnknownType <- typeRef v = UnknownType
@@ -639,7 +639,7 @@ typeIndex :: Int -> Type -> Type
 typeIndex 1 (ArrayT _ [_] t) = t
 typeIndex 1 (ArrayT (Just "matrix") (_:sh) t) = ArrayT (Just "row_vector") sh t
 typeIndex 1 (ArrayT _ (_:sh) t) = ArrayT Nothing sh t
-typeIndex 1 t = error $ "cannot index objects of type "++ show t
+typeIndex 1 t = trace ("ERROR cannot index objects of type "++ show t) UnknownType
 typeIndex n t = typeIndex 1 $ typeIndex (n-1) t
 
 coerce :: Type -> Type -> Type

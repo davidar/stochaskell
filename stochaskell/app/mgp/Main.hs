@@ -49,13 +49,34 @@ mGP t n lmax s = do
            | i <- 1...n, j <- 1...n ]
   return (kappa,eta0,etas,cs,mu)
 
-prior :: R -> Z -> Z -> Int -> RVec -> R -> P (R,R,RVec,RVec,RVec,RMat)
+type Model = (R,R,RVec,RVec,RVec,RMat)
+prior :: R -> Z -> Z -> Int -> RVec -> R -> P Model
 prior t n k lmax s noise = do
   (kappa,eta0,etas,cs,mu) <- mGP t n lmax s
   let cov = covTree t n s lmax cs kappa etas eta0
             + matrix [ if i == j then 1e-6 else 0 | i <- 1...n, j <- 1...n ]
   gs' <- normalsChol k n mu cov
   gs <- joint matrix [ normal (gs'!i!j) noise | i <- 1...k, j <- 1...n ]
+  return (kappa,eta0,etas,cs,mu,gs)
+
+mGP' :: R -> Z -> Int -> RVec -> P (R,R,RVec,RVec,RVec)
+mGP' t n lmax s = do
+  kappa <- gamma 1 1
+  eta0 <- gamma 1 1
+  etas <- joint vector [ gamma 1 1 | _ <- 1...integer lmax ]
+  let k = 2^lmax - 1
+  cs <- orderedSample (integer k) (uniform 0 t)
+  mu <- normal (vector [ 0 | _ <- 1...n ]) $
+    matrix [ kernel kappa eta0 t (s!i) (s!j) + if i == j then 1e-6 else 0
+           | i <- 1...n, j <- 1...n ]
+  return (kappa,eta0,etas,cs,mu)
+
+prior' :: R -> Z -> Z -> Int -> RVec -> R -> P Model
+prior' t n k lmax s noise = do
+  (kappa,eta0,etas,cs,mu) <- mGP' t n lmax s
+  let cov = covTree t n s lmax cs kappa etas eta0
+            + matrix [ if i == j then noise else 0 | i <- 1...n, j <- 1...n ]
+  gs <- joint (designMatrix n) [ normal mu cov :: P RVec | _ <- 1...k ]
   return (kappa,eta0,etas,cs,mu,gs)
 
 cut :: Z -> RMat -> Z -> R
@@ -79,9 +100,8 @@ ecov k gs = z *> (tr' gs' <> gs')
   where z = 1/cast k :: R
         gs' = gs - asRow (z *> sum' gs)
 
-stepC :: R -> Z -> Z -> Int -> RVec -> (R,R,RVec,RVec,RVec,RMat)
-       -> P (R,R,RVec,RVec,RVec,RMat)
-stepC t n k lmax s (kappa,eta0,etas,cs,mu,gs) = do
+jump :: R -> Z -> Z -> Int -> RVec -> Model -> P Model
+jump t n k lmax s (kappa,eta0,etas,cs,mu,gs) = do
   cs' <- go 1 1
   return (kappa,eta0,etas,cs',mu,gs)
   where
@@ -113,6 +133,25 @@ stepC t n k lmax s (kappa,eta0,etas,cs,mu,gs) = do
     j | j == 2^lmax -> t
       | otherwise -> cs!integer j
 
+stepHMC :: R -> Z -> Z -> Int -> RVec -> R -> Model -> IO Model
+stepHMC t n k lmax s noise (kappa,eta0,etas,cs,mu,gs) = do
+  samples <- hmcStanInit 10
+    [ (kappa',eta0',etas',mu')
+    | (kappa',eta0',etas',cs',mu',gs') <- prior t n k lmax s noise
+    , gs' == gs, cs' == cs ]
+    (1, 1, list (replicate lmax 1), list (replicate (integer n) 0))
+  let (kappa',eta0',etas',mu') = last samples
+  return (kappa',eta0',etas',cs,mu',gs)
+
+stepMH :: R -> Z -> Z -> Int -> RVec -> R -> Model -> IO Model
+stepMH t n k lmax s noise m =
+  prior' t n k lmax s noise `mh'` jump t n k lmax s `runStep` m
+
+step :: R -> Z -> Z -> Int -> RVec -> R -> Model -> IO Model
+step t n k lmax s noise m = do
+  m' <- stepHMC t n k lmax s noise m
+  m'' <- stepMH t n k lmax s noise m'
+  return m''
 
 genData t n k lmax s noise = do
   (kappa,eta0,etas,cs,mu) <- simulate $ mGP t n lmax (list s)
@@ -132,19 +171,38 @@ genData t n k lmax s noise = do
 main = do
   let t = 10
       n = 100
-      lmax = 2
+      lmax = 1
       noise = 8e-3
       k = 10
   let s = linspace (0, real t) $ integer n :: [Double]
-  (cs,gs) <- genData t n k lmax s noise
+  (_,gs) <- genData t n k lmax s noise
 
-  let s' = vector [ t * cast i / cast n | i <- 1...n ] :: RVec
+  let s' = vector [ t * cast i / cast (n+1) | i <- 1...n ] :: RVec
+  {-
   samples <- hmcStanInit 100
     [ (kappa',eta0',etas',mu')
     | (kappa',eta0',etas',cs',mu',gs') <- prior t n k lmax s' noise
     , gs' == gs, cs' == cs ]
     (1, 1, list (replicate lmax 1), list (replicate (integer n) 0))
   let (kappa,eta0,etas,mu) = last samples
+  -}
+  let m' = (symbol "kappa", symbol "eta0", symbol "etas", symbol "cs", symbol "mu", symbol "gs") :: Model
+  svg <- vizIR (prior' t n k lmax s' noise)
+  writeFile "mgp_prior.svg" svg
+  svg <- vizIR (jump t n k lmax s' m')
+  writeFile "mgp_jump.svg" svg
+  svg <- vizIR ((prior' t n k lmax s' noise `mh'` jump t n k lmax s') m')
+  writeFile "mgp_stepmh.svg" svg
+  {-
+  let m0 = ( 1, 1
+           , list (replicate lmax 1)
+           , list [0.5]
+           , list (replicate (integer n) 0)
+           , gs
+           )
+  samples <- iterateLimit 10 (step t n k lmax s' noise) m0
+  let (kappa,eta0,etas,cs,mu,_) = last samples
   let cov = covTree t n (list s) lmax cs kappa etas eta0
             + matrix [ if i == j then noise else 0 | i <- 1...n, j <- 1...n ]
   toPNG "mgp_cov_post" . renderAxis2 . heatMap' $ toList cov
+  -}
