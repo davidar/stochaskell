@@ -94,26 +94,30 @@ measerr n tau = do
   y <- normals (cast alpha + (beta *> x)) (vector [ sigma | i <- 1...n ])
   return (xMu,xSigma,x,xMeas,alpha,beta,sigma,y)
 
+covPrior :: Z -> P RMat
+covPrior n = do
+  tau <- joint vector [ truncated 0 infinity (cauchy 0 2.5) | i <- 1...n ]
+  corr <- corrLKJ 2 (1,n)
+  -- TODO: automatically recognise common forms
+  --let betaSigma = diag tau <> corr <> diag tau
+  return (qfDiag corr tau)
+
 birats :: Z -> Z -> P (RVec,RVec,RMat,RMat,R,RMat)
 birats n t = do
   x <- uniforms (vector [  0 | j <- 1...t ])
                 (vector [ 50 | j <- 1...t ])
   betaMu <- normals (vector [   0 | _ <- 1...2 ])
                     (vector [ 100 | _ <- 1...2 ])
-  tau <- joint vector [ truncated 0 infinity (cauchy 0 2.5) | i <- 1...2 ]
-  corr <- corrLKJ 2 (1,2)
-  -- TODO: automatically recognise common forms
-  --let betaSigma = diag tau <> corr <> diag tau
-  let betaSigma = qfDiag corr tau
+  betaSigma <- covPrior 2
   beta <- normalsChol n 2 betaMu betaSigma
   let beta' = tr' beta
       beta1 = beta'!1
       beta2 = beta'!2
   --let yMu = matrix [ (beta1!i) + (beta2!i) * (x!j) | i <- 1...n, j <- 1...t ]
   let yMu = asColumn beta1 + outer beta2 x
-  yVar <- gamma 1 1
-  y <- normals yMu (matrix [ sqrt yVar | i <- 1...n, j <- 1...t ])
-  return (x,betaMu,betaSigma,beta,yVar,y)
+  ySigma <- truncated 0 infinity (cauchy 0 2.5) -- TODO: check this still works
+  y <- normals yMu (matrix [ ySigma | i <- 1...n, j <- 1...t ])
+  return (x,betaMu,betaSigma,beta,ySigma,y)
 
 covtype :: IO ()
 covtype = do
