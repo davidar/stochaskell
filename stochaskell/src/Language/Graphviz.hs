@@ -91,6 +91,19 @@ dotPNode name (Dist f js _) =
 dotPNode name (HODist f (Dist g js _) js' _) =
   name ++" [shape=\"rectangle\" label=\""++ f ++" "++ g ++"\"]\n"++
   dotConsts [name] (js ++ js')
+dotPNode name (Loop sh (Lambda dag body) _) =
+  unlines [dotConsts (r' ++ [dotId r' j]) [lo,hi]
+          | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
+  "subgraph cluster_loop_"++ name ++" {\n"++ indent (
+    "label=\"joint\"\n"++
+    unlines [dotId r' j ++" [shape=\"rectangle\" label=\"index "++ show i ++"\"]"
+            | (i,j) <- [1..] `zip` inputs dag] ++"\n"++
+    dotDAG r' dag Nothing ++"\n"++
+    dotPNode name body ++"\n"++
+    name ++" [style=\"bold\"]"
+  ) ++"\n}"
+  where r' = [name]
+dotPNode _ pn = error $ "dotPNode "++ show pn
 
 dotPNodes :: Map Id PNode -> String
 dotPNodes pn = unlines [dotPNode (dotId [] i) n | (i,n) <- Map.toList pn]
@@ -145,8 +158,13 @@ edgeDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
 
 edgePNode :: Label -> PNode -> String
 edgePNode name (Dist f js _) = edgeNodeRefs [] name js
+edgePNode name (Loop sh (Lambda dag body) _) =
+  unlines [edgeNodeRefs r' (dotId r' j) [lo,hi]
+          | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
+  edgeDAG r' dag Nothing ++"\n"++
+  edgePNode name body
+  where r' = [name]
 edgePNode name (HODist f n js _) = edgePNode name n ++"\n"++ edgeNodeRefs [] name js
-edgePNode _ _ = ""
 
 edgePNodes :: Map Id PNode -> String
 edgePNodes pn =
