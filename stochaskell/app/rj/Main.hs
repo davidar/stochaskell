@@ -1,9 +1,11 @@
-{-# LANGUAGE FlexibleContexts, MonadComprehensions, RebindableSyntax #-}
+{-# LANGUAGE FlexibleContexts, MonadComprehensions, RebindableSyntax,
+             DeriveGeneric, DeriveAnyClass #-}
 
 module Main where
 import Language.Stochaskell
 import Language.Stochaskell.Expression
 
+import GHC.Generics (Generic)
 import System.IO
 
 -- https://cran.r-project.org/web/packages/engsoccerdata/README.html
@@ -11,20 +13,7 @@ totgoal = [5, 1, 3, 2, 3, 2, 2, 5, 3, 1, 0, 7, 2, 4, 4, 2, 4, 5, 6, 0, 4, 1, 4, 
 
 data Model = Model1 R ZVec
            | Model2 R R ZVec
-           deriving (Show)
-
--- TODO: autogenerate this boilerplate code
-instance Constructor Model where
-  tags = Tags [0..1]
-  construct f 0 [lam,    y] = Model1 (f lam)         (f y)
-  construct f 1 [lam,kap,y] = Model2 (f lam) (f kap) (f y)
-  deconstruct f (Model1 lam     y) = (0, [f lam,        f y])
-  deconstruct f (Model2 lam kap y) = (1, [f lam, f kap, f y])
-instance ExprType Model where
-  fromConcrete = fromConcreteC
-  toConcrete = toConcreteC
-  constVal = fromRight' . eval_ . fromConcrete
-  typeOf = TypeIs $ UnionT [[RealT, vecT IntT] ,[RealT, RealT, vecT IntT]]
+           deriving (Show, Generic, ExprType, Constructor)
 
 model1 :: R -> ZVec -> Expression Model
 model1 lam y = fromConcrete (Model1 lam y)
