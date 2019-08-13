@@ -138,6 +138,9 @@ instance Read ConstVal where
   readsPrec d s@('[':_) = [(fromList   x, s') | (x, s') <- readsPrec d s]
   readsPrec d s         = [(fromDouble x, s') | (x, s') <- readsPrec d s] -- TODO: Int when possible
 
+class ToConstVal t where
+  toConstVal :: t -> ConstVal
+
 approx :: ConstVal -> ConstVal
 approx (Exact a) = Approx (amap fromIntegral a)
 approx a = a

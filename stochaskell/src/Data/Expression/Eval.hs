@@ -1,4 +1,5 @@
-{-# LANGUAGE FlexibleInstances, MonadComprehensions, MultiWayIf, ScopedTypeVariables, TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances, MonadComprehensions, MultiWayIf, ScopedTypeVariables,
+             TypeFamilies, UndecidableInstances #-}
 
 module Data.Expression.Eval where
 
@@ -25,6 +26,7 @@ import Data.Number.Transfinite (isInfinite)
 import qualified Data.Set as Set
 import Debug.Trace
 import GHC.Exts
+import GHC.Generics hiding (Constructor,R,P)
 import Util
 
 type Env = Map LVal ConstVal
@@ -770,6 +772,15 @@ instance IsList RMat where
             t = ArrayT Nothing [(Const 1 IntT, Const (fromInteger n) IntT)
                                ,(Const 1 IntT, Const (fromInteger m) IntT)] RealT
     toList = map (map real . toList) . toList . fromRight' . eval_
+
+instance forall i t. (Constructor t) => GConstructor (K1 i (Rec t)) where
+  gtypeOf = TypeIs (UnionT [[RecursiveT]])
+  gtags = Tags [0]
+  gconstruct f 0 [x] = K1 (Rec . toConcreteC . fromRight' . eval_ $ (f x :: Expression t))
+  gdeconstruct f (K1 (Rec x)) = (0, [f (fromConcreteC x)])
+
+instance (ExprType t) => ToConstVal t where
+  toConstVal = fromRight' . eval_ . fromConcrete
 
 instance forall t. (Show t, ExprType t) => Show (Expression t) where
   show x = case eval_ x of

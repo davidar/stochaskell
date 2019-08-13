@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables, TypeFamilies,
              TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,
-             FlexibleContexts, ConstraintKinds, RankNTypes, TupleSections #-}
+             FlexibleContexts, ConstraintKinds, RankNTypes, TypeOperators,
+             DefaultSignatures #-}
 module Data.Expression where
 
 import Prelude hiding (const,foldl,foldr,scanl,scanr)
@@ -25,6 +26,7 @@ import Debug.Trace
 import Control.Applicative ()
 import Control.Monad.State
 import GHC.Exts (fromList,toList)
+import GHC.Generics hiding (Constructor,R,P)
 import qualified Numeric.LinearAlgebra as LA
 import Util
 
@@ -383,6 +385,7 @@ data Type
     | ArrayT (Maybe String) [AA.Interval NodeRef] Type
     | TupleT [Type]
     | UnionT [[Type]]
+    | RecursiveT
     | UnknownType
     deriving (Eq, Ord)
 boolT :: Type
@@ -410,6 +413,7 @@ instance Show Type where
   show (ArrayT (Just name) _ t) = name ++" "++ show t
   show (TupleT ts) = show ts
   show (UnionT ts) = "Union"++ show ts
+  show RecursiveT = "MU"
   show UnknownType = "???"
 
 isScalar :: Type -> Bool
@@ -431,12 +435,21 @@ newtype TypeOf t = TypeIs Type deriving (Show)
 class ExprType t where
     -- | corresponding Stochaskell type
     typeOf       :: TypeOf t
+    default typeOf :: (Generic t, GConstructor (Rep t)) => TypeOf t
+    typeOf = TypeIs t
+      where TypeIs t = gtypeOf :: TypeOf (Rep t p)
     -- | convert constant to native value
     toConcrete   :: ConstVal -> t
+    default toConcrete :: (Constructor t) => ConstVal -> t
+    toConcrete   = toConcreteC
     -- | convert native value to Stochaskell expression
     fromConcrete :: t -> Expression t
+    default fromConcrete :: (Constructor t) => t -> Expression t
+    fromConcrete = fromConcreteC
     -- | convert native value to constant
     constVal     :: t -> ConstVal
+    default constVal :: (ToConstVal t) => t -> ConstVal
+    constVal     = toConstVal
     -- | convert constant to Stochaskell expression
     constExpr    :: ConstVal -> Expression t
     constExpr    = fromConcrete . toConcrete
@@ -476,10 +489,16 @@ instance forall t. (ExprType t) => ExprType [t] where
 
 instance forall a. (ExprType a) => ExprType (Expression a) where
   typeOf = TypeIs a where TypeIs a = typeOf :: TypeOf a
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 instance forall a b. (ExprType a, ExprType b) => ExprType (Expression a, Expression b) where
   typeOf = TypeIs $ TupleT [a,b]
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 instance forall a b c.
     (ExprType a, ExprType b, ExprType c) =>
     ExprType (Expression a, Expression b, Expression c) where
@@ -487,6 +506,9 @@ instance forall a b c.
     where TypeIs a = typeOf :: TypeOf a
           TypeIs b = typeOf :: TypeOf b
           TypeIs c = typeOf :: TypeOf c
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 instance forall a b c d.
     (ExprType a, ExprType b, ExprType c, ExprType d) =>
     ExprType (Expression a, Expression b, Expression c, Expression d) where
@@ -495,6 +517,9 @@ instance forall a b c d.
           TypeIs b = typeOf :: TypeOf b
           TypeIs c = typeOf :: TypeOf c
           TypeIs d = typeOf :: TypeOf d
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 instance forall a b c d e.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e) =>
@@ -505,6 +530,9 @@ instance forall a b c d e.
           TypeIs c = typeOf :: TypeOf c
           TypeIs d = typeOf :: TypeOf d
           TypeIs e = typeOf :: TypeOf e
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 instance forall a b c d e f.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e, ExprType f) =>
@@ -516,6 +544,9 @@ instance forall a b c d e f.
           TypeIs d = typeOf :: TypeOf d
           TypeIs e = typeOf :: TypeOf e
           TypeIs f = typeOf :: TypeOf f
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 instance forall a b c d e f g.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e, ExprType f, ExprType g) =>
@@ -528,6 +559,9 @@ instance forall a b c d e f g.
           TypeIs e = typeOf :: TypeOf e
           TypeIs f = typeOf :: TypeOf f
           TypeIs g = typeOf :: TypeOf g
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 instance forall a b c d e f g h.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e, ExprType f, ExprType g, ExprType h) =>
@@ -541,6 +575,9 @@ instance forall a b c d e f g h.
           TypeIs f = typeOf :: TypeOf f
           TypeIs g = typeOf :: TypeOf g
           TypeIs h = typeOf :: TypeOf h
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 instance forall a b c d e f g h i.
     (ExprType a, ExprType b, ExprType c, ExprType d,
      ExprType e, ExprType f, ExprType g, ExprType h, ExprType i) =>
@@ -555,16 +592,28 @@ instance forall a b c d e f g h i.
           TypeIs g = typeOf :: TypeOf g
           TypeIs h = typeOf :: TypeOf h
           TypeIs i = typeOf :: TypeOf i
+  toConcrete = undefined
+  fromConcrete = undefined
+  constVal = undefined
 
 newtype Tags t = Tags [Tag]
 -- | Stochaskell interface for algebraic data types
 class ExprType c => Constructor c where
   -- | list of possible tags in tagged union
   tags :: Tags c
+  default tags :: (Generic c, GConstructor (Rep c)) => Tags c
+  tags = Tags t
+    where Tags t = gtags :: Tags (Rep c p)
   -- | construct ADT from tag and arguments
   construct   :: (forall t. ExprType t => a -> Expression t) -> Tag -> [a] -> c
+  default construct :: (Generic c, GConstructor (Rep c)) =>
+                 (forall t. ExprType t => a -> Expression t) -> Tag -> [a] -> c
+  construct f i xs = to (gconstruct f i xs)
   -- | deconstruct ADT to tag and arguments
   deconstruct :: (forall t. ExprType t => Expression t -> a) -> c -> (Tag, [a])
+  default deconstruct :: (Generic c, GConstructor (Rep c)) =>
+                 (forall t. ExprType t => Expression t -> a) -> c -> (Tag, [a])
+  deconstruct f x = gdeconstruct f (from x)
   -- | convert constant to ADT value
   toConcreteC :: ConstVal -> c
   toConcreteC (Tagged c args) = construct constExpr c args
@@ -575,6 +624,66 @@ class ExprType c => Constructor c where
     let TypeIs t = typeOf :: TypeOf c
     return $ Data c js t
     where (c, args) = deconstruct fromExpr m
+
+newtype Rec t = Rec t
+instance (Show t) => Show (Rec t) where
+  showsPrec i (Rec x) = showsPrec i x
+
+class GConstructor f where
+  gtypeOf :: TypeOf (f p)
+  gtags :: Tags (f p)
+  gconstruct   :: (forall t. ExprType t => a -> Expression t) -> Tag -> [a] -> f p
+  gdeconstruct :: (forall t. ExprType t => Expression t -> a) -> f p -> (Tag, [a])
+instance GConstructor U1 where
+  gtypeOf = TypeIs (UnionT [[]])
+  gtags = Tags [0]
+  gconstruct f 0 [] = U1
+  gdeconstruct f U1 = (0, [])
+instance forall a b. (GConstructor a, GConstructor b) => GConstructor (a :*: b) where
+  gtypeOf = TypeIs (UnionT [s ++ t])
+    where TypeIs (UnionT [s]) = gtypeOf :: TypeOf (a p)
+          TypeIs (UnionT [t]) = gtypeOf :: TypeOf (b p)
+  gtags = Tags [0]
+  gconstruct f 0 zs = a :*: b
+    where TypeIs (UnionT [s]) = gtypeOf :: TypeOf (a p)
+          n = length s
+          xs = take n zs
+          ys = drop n zs
+          a = gconstruct f 0 xs
+          b = gconstruct f 0 ys
+  gdeconstruct f (a :*: b) = (0, xs ++ ys)
+    where xs = snd (gdeconstruct f a)
+          ys = snd (gdeconstruct f b)
+instance forall a b. (GConstructor a, GConstructor b) => GConstructor (a :+: b) where
+  gtypeOf = TypeIs (UnionT (s ++ t))
+    where TypeIs (UnionT s) = gtypeOf :: TypeOf (a p)
+          TypeIs (UnionT t) = gtypeOf :: TypeOf (b p)
+  gtags = Tags [0..n-1]
+    where Tags s = gtags :: Tags (a p)
+          Tags t = gtags :: Tags (b p)
+          n = length s + length t
+  gconstruct f i xs = if i < offset then L1 (gconstruct f i xs)
+                                    else R1 (gconstruct f (i - offset) xs)
+    where Tags s = gtags :: Tags (a p)
+          offset = length s
+  gdeconstruct f (L1 x) = gdeconstruct f x
+  gdeconstruct f (R1 x) = (i + offset, xs)
+    where Tags s = gtags :: Tags (a p)
+          offset = length s
+          (i, xs) = gdeconstruct f x
+instance forall i c a. (GConstructor a) => GConstructor (M1 i c a) where
+  gtypeOf = TypeIs t
+    where TypeIs t = gtypeOf :: TypeOf (a p)
+  gtags = Tags t
+    where Tags t = gtags :: Tags (a p)
+  gconstruct f i xs = M1 (gconstruct f i xs)
+  gdeconstruct f (M1 x) = gdeconstruct f x
+instance (ExprType t) => GConstructor (K1 i (Expression t)) where
+  gtypeOf = TypeIs (UnionT [[t]])
+    where TypeIs t = typeOf :: TypeOf t
+  gtags = Tags [0]
+  gconstruct f 0 [x] = K1 (f x)
+  gdeconstruct f (K1 x) = (0, [f x])
 
 internal :: Level -> Pointer -> State Block NodeRef
 internal level i = do
