@@ -1,7 +1,7 @@
 {-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables, TypeFamilies,
              TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,
              FlexibleContexts, ConstraintKinds, RankNTypes, TypeOperators,
-             DefaultSignatures #-}
+             DefaultSignatures, UndecidableInstances #-}
 module Data.Expression where
 
 import Prelude hiding (const,foldl,foldr,scanl,scanr)
@@ -625,25 +625,22 @@ class ExprType c => Constructor c where
     return $ Data c js t
     where (c, args) = deconstruct fromExpr m
 
-newtype Rec t = Rec t
-instance (Show t) => Show (Rec t) where
-  showsPrec i (Rec x) = showsPrec i x
+newtype FixE f = FixE { unfixE :: Expression (f (FixE f)) }
 
 class GConstructor f where
   gtypeOf :: TypeOf (f p)
   gtags :: Tags (f p)
+  gtags = Tags [0]
   gconstruct   :: (forall t. ExprType t => a -> Expression t) -> Tag -> [a] -> f p
   gdeconstruct :: (forall t. ExprType t => Expression t -> a) -> f p -> (Tag, [a])
 instance GConstructor U1 where
   gtypeOf = TypeIs (UnionT [[]])
-  gtags = Tags [0]
   gconstruct f 0 [] = U1
   gdeconstruct f U1 = (0, [])
 instance forall a b. (GConstructor a, GConstructor b) => GConstructor (a :*: b) where
   gtypeOf = TypeIs (UnionT [s ++ t])
     where TypeIs (UnionT [s]) = gtypeOf :: TypeOf (a p)
           TypeIs (UnionT [t]) = gtypeOf :: TypeOf (b p)
-  gtags = Tags [0]
   gconstruct f 0 zs = a :*: b
     where TypeIs (UnionT [s]) = gtypeOf :: TypeOf (a p)
           n = length s
@@ -681,9 +678,12 @@ instance forall i c a. (GConstructor a) => GConstructor (M1 i c a) where
 instance (ExprType t) => GConstructor (K1 i (Expression t)) where
   gtypeOf = TypeIs (UnionT [[t]])
     where TypeIs t = typeOf :: TypeOf t
-  gtags = Tags [0]
   gconstruct f 0 [x] = K1 (f x)
   gdeconstruct f (K1 x) = (0, [f x])
+instance (ExprType (f (FixE f))) => GConstructor (K1 i (FixE f)) where
+  gtypeOf = TypeIs (UnionT [[RecursiveT]])
+  gconstruct f 0 [x] = K1 (FixE (f x))
+  gdeconstruct f (K1 (FixE x)) = (0, [f x])
 
 internal :: Level -> Pointer -> State Block NodeRef
 internal level i = do

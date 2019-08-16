@@ -15,6 +15,8 @@ import Data.Expression hiding (const)
 import Data.Expression.Case
 import Data.Expression.Const hiding (isScalar)
 import Data.Expression.Extract
+import Data.Functor.Classes
+import Data.Functor.Foldable
 import Data.Ix
 import Data.List
 import qualified Data.List as List
@@ -239,6 +241,10 @@ evalDAG block dag = compose
               Left e -> {-trace ("evalDAG: "++ e)-} env
   | (ptr,node) <- nodes dag ]
   where level = dagLevel dag
+
+evalRec :: (Functor f, Constructor (f (FixE f))) => FixE f -> Fix f
+evalRec (FixE e) = Fix $ fmap evalRec c
+  where c = toConcreteC . fromRight' $ eval_ e
 
 unifyTuple :: (ExprTuple t) => Block -> [NodeRef] -> t
            -> Map LVal (ConstVal, Type) -> Map LVal ConstVal
@@ -773,19 +779,16 @@ instance IsList RMat where
                                ,(Const 1 IntT, Const (fromInteger m) IntT)] RealT
     toList = map (map real . toList) . toList . fromRight' . eval_
 
-instance forall i t. (Constructor t) => GConstructor (K1 i (Rec t)) where
-  gtypeOf = TypeIs (UnionT [[RecursiveT]])
-  gtags = Tags [0]
-  gconstruct f 0 [x] = K1 (Rec . toConcreteC . fromRight' . eval_ $ (f x :: Expression t))
-  gdeconstruct f (K1 (Rec x)) = (0, [f (fromConcreteC x)])
-
 instance (ExprType t) => ToConstVal t where
   toConstVal = fromRight' . eval_ . fromConcrete
 
 instance forall t. (Show t, ExprType t) => Show (Expression t) where
-  show x = case eval_ x of
-    Right c  -> show (toConcrete c :: t)
-    Left _ -> show (erase x)
+  showsPrec i x = case eval_ x of
+    Right c  -> showsPrec i (toConcrete c :: t)
+    Left _ -> showsPrec i (erase x)
+
+instance (Show1 f, Functor f, Constructor (f (FixE f))) => Show (FixE f) where
+  showsPrec i = showsPrec i . evalRec
 
 wrapReadsPrec :: (Read a) => (a -> t) -> Int -> ReadS t
 wrapReadsPrec f d s = [(f x, s') | (x, s') <- readsPrec d s]

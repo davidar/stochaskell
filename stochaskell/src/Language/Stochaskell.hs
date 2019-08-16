@@ -79,9 +79,12 @@ module Language.Stochaskell
 
   -- * Miscellaneous
   , binarize
+  , caseZ
   , chain
   , chainRange
   , debug
+  , fromCase
+  , fromCaseP
   , fromRight'
   , interpolate
   , iterateLimit

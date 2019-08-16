@@ -39,6 +39,7 @@ dependencies:
 - process
 - random
 - random-fu
+- recursion-schemes
 - silently
 - split
 - statistics
