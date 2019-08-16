@@ -9,7 +9,7 @@ stickBreak :: R -> P RVec
 stickBreak alpha = do
   sticks <- joint vector [ beta 1 alpha | i <- 1...infinity ] :: P RVec
   let sticks' = vector [ 1 - (sticks!i) | i <- 1...infinity ]
-      rems = scanl (*) 1 sticks'
+      rems = scanlE (*) 1 sticks'
       probs = vector [ (sticks!i) * (rems!i) | i <- 1...infinity ]
   return probs
 

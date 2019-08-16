@@ -1322,28 +1322,28 @@ index a es = expr $ do
     return $ Index f js
 
 -- | Stochaskell equivalent of 'Prelude.foldl'
-foldl :: (ExprType b) =>
+foldlE :: (ExprType b) =>
   (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression b
-foldl f r xs = expr $ foldscan Fold Left_ (flip f) r xs
+foldlE f r xs = expr $ foldscan Fold Left_ (flip f) r xs
 
 -- | Stochaskell equivalent of 'Prelude.foldr'
-foldr :: (ExprType b) =>
+foldrE :: (ExprType b) =>
   (Expression a -> Expression b -> Expression b) -> Expression b -> Expression [a] -> Expression b
-foldr f r xs = expr $ foldscan Fold Right_ f r xs
+foldrE f r xs = expr $ foldscan Fold Right_ f r xs
 
 -- | Stochaskell equivalent of 'Prelude.scanl'
-scanl :: (ExprType b) =>
+scanlE :: (ExprType b) =>
   (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
-scanl f r xs = expr $ foldscan Scan Left_ (flip f) r xs
+scanlE f r xs = expr $ foldscan Scan Left_ (flip f) r xs
 
 -- | Stochaskell equivalent of 'Prelude.scanr'
-scanr :: (ExprType b) =>
+scanrE :: (ExprType b) =>
   (Expression a -> Expression b -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
-scanr f r xs = expr $ foldscan Scan Right_ f r xs
+scanrE f r xs = expr $ foldscan Scan Right_ f r xs
 
-scan :: (ExprType b) =>
-  (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
-scan f r xs = expr $ foldscan ScanRest Left_ (flip f) r xs
+--scan :: (ExprType b) =>
+--  (Expression b -> Expression a -> Expression b) -> Expression b -> Expression [a] -> Expression [b]
+--scan f r xs = expr $ foldscan ScanRest Left_ (flip f) r xs
 
 foldscan :: forall a b. (ExprType b) => FoldOrScan -> LeftRight ->
   (Expression a -> Expression b -> Expression b) -> Expression b -> Expression [a] -> State Block NodeRef
@@ -1379,11 +1379,11 @@ foldscan fs dir f r xs = do
 -- | @find p d v@: find leftmost element of @v@ satisfying @p@,
 -- else @d@ if no elements satisfy @p@
 find' :: (ExprType e) => (Expression e -> B) -> Expression e -> Expression [e] -> Expression e
-find' p def v = foldr f def v where f i j = ifB (p i) i j
+find' p def v = foldrE f def v where f i j = ifB (p i) i j
 
 -- | Stochaskell equivalent of 'Prelude.sum'
 sum' :: (ExprType a, Num a) => Expression [a] -> Expression a
-sum' = foldl (+) 0
+sum' = foldlE (+) 0
 
 -- | Stochaskell equivalent of 'Prelude.floor'
 floor' :: R -> Z

@@ -78,7 +78,7 @@ stepUp' t k (z,a,b,eta,ils,cap,n,s,phi) = do
   let n' = n + 1
       -- i = findSortedInsertIndex x s -- but with restriction i > k
       f i j = if x <= (s!i) then i else j
-      i = foldr f (n+1) $ vector [ k + i | i <- 1...(n-k) ]
+      i = foldrE f (n+1) $ vector [ k + i | i <- 1...(n-k) ]
       s' = s `insertAt` (i, x)
       phi' = phi `insertAt` (i, false)
   return (x,n',s',phi')

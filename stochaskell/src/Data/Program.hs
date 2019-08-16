@@ -748,8 +748,8 @@ pdfPNode _ lg env block (Dist f args _) x = expr $ do
 pdfPNode r lg env block (Loop _ lam _) a
   | (Unconstrained _,_) <- runDExpr a = if lg then 0 else 1
   | (PartiallyConstrained{},_) <- runDExpr a = error "TODO: partially constrained"
-  | lg        = E.foldl (\l e -> l + f e) 0 idxs
-  | otherwise = E.foldl (\p e -> p * f e) 1 idxs
+  | lg        = foldlE (\l e -> l + f e) 0 idxs
+  | otherwise = foldlE (\p e -> p * f e) 1 idxs
   where n = Expression $ vectorSize a
         idxs = vector [ i | i <- 1...n ] :: ZVec
         f e = let j = erase e in pdfJoint r lg env block lam [j] (a!j)
@@ -759,7 +759,7 @@ pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
     Unconstrained _ -> fromExpr $ if lg then 0 else 1 :: R
     PartiallyConstrained [(lo,hi)] [(id,t)] [([k],v)] _ -> fromExpr $
       pdfOrderStats r lg env block d n (lo,hi) (id,t) (k,v)
-    _ | lg -> fromExpr $ E.foldl g (logFactorial' n') (Expression x)
+    _ | lg -> fromExpr $ foldlE g (logFactorial' n') (Expression x)
   where n' = Expression $ reDExpr env block n
         g l z = l + pdfPNode r lg env block d (erase z)
 pdfPNode _ lg env block (Switch hd alts ns _) x = Expression $
@@ -803,8 +803,8 @@ pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) =
           else     (1 - fcdf y) ** cast (n'-j) / cast (factorial' (n'-j))
         points = vector [ let (_,x) = (kv' $ erase i) in pdfPNode r lg env block d x
                         | i::Z <- (Expression lo)...(Expression hi) ] :: RVec
-        sum' = E.foldl (+) 0
-        product' = E.foldl (*) 1
+        sum' = foldlE (+) 0
+        product' = foldlE (*) 1
 
 cdfPNode :: EEnv -> Block -> PNode -> DExpr -> R
 cdfPNode env block (Dist f args _) x = expr $ do

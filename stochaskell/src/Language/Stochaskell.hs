@@ -12,7 +12,7 @@ module Language.Stochaskell
   -- ** Array manipulation
   , Indexable(..)
   -- ** Recursion
-  , foldl, foldr, scanl, scanr
+  , foldlE, foldrE, scanlE, scanrE
   -- *** Helpers
   , constSymbol
   , d

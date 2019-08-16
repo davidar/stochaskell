@@ -32,3 +32,6 @@ uninstall:
 
 jupyter: install
 	jupyter notebook
+
+%-ipynb: %.ipynb
+	jupyter nbconvert --to notebook --execute $<
