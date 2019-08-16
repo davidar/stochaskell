@@ -823,8 +823,9 @@ hashcons e = do
 -- perform an action in the enclosing block
 liftBlock :: MonadState Block m => State Block b -> m b
 liftBlock s = do
-    Block (dag:parent) <- get
-    let (ref, parent') = runState s $ Block parent
+    block <- get
+    let Block (dag:parent) = block
+        (ref, parent') = runState s $ Block parent
     put $ deriveBlock dag parent'
     return ref
 

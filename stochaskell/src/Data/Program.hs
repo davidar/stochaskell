@@ -356,8 +356,10 @@ truncated a b p = P $ do
   i <- liftExprBlock $ fromExpr a
   j <- liftExprBlock $ fromExpr b
   x <- fromProg p
-  (Var name t) <- liftExprBlock $ fromExpr x
-  PBlock block (d:rhs) given ns <- get
+  v <- liftExprBlock $ fromExpr x
+  pb <- get
+  let Var name t = v
+      PBlock block (d:rhs) given ns = pb
   if name /= Volatile ns (dagLevel $ topDAG block) (length rhs) then
     trace "truncated: program does not appear to be primitive, falling back to guard" $ do
       put rollback
@@ -649,7 +651,8 @@ type instance ConditionOf (P ()) = Expression Bool
 instance MonadGuard P where
     guard = P . go where
       go cond = do
-        (Var (Internal 0 i) _) <- liftExprBlock (fromExpr cond)
+        v <- liftExprBlock (fromExpr cond)
+        let Var (Internal 0 i) _ = v
         PBlock block dists given ns <- get
         let dag = topDAG block
         assert (i == length (nodes dag) - 1) $ return ()

@@ -13,9 +13,6 @@
 [submodule "docs/tufte-pandoc-css"]
 	path = docs/tufte-pandoc-css
 	url = https://github.com/davidar/tufte-pandoc-css.git
-[submodule "stochaskell/standalone-haddock"]
-	path = stochaskell/standalone-haddock
-	url = https://github.com/davidar/standalone-haddock.git
 [submodule "docs/styles"]
 	path = docs/styles
 	url = https://github.com/citation-style-language/styles.git
@@ -25,3 +22,6 @@
 [submodule "docs/normalize.css"]
 	path = docs/normalize.css
 	url = https://github.com/necolas/normalize.css.git
+[submodule "stochaskell/standalone-haddock"]
+	path = stochaskell/standalone-haddock
+	url = https://github.com/ktvoelker/standalone-haddock.git

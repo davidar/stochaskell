@@ -1,15 +1,17 @@
-resolver: lts-12.26
+resolver: lts-13.26
 packages:
 - stochaskell
 extra-deps:
-- Chart-1.9
-- Chart-cairo-1.9
+- cairo-0.13.6.0
+- Chart-cairo-1.9.1
+- diagrams-cairo-1.4.1
 - lazy-csv-0.5.1
-- magic-1.1
-- plot-0.2.3.9
-- plots-0.1.0.2
+- glib-0.13.7.0
+- gtk2hs-buildtools-0.13.5.0
+- pango-0.13.6.0
+- plots-0.1.1.2
 - github: gibiansky/IHaskell
-  commit: 910119f65f52f327f0305d432740d62aa9f50a2e
+  commit: 93bfa3a7a434c1dfe6873c2105c43856c282e183
   subdirs:
   - .
   - ipython-kernel
@@ -22,6 +24,8 @@ extra-deps:
   - ihaskell-display/ihaskell-hatex
   - ihaskell-display/ihaskell-juicypixels
   - ihaskell-display/ihaskell-magic
-  - ihaskell-display/ihaskell-plot
-  - ihaskell-display/ihaskell-static-canvas
-  - ihaskell-display/ihaskell-widgets
+#  - ihaskell-display/ihaskell-plot
+#  - ihaskell-display/ihaskell-static-canvas
+#  - ihaskell-display/ihaskell-widgets
+- HaTeX-3.21.0.0
+- magic-1.1

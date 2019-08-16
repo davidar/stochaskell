@@ -58,7 +58,7 @@ RUN make -C stochaskell env && rm -rf .cache
 COPY --chown=1000 stochaskell/cmdstan stochaskell/cmdstan
 RUN make -C stochaskell/cmdstan build
 
-RUN stack --resolver lts-12.26 setup \
+RUN stack --resolver lts-13.26 setup \
  && rm -rf .stack/programs/*-linux/ghc-*{.tar.xz,/share}
 
 COPY --chown=1000 stack.yaml stack.yaml
@@ -73,8 +73,8 @@ RUN echo '{}' > stochaskell/package.yaml \
     ihaskell-hatex \
     ihaskell-juicypixels \
     ihaskell-magic \
-    ihaskell-plot \
-    ihaskell-static-canvas \
+#    ihaskell-plot \
+#    ihaskell-static-canvas \
 #    ihaskell-widgets \
  && stack clean \
  && rm -rf .stack/indices .stack-work/downloaded

@@ -6,8 +6,12 @@ packages:
 - ./standalone-haddock
 system-ghc: false
 extra-deps:
-- Chart-1.9
-- Chart-cairo-1.9
+- cairo-0.13.6.0
+- Chart-cairo-1.9.1
+- diagrams-cairo-1.4.1
+- glib-0.13.7.0
+- gtk2hs-buildtools-0.13.5.0
 - lazy-csv-0.5.1
-- plots-0.1.0.2
-resolver: lts-12.26
+- pango-0.13.6.0
+- plots-0.1.1.2
+resolver: lts-13.26

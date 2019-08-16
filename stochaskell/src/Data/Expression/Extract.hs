@@ -120,7 +120,8 @@ extractNodeRef fNodeRef fNode env block = go where
 
   extractLambda :: Lambda NodeRef -> State Block (Lambda NodeRef)
   extractLambda (Lambda body hd) = do
-    Lambda dag [ret] <- extractLambda' $ Lambda body [hd]
+    lam <- extractLambda' $ Lambda body [hd]
+    let Lambda dag [ret] = lam
     return $ Lambda dag ret
 
   extractLambda' :: Lambda [NodeRef] -> State Block (Lambda [NodeRef])

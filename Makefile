@@ -12,8 +12,8 @@ IHASKELL = \
 	ihaskell-hatex \
 	ihaskell-juicypixels \
 	ihaskell-magic \
-	ihaskell-plot \
-	ihaskell-static-canvas \
+#	ihaskell-plot \
+#	ihaskell-static-canvas \
 #	ihaskell-widgets
 
 IHASKELL_BIN = $(shell stack path --local-install-root)/bin/ihaskell
