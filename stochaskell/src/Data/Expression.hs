@@ -1,10 +1,8 @@
-{-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables, TypeFamilies,
-             TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,
-             FlexibleContexts, ConstraintKinds, RankNTypes, TypeOperators,
-             DefaultSignatures, UndecidableInstances #-}
+{-# LANGUAGE GADTs, OverloadedStrings, ScopedTypeVariables,
+  TypeFamilies, FlexibleInstances, MultiParamTypeClasses,
+  FlexibleContexts, ConstraintKinds, RankNTypes, TypeOperators,
+  DefaultSignatures, UndecidableInstances #-}
 module Data.Expression where
-
-import Prelude hiding (const,foldl,foldr,scanl,scanr)
 
 import qualified Data.Array as A
 import qualified Data.Array.Abstract as AA
@@ -13,8 +11,8 @@ import qualified Data.Bimap as Bimap
 import Data.Boolean
 import Data.Char
 import Data.Expression.Const hiding (isScalar)
-import Data.List hiding (foldl,foldr,scanl,scanr)
-import Data.List.Extra hiding (foldl,foldr,scanl,scanr)
+import Data.List
+import Data.List.Extra
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
@@ -200,7 +198,7 @@ instance Show Node where
   show (Apply f args t)
     | all (not . isAlphaNum) f, [i,j] <- args
     = show i ++" "++ f ++" "++ show j ++" :: "++ show t
-    | otherwise = f ++" "++ intercalate " " (map show args) ++" :: "++ show t
+    | otherwise = f ++" "++ unwords (map show args) ++" :: "++ show t
   show (Array sh (Lambda dag hd) t) = "\n"++
     "  [ "++ (drop 4 . indent . indent $ showLet dag hd) ++"\n"++
     "  | "++ showParams (inputs dag) sh ++" ] :: "++ show t
@@ -221,7 +219,7 @@ instance Show Node where
     where cases = unlines $ do
             (i, Lambda dag ret) <- zip [0..] alts
             let lhs | typeRef e == IntT = show (i+1)
-                    | otherwise = "C"++ show i ++" "++ intercalate " " (map show $ inputs dag)
+                    | otherwise = "C"++ show i ++" "++ unwords (map show $ inputs dag)
                 rhs = indent (showLet dag ret)
             return $ lhs ++" ->\n"++ rhs
   show (Function (Lambda dag hd) _) =
@@ -277,13 +275,12 @@ deriveBlock d b@(Block ds) = Block (d:parent)
   where parent = drop (nextLevel b - dagLevel d) ds
 
 showBlock :: [DAG] -> String -> String
-showBlock (dag:block) r = showBlock block $ showLet' dag r
-showBlock [] r = r
+showBlock block r = foldl (flip showLet') r block
 showBlock' :: Block -> String -> String
 showBlock' (Block ds) = showBlock ds
 
 -- | dynamically typed Stochaskell expression
-data DExpr = DExpr { fromDExpr :: State Block NodeRef }
+newtype DExpr = DExpr { fromDExpr :: State Block NodeRef }
 runDExpr :: DExpr -> (NodeRef, Block)
 runDExpr e = runState (fromDExpr e) emptyBlock
 instance Eq DExpr where
@@ -686,9 +683,8 @@ instance (ExprType (f (FixE f))) => GConstructor (K1 i (FixE f)) where
   gdeconstruct f (K1 (FixE x)) = (0, [f x])
 
 internal :: Level -> Pointer -> State Block NodeRef
-internal level i = do
-    t <- getType
-    return $ Var (Internal level i) t
+internal level i =
+    Var (Internal level i) <$> getType
   where getType = do
           block <- get
           let dag = topDAG block
@@ -714,7 +710,7 @@ typeDExpr e = do
   return $ typeRef i
 
 typeExprTuple :: (ExprTuple t) => t -> State Block [Type]
-typeExprTuple = sequence . fmap typeDExpr . fromExprTuple
+typeExprTuple = traverse typeDExpr . fromExprTuple
 
 typeRef :: NodeRef -> Type
 typeRef (Var _ t) = t
@@ -860,7 +856,7 @@ variesLambda' :: DAG -> Lambda [NodeRef] -> Bool
 variesLambda' dag (Lambda adag rets) =
   varies dag (rets \\ inputs' adag) ||
   (not . null $ inputs dag `intersect` collectIds adag) ||
-  (not . null . filter p $ collectIds adag)
+  any p (collectIds adag)
   where p (Internal l _) = l == dagLevel dag
         p _ = False
 
@@ -920,7 +916,7 @@ dependsType block = go where
   go (SubrangeT t a b) = go t `Set.union` f a `Set.union` f b
     where f Nothing = Set.empty
           f (Just r) = dependsNodeRef block r
-  go (ArrayT _ sh t) = Set.unions $ 
+  go (ArrayT _ sh t) = Set.unions $
     go t : [dependsNodeRef block a `Set.union` dependsNodeRef block b | (a,b) <- sh]
   go (TupleT ts) = Set.unions $ go <$> ts
   go (UnionT tss) = Set.unions [go t | ts <- tss, t <- ts]
@@ -931,9 +927,8 @@ dependsD e = Set.filter (not . isInternal) $ dependsNodeRef block ret
   where (ret, block) = runDExpr e
 
 getNextLevel :: State Block Level
-getNextLevel = do
-  block <- get
-  return (nextLevel block)
+getNextLevel =
+  gets nextLevel
 
 condD :: [(DExpr,DExpr)] -> DExpr
 condD cvs = DExpr $ do
@@ -950,7 +945,7 @@ condProduct js
     cs' <- sequence $ simplifyConj <$> cs
     return $ zip cs' vs
   where (cs,vs) = unzip $ liftCond js
-        liftCond ((Cond cvs _):rest) =
+        liftCond (Cond cvs _:rest) =
             [(c:cs, v:vs) | (c,v) <- cvs, (cs,vs) <- liftCond $ lookupCond c <$> rest]
         liftCond (a:rest) = [(cs, a:vs) | (cs,vs) <- liftCond rest]
         liftCond [] = [([],[])]
@@ -994,7 +989,7 @@ simplify (Apply "ifThenElse" [Cond cvs _,a,b] t) | isConst `all` vs = do
   r <- simplifyNodeRef $ Cond (zip cs vs') t
   simplify $ Apply "id" [r] t
   where (cs,vs) = unzip cvs
-simplify (Apply f js t) | isCond `any` js, not $ f `elem` ["ifThenElse","id","log_det"] = do
+simplify (Apply f js t) | isCond `any` js, f `notElem` ["ifThenElse","id","log_det"] = do
   (cs,vs) <- unzip <$> condProduct js
   vs' <- sequence [simplify $ Apply f v t | v <- vs]
   r <- simplifyNodeRef $ Cond (zip cs vs') t
@@ -1023,7 +1018,7 @@ simplify (Apply "-" [x,Const 0 _] _) = return x
 simplify (Apply "*" [Const (-1) _,x] t) = simplify (Apply "negate" [x] t)
 simplify (Apply "*" [x,Const (-1) _] t) = simplify (Apply "negate" [x] t)
 simplify (Apply "-" [Const 0 _,x] t) = simplify (Apply "negate" [x] t)
-simplify (Apply f js t) | elem f ["+","+s","-","*","/","==","/=","<","<=",">",">="
+simplify (Apply f js t) | f `elem` ["+","+s","-","*","/","==","/=","<","<=",">",">="
                                  ,"exp","log","det","log_det"]
                         , isUnconstrained `any` js = return $ Unconstrained t
 simplify (Apply "==" [x,y] t) | x == y = return $ Const 1 t
@@ -1275,7 +1270,7 @@ floatArray l ar = do
     let ids = [(Dummy d i, IntT) | i <- [1..length sh]]
         e = ar ! [DExpr . return $ Var i t | (i,t) <- ids]
         slam = runLambda ids (fromDExpr e)
-    if not $ stickNode dag (Array sh (fst $ runState slam block) UnknownType)
+    if not $ stickNode dag (Array sh (evalState slam block) UnknownType)
     then liftBlock $ floatArray l ar
     else do
       Lambda dag ret <- slam
@@ -1369,17 +1364,17 @@ foldscan fs dir f r xs = do
             hashcons $ FoldScan fs dir (Lambda dag ret) seed l t
           Scan -> do
             n1 <- simplify $ Apply "+" [n, Const 1 IntT] IntT
-            let t' = (ArrayT Nothing [(Const 1 IntT, n1)] t)
+            let t' = ArrayT Nothing [(Const 1 IntT, n1)] t
             hashcons $ FoldScan fs dir (Lambda dag ret) seed l t'
           ScanRest -> do
-            let t' = (ArrayT Nothing [(Const 1 IntT, n)] t)
+            let t' = ArrayT Nothing [(Const 1 IntT, n)] t
             hashcons $ FoldScan fs dir (Lambda dag ret) seed l t'
       else liftBlock $ foldscan fs dir f r xs
 
 -- | @find p d v@: find leftmost element of @v@ satisfying @p@,
 -- else @d@ if no elements satisfy @p@
 find' :: (ExprType e) => (Expression e -> B) -> Expression e -> Expression [e] -> Expression e
-find' p def v = foldrE f def v where f i j = ifB (p i) i j
+find' p = foldrE $ \i -> ifB (p i) i
 
 -- | Stochaskell equivalent of 'Prelude.sum'
 sum' :: (ExprType a, Num a) => Expression [a] -> Expression a
@@ -1527,7 +1522,7 @@ blockMatrix' k' | not sane = trace ("WARN mis-shaped blocks, assuming incoherent
   return . flip BlockArray t $ A.array bnd
     [([i,j], k !! (i-1) !! (j-1)) | [i,j] <- A.range bnd]
   where flattenRow = foldr1 (zipWith (++))
-        flattenMatrix = concat . map flattenRow :: [[[[a]]]] -> [[a]]
+        flattenMatrix = concatMap flattenRow :: [[[[a]]]] -> [[a]]
         k | isBlockArray `all` concat k' = flattenMatrix $ map fromBlockMatrix <$> k'
           | otherwise = k'
         bnd = ([1,1],[length k, length $ head k])
@@ -1566,7 +1561,7 @@ instance (ExprType e) => AA.Matrix (Expression [[e]]) Z (Expression e) where
 instance AA.Matrix DExpr DExpr DExpr where
     matrix = array' (Just "matrix") 2
     blockMatrix m = DExpr $ do
-      k' <- sequence $ sequence . map asMatrixD <$> m
+      k' <- sequence $ mapM asMatrixD <$> m
       blockMatrix' k'
       where asMatrixD a = do
               t <- typeDExpr a
@@ -1828,14 +1823,11 @@ zipExprTuple s t = fromExprTuple s `zip` fromExprTuple t
 constDExpr :: ConstVal -> Type -> DExpr
 constDExpr c = DExpr . return . Const c
 
-const :: (ExprType t) => ConstVal -> Expression t
-const = constExpr
-
 instance forall a. (ExprType a) => ExprTuple (Expression a) where
     tupleSize = TupleSize 1
-    fromExprTuple (a) = [erase a]
-    toExprTuple [a] = (Expression a)
-    fromConstVals [a] = (const a)
+    fromExprTuple a = [erase a]
+    toExprTuple [a] = Expression a
+    fromConstVals [a] = constExpr a
     typesOf = TypesIs [t] where
       TypeIs t = typeOf :: TypeOf a
 instance (ExprType a, ExprType b) =>
@@ -1843,7 +1835,7 @@ instance (ExprType a, ExprType b) =>
     tupleSize = TupleSize 2
     fromExprTuple (a,b) = [erase a, erase b]
     toExprTuple [a,b] = (Expression a, Expression b)
-    fromConstVals [a,b] = (const a, const b)
+    fromConstVals [a,b] = (constExpr a, constExpr b)
     typesOf = TypesIs [s,t] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
@@ -1852,7 +1844,7 @@ instance (ExprType a, ExprType b, ExprType c) =>
     tupleSize = TupleSize 3
     fromExprTuple (a,b,c) = [erase a, erase b, erase c]
     toExprTuple [a,b,c] = (Expression a, Expression b, Expression c)
-    fromConstVals [a,b,c] = (const a, const b, const c)
+    fromConstVals [a,b,c] = (constExpr a, constExpr b, constExpr c)
     typesOf = TypesIs [s,t,u] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
@@ -1862,7 +1854,7 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d) =>
     tupleSize = TupleSize 4
     fromExprTuple (a,b,c,d) = [erase a, erase b, erase c, erase d]
     toExprTuple [a,b,c,d] = (Expression a, Expression b, Expression c, Expression d)
-    fromConstVals [a,b,c,d] = (const a, const b, const c, const d)
+    fromConstVals [a,b,c,d] = (constExpr a, constExpr b, constExpr c, constExpr d)
     typesOf = TypesIs [s,t,u,v] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
@@ -1877,7 +1869,7 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
     toExprTuple [a,b,c,d,e] =
       (Expression a, Expression b, Expression c, Expression d, Expression e)
     fromConstVals [a,b,c,d,e] =
-      (const a, const b, const c, const d, const e)
+      (constExpr a, constExpr b, constExpr c, constExpr d, constExpr e)
     typesOf = TypesIs [s,t,u,v,w] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
@@ -1893,7 +1885,7 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
     toExprTuple [a,b,c,d,e,f] =
       (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f)
     fromConstVals [a,b,c,d,e,f] =
-      (const a, const b, const c, const d, const e, const f)
+      (constExpr a, constExpr b, constExpr c, constExpr d, constExpr e, constExpr f)
     typesOf = TypesIs [s,t,u,v,w,x] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
@@ -1910,7 +1902,7 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
     toExprTuple [a,b,c,d,e,f,g] =
       (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g)
     fromConstVals [a,b,c,d,e,f,g] =
-      (const a, const b, const c, const d, const e, const f, const g)
+      (constExpr a, constExpr b, constExpr c, constExpr d, constExpr e, constExpr f, constExpr g)
     typesOf = TypesIs [s,t,u,v,w,x,y] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
@@ -1928,7 +1920,7 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
     toExprTuple [a,b,c,d,e,f,g,h] =
       (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g, Expression h)
     fromConstVals [a,b,c,d,e,f,g,h] =
-      (const a, const b, const c, const d, const e, const f, const g, const h)
+      (constExpr a, constExpr b, constExpr c, constExpr d, constExpr e, constExpr f, constExpr g, constExpr h)
     typesOf = TypesIs [s,t,u,v,w,x,y,z] where
       TypeIs s = typeOf :: TypeOf a
       TypeIs t = typeOf :: TypeOf b
@@ -1947,7 +1939,7 @@ instance (ExprType a, ExprType b, ExprType c, ExprType d,
     toExprTuple [a,b,c,d,e,f,g,h,i] =
       (Expression a, Expression b, Expression c, Expression d, Expression e, Expression f, Expression g, Expression h, Expression i)
     fromConstVals [a,b,c,d,e,f,g,h,i] =
-      (const a, const b, const c, const d, const e, const f, const g, const h, const i)
+      (constExpr a, constExpr b, constExpr c, constExpr d, constExpr e, constExpr f, constExpr g, constExpr h, constExpr i)
     typesOf = TypesIs [r,s,t,u,v,w,x,y,z] where
       TypeIs r = typeOf :: TypeOf a
       TypeIs s = typeOf :: TypeOf b

@@ -119,7 +119,7 @@ edNode _ _ n = error $ "edNode "++ show n
 
 edPNode :: Label -> PNode -> String
 edPNode name d@(Dist f args t)
-  | lookup f edBuiltinDistributions /= Nothing =
+  | isJust (lookup f edBuiltinDistributions) =
   name ++" = ed.models."++ c ++ "("++ ps ++")\n"++
   "dim_"++ name ++" = ["++ g `commas` typeDims t ++"]"
   | otherwise = error $ "edPNode "++ show d
@@ -187,7 +187,7 @@ hmcEdward numSamples numSteps stepSize prog init =
             in fromRight $ evalPBlock pb rets env
            | xs <- vals]
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "ed" prog
-        dump env = forM_ (Map.toList env) $ \(LVar i,c) -> do
+        dump env = forM_ (Map.toList env) $ \(LVar i,c) -> 
                      writeNPy (edId i ++".npy") c
         latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
         lShapes = evalShape (Map.map fst given) block . typeDims . typePNode <$> Map.elems latents

@@ -52,7 +52,7 @@ evaluable (EEnv env) block ref =
         p Dummy{}    = True
         p Volatile{} = True
         p Internal{} = False
-        p (Symbol _ known) = if known then False else True
+        p (Symbol _ known) = not known
 
 -- | either an evaluated constant or error string
 type Eval = Either String ConstVal
@@ -82,7 +82,7 @@ evalD_ :: DExpr -> Eval
 evalD_ = evalD emptyEnv
 
 evalTuple :: (ExprTuple t) => Env -> t -> Evals
-evalTuple env = sequence . map (evalD env) . fromExprTuple
+evalTuple env = mapM (evalD env) . fromExprTuple
 
 evalEEnv_ :: EEnv -> Env
 evalEEnv_ (EEnv env) = Map.fromList $ do
@@ -92,7 +92,7 @@ evalEEnv_ (EEnv env) = Map.fromList $ do
     Right x -> return (k,x)
 
 evalNodeRefs :: Env -> Block -> [NodeRef] -> Evals
-evalNodeRefs env block = sequence . map (evalNodeRef env block)
+evalNodeRefs env block = mapM (evalNodeRef env block)
 
 evalNodeRef :: Env -> Block -> NodeRef -> Eval
 evalNodeRef env _ (Var ident _) | isJust val = Right $ fromJust val
@@ -248,7 +248,7 @@ evalRec (FixE e) = Fix $ fmap evalRec c
 
 unifyTuple :: (ExprTuple t) => Block -> [NodeRef] -> t
            -> Map LVal (ConstVal, Type) -> Map LVal ConstVal
-unifyTuple block rets vals env = Map.map (fromRight' . evalD (Map.map fst env)) eenv' 
+unifyTuple block rets vals env = Map.map (fromRight' . evalD (Map.map fst env)) eenv'
   where eenv = EEnv $ Map.map (uncurry constDExpr) env
         EEnv eenv' = solveTuple block rets vals eenv
 
@@ -358,7 +358,7 @@ aggregateFields (EEnv env) = EEnv $ Map.union env' env
           kvs <- kvss
           let id = unreplicate $ mapMaybe (getId' . fst) kvs
           unless (and [c == 0 | (LField _ _ c _,_) <- kvs]) $ error "not a tuple"
-          if (and [i == j | ((LField _ _ _ i,_),j) <- zip kvs [0..]]) then
+          if and [i == j | ((LField _ _ _ i,_),j) <- zip kvs [0..]] then
             let val = DExpr $ do
                   js <- sequence $ fromDExpr . snd <$> kvs
                   return $ Data 0 js (TupleT $ typeRef <$> js)
@@ -437,7 +437,7 @@ toConstraint (k,v) = case k of
     in return $ a ==* v
   LCond True l c -> do
     e <- toConstraint (l,v)
-    return $ (notB c) ||* e
+    return $ notB c ||* e
   LConstr e | p `all` Set.toList (dependsD e)
             , sizeD e < 3 -> return e -- TODO: sizeD limit is a hack
   _ -> trace ("WARN ignoring constraint " ++ show k) mzero
@@ -529,10 +529,10 @@ solveNode env block (Apply "==" [a,b] _) val = EEnv $
   where a' = reDExpr env block a
         b' = reDExpr env block b
 solveNode env block (Apply "ifThenElse" [c,a,b] _) val | evaluable env block c =
-  (conditionEEnv True c' $ solveNodeRef env block a val) `unionEEnv`
-  (conditionEEnv True (notB c') $ solveNodeRef env block b val)
+  conditionEEnv True c' (solveNodeRef env block a val) `unionEEnv`
+  conditionEEnv True (notB c') (solveNodeRef env block b val)
   where c' = reDExpr env block c
-solveNode env block (Apply "ifThenElse" [c,(Data 0 as _),(Data 1 bs _)] _) val =
+solveNode env block (Apply "ifThenElse" [c,Data 0 as _,Data 1 bs _] _) val =
   solveNodeRefs env block $ (c,c') : zip as as' ++ zip bs bs'
   where c' = caseD val [const [true], const [false]]
         as' = [caseD val [const [extractD val 0 i], const [unconstrained t]]
@@ -581,7 +581,7 @@ solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
         [i,j] = inputs dag
         f' x y = let env' = insertEEnv j x env
                  in fromJust . lookupEEnv i $ solveNodeRef env' block' ret y
-solveNode _ _ (FoldScan Fold _ _ _ _ _) _ = trace ("WARN assuming fold = val") emptyEEnv
+solveNode _ _ (FoldScan Fold _ _ _ _ _) _ = trace "WARN assuming fold = val" emptyEEnv
 solveNode env block (Case hd alts _) val | IntT <- typeRef hd, Lambda _ [_] <- head alts =
   solveCase env block hd [Lambda dag ret | Lambda dag [ret] <- alts] val
 solveNode _ _ (Apply "findSortedInsertIndex" _ _) _ = emptyEEnv
@@ -611,10 +611,10 @@ diffNodeRef env block (Var i s) var t
 diffNode :: Env -> Block -> Node -> Id -> Type -> ConstVal
 diffNode env block (Apply "+" [a,b] _) var t | isRight a' =
     diffNodeRef env block b var t
-  where a' = evalNodeRef (Map.filterWithKey (const . not . (Just var ==) . getId') env) block a
+  where a' = evalNodeRef (Map.filterWithKey (const . (Just var /=) . getId') env) block a
 diffNode env block (Apply "#>" [a,b] _) var t | isRight a' =
     fromRight' a' <> diffNodeRef env block b var t
-  where a' = evalNodeRef (Map.filterWithKey (const . not . (Just var ==) . getId') env) block a
+  where a' = evalNodeRef (Map.filterWithKey (const . (Just var /=) . getId') env) block a
 diffNode _ _ node var _ = error $
   "unable to diff node "++ show node ++" wrt "++ show var
 
@@ -709,11 +709,11 @@ derivNode env block (Apply "log" [a] _) var =
 derivNode env block (Apply "+" [a,b] _) var
   | evaluable env' block a = derivNodeRef env block b var
   | otherwise = derivNodeRef env block a var + derivNodeRef env block b var
-  where env' = filterEEnv (const . not . (getId var ==) . getId') env
+  where env' = filterEEnv (const . (getId var /=) . getId') env
 derivNode env block (Apply "-" [a,b] _) var =
   derivNodeRef env block a var - derivNodeRef env block b var
 derivNode env block (Apply op [a,b] _) var
-  | op == "*" = (f' * g + f * g')
+  | op == "*" = f' * g + f * g'
   | op == "/" = (f' * g - f * g') / (g ** 2)
   | op == "**" = f**g * (g * f' / f + g' * log f)
   where f = reDExpr env block a
@@ -722,7 +722,7 @@ derivNode env block (Apply op [a,b] _) var
         g' = derivNodeRef env block b var
 derivNode env block (Apply "#>" [a,b] _) var | evaluable env' block a =
   reDExpr env block a <> derivNodeRef env block b var
-  where env' = filterEEnv (const . not . (getId var ==) . getId') env
+  where env' = filterEEnv (const . (getId var /=) . getId') env
 derivNode env block (Apply "deleteIndex" [a,j] _) var =
   deleteIndex (derivNodeRef env block a var) (reDExpr env block j)
 derivNode env block (Apply "insertIndex" [a,j,e] _) var | isScalar (typeRef e) =

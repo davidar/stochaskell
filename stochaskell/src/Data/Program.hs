@@ -88,7 +88,7 @@ dependsPNode block (Loop sh (Lambda defs dist) _) =
           dependsPNode (deriveBlock defs block) dist
 
 extractPNode :: (NodeRef -> State Block NodeRef) -> (Node -> State Block NodeRef)
-             -> EEnv -> Block -> PNode -> State Block PNode 
+             -> EEnv -> Block -> PNode -> State Block PNode
 extractPNode fNodeRef fNode env block = go where
   go (Dist name args t) = do
     args' <- sequence $ goRef <$> args
@@ -139,7 +139,7 @@ instance Show PNode where
     where cases = unlines $ do
             (i, (Lambda dag ret, refs)) <- zip [0..] alts
             let lhs | typeRef e == IntT = show (i+1)
-                    | otherwise = "C"++ show i ++" "++ intercalate " " (map show $ inputs dag)
+                    | otherwise = "C"++ show i ++" "++ unwords (map show $ inputs dag)
                 rhs = indent . showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret
             return $ lhs ++" ->\n"++ rhs
   show (Chain range refs (Lambda dag ret) x ns _) =
@@ -216,7 +216,7 @@ modelSkeleton pb@(PBlock block _ given _) = tparams
                       in Set.filter isInternal $ dependsPNode block n
 
 evalPBlock :: (ExprTuple t) => PBlock -> [NodeRef] -> Env -> Either String t
-evalPBlock (PBlock block _ given _) rets = \env -> do
+evalPBlock (PBlock block _ given _) rets env = do
   xs <- sequence (evalNodeRef (Map.union (Map.map fst given) env) block <$> rets)
   return $ fromConstVals xs
 
@@ -272,7 +272,7 @@ chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
       ids = [(Dummy 99 0, IntT), (Dummy 99 1, t)]
       args = [DExpr . return $ Var i t | (i,t) <- ids]
       s = do
-        r <- fromProg $ p (Expression $ args !! 0) (entuple . Expression $ args !! 1)
+        r <- fromProg $ p (Expression $ head args) (entuple . Expression $ args !! 1)
         liftExprBlock . fromExpr $ detuple r
       (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
         PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
@@ -284,7 +284,7 @@ chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
 
 -- | convenience function for calling 'chainRange'' starting at 1 and ignoring indices
 chain' :: (ExprTuple t) => Z -> (t -> P t) -> t -> P t
-chain' n p = chainRange' (1,n) (\_ -> p)
+chain' n p = chainRange' (1,n) (const p)
 
 -- | creates a mixture distribution, eg.
 --
@@ -350,7 +350,7 @@ distDs n s = P $ do
   return $ if n == 1 then [e] else extractD e 0 <$> [0..(n-1)]
 
 -- | truncate distribution to given bounds
-truncated :: (Expression t) -> (Expression t) -> P (Expression t) -> P (Expression t)
+truncated :: Expression t -> Expression t -> P (Expression t) -> P (Expression t)
 truncated a b p = P $ do
   rollback <- get
   i <- liftExprBlock $ fromExpr a
@@ -377,7 +377,7 @@ truncated a b p = P $ do
     put $ PBlock block' (d':rhs) given ns
     return (expr $ return (Var name t'))
 
-truncated' :: (Expression t) -> (Expression t) -> P (Expression t) -> P (Expression t)
+truncated' :: Expression t -> Expression t -> P (Expression t) -> P (Expression t)
 truncated' a b p = do
   x <- p
   guard $ a <=* x &&* x <=* b
@@ -663,7 +663,7 @@ instance MonadGuard P where
                      (Map.insert (LVar j) (a,t) given) ns
           _ -> go (cond ==* true)
 
-dirac :: (Expression t) -> P (Expression t)
+dirac :: Expression t -> P (Expression t)
 dirac c = do
   x <- dist $ do
     i <- fromExpr c
@@ -751,7 +751,7 @@ pdfPNode r lg env block (Loop _ lam _) a
   | lg        = foldlE (\l e -> l + f e) 0 idxs
   | otherwise = foldlE (\p e -> p * f e) 1 idxs
   where n = Expression $ vectorSize a
-        idxs = vector [ i | i <- 1...n ] :: ZVec
+        idxs = vector (1...n) :: ZVec
         f e = let j = erase e in pdfJoint r lg env block lam [j] (a!j)
 pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
   i <- fromDExpr x
@@ -763,7 +763,7 @@ pdfPNode r lg env block (HODist "orderedSample" d [n] _) x = expr $ do
   where n' = Expression $ reDExpr env block n
         g l z = l + pdfPNode r lg env block d (erase z)
 pdfPNode _ lg env block (Switch hd alts ns _) x = Expression $
-  caseD hd' [\_ -> [erase e] | e <- alts']
+  caseD hd' [const [erase e] | e <- alts']
   where hd' = reDExpr env block hd
         p (LVar (Volatile ns' _ _)) _ | ns' == ns = True
         p _ _ = False
@@ -776,7 +776,7 @@ pdfPNode _ lg env block (Switch hd alts ns _) x = Expression $
 pdfPNode _ _ _ _ node x = error $ "pdfPNode "++ show node ++" "++ show x
 
 pdfJoint :: Map Id PNode -> Bool -> EEnv -> Block -> Lambda PNode -> [DExpr] -> DExpr -> R
-pdfJoint r lg env block (Lambda body pn) js x = pdfPNode r lg env' block' pn x
+pdfJoint r lg env block (Lambda body pn) js = pdfPNode r lg env' block' pn
   where block' = deriveBlock body block
         env' = bindInputs body js `unionEEnv` env
 
@@ -792,17 +792,17 @@ pdfOrderStats r lg env block d n (lo,hi) (dummy,dummyT) (k,v) =
                 in (Expression $ substD envi k, substD envi v) :: (Z,DExpr)
         intervalL = let (i,x) = kv' lo in if lg
           then log (fcdf x) *  cast (i-1) -    logFactorial' (i-1)
-          else     (fcdf x) ** cast (i-1) / cast (factorial' (i-1))
+          else     fcdf x ** cast (i-1) / cast (factorial' (i-1))
         interval (i,x) (j,y) = if lg
           then log (fcdf y - fcdf x) *  cast (j-i-1) -    logFactorial' (j-i-1)
           else     (fcdf y - fcdf x) ** cast (j-i-1) / cast (factorial' (j-i-1))
         intervals = vector [ interval (kv' $ erase i) (kv' . erase $ i+1)
-                           | i::Z <- (Expression lo)...(Expression $ hi-1) ] :: RVec
+                           | i::Z <- Expression lo...(Expression $ hi-1) ] :: RVec
         intervalR = let (j,y) = kv' hi in if lg
           then log (1 - fcdf y) *  cast (n'-j) -    logFactorial' (n'-j)
           else     (1 - fcdf y) ** cast (n'-j) / cast (factorial' (n'-j))
         points = vector [ let (_,x) = (kv' $ erase i) in pdfPNode r lg env block d x
-                        | i::Z <- (Expression lo)...(Expression hi) ] :: RVec
+                        | i::Z <- Expression lo...Expression hi ] :: RVec
         sum' = foldlE (+) 0
         product' = foldlE (*) 1
 
@@ -883,7 +883,7 @@ densityPNode env block (Dist "normals" [m,s] _) x = product
         s' = map toDouble . toList . fromRight' $ evalNodeRef env block s
         x' = map toDouble $ toList x
 densityPNode env block (Dist "multi_normal" [m,s] _) x =
-    LF.logToLogFloat $ -0.5 * (real $ (x' <.> (s' <\> x')) + logDet s' + n * log (2*pi))
+    LF.logToLogFloat $ -0.5 * real ((x' <.> (s' <\> x')) + logDet s' + n * log (2*pi))
   where m' = fromRight' $ evalNodeRef env block m
         s' = fromRight' $ evalNodeRef env block s
         n = integer $ length (toList m')
@@ -898,7 +898,7 @@ densityPNode env block (Dist "uniform" [a,b] _) x =
         b' = toDouble . fromRight' $ evalNodeRef env block b
         x' = toDouble x
 densityPNode env block (Dist "discreteUniform" [a,b] _) x =
-    LF.logFloat $ if a' <= x' && x' <= b' then 1/(fromInteger $ b' - a' + 1) else 0
+    LF.logFloat $ if a' <= x' && x' <= b' then 1/fromInteger (b' - a' + 1) else 0
   where a' = toInteger . fromRight' $ evalNodeRef env block a
         b' = toInteger . fromRight' $ evalNodeRef env block b
         x' = toInteger x
@@ -959,7 +959,7 @@ samplePNodes env block ((ident,node):rest) = do
 samplePNode :: Env -> Block -> PNode -> IO ConstVal
 samplePNode env block d@(Dist f js (SubrangeT t lo hi)) = do
   x <- samplePNode env block (Dist f js t)
-  if flip any (elems' x) (< lo') || any (hi' <) (elems' x)
+  if any (< lo') (elems' x) || any (hi' <) (elems' x)
     then trace ("rejecting OOB sample "++ show x) $
            samplePNode env block d
     else return x
@@ -973,7 +973,7 @@ samplePNode env block (Dist "bernoulliLogit" [l] _) = fromBool <$> bernoulli p'
   where l' = toDouble . fromRight' $ evalNodeRef env block l
         p' = 1 / (1 + exp (-l'))
 samplePNode env block (Dist "bernoulliLogits" [l] _) = do
-  z <- sequence $ map bernoulliLogit l'
+  z <- mapM bernoulliLogit l'
   return $ fromList (map fromBool z)
   where l' = map toDouble . toList . fromRight' $ evalNodeRef env block l
 samplePNode env block (Dist "pmf" [q] _) = fromInteger <$> pmf q'
@@ -1026,7 +1026,7 @@ samplePNode env block (Dist "uniform" [a,b] _) = fromDouble <$> uniform a' b'
   where a' = toDouble . fromRight' $ evalNodeRef env block a
         b' = toDouble . fromRight' $ evalNodeRef env block b
 samplePNode env block (Dist "uniforms" [a,b] (ArrayT _ sh _)) = do
-  z <- sequence $ zipWith uniform a' b'
+  z <- zipWithM uniform a' b'
   return $ listArray' (evalShape env block sh) (map fromDouble z)
   where a' = map toDouble . elems' . fromRight' $ evalNodeRef env block a
         b' = map toDouble . elems' . fromRight' $ evalNodeRef env block b
@@ -1047,7 +1047,7 @@ samplePNode env block (Loop shp (Lambda ldag hd) _)
               | idx <- evalRange env block shp ]
 
 samplePNode env block (HODist "orderedSample" d [n] _) =
-  (fromList . sort) <$> sequence [samplePNode env block d | _ <- [1..n']]
+  fromList . sort <$> sequence [samplePNode env block d | _ <- [1..n']]
   where n' = toInteger . fromRight' $ evalNodeRef env block n
 
 samplePNode env block (Switch hd alts ns _) = do

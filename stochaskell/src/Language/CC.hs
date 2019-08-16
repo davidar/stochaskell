@@ -81,7 +81,7 @@ ccType t = error $ "ccType "++ show t
 
 ccTie :: [Id] -> [Type] -> String
 ccTie is ts = concat (zipWith f is ts) ++ "tie("++ ccId `commas` is ++")"
-  where f i t = ccType t ++" "++ (ccNodeRef (Var i t)) ++"; "
+  where f i t = ccType t ++" "++ ccNodeRef (Var i t) ++"; "
 
 
 ------------------------------------------------------------------------------
@@ -337,7 +337,7 @@ ccDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   in decl name n ++ wrapTry (ccNode r name n)
   where decl name node = case node of
           Apply "getExternal" [i] _ ->
-            ccType (typeRef i) ++" "++ (ccNodeRef i) ++"; "
+            ccType (typeRef i) ++" "++ ccNodeRef i ++"; "
           Apply _ _ (TupleT []) -> ""
           _ -> ccType (typeNode node) ++" "++ name ++"; "
 

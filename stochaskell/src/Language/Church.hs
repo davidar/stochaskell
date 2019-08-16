@@ -121,7 +121,7 @@ churchProgram prog
     "(pair "++ printedRets ++" (and\n"++
     indent (unlines printedConds) ++"))))\n  "++
     "(car p) (cdr p))"
-  where (rets, (PBlock block refs given ns)) = runProgExprs "church" prog
+  where (rets, PBlock block refs given ns) = runProgExprs "church" prog
         printedRefs = indent . unlines $ zipWith g [0..] (reverse refs)
         g i n = "("++ churchId (Volatile ns 0 i) ++" "++ churchPNode n ++")"
         printedRets | length rets == 1 = churchNodeRef (head rets)

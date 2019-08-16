@@ -145,16 +145,16 @@ pmPNode name (Loop sh (Lambda defs dist) _) Nothing =
           pmPNode name' dist Nothing
 
 pmPNode' :: Label -> String -> [String] -> Type -> Maybe ConstVal -> String
-pmPNode' name f args t val | lookup f pmBuiltinDistributions /= Nothing =
+pmPNode' name f args t val | isJust (lookup f pmBuiltinDistributions) =
   name ++" = "++ ctor ++ "('"++ name ++"', "++ ps ++", "++ obs ++
     "shape=("++ g `commas` typeDims t ++"))"
   where c:params = fromJust $ lookup f pmBuiltinDistributions
         h p a = p ++"="++ a
         ps = intercalate ", " (zipWith h params args)
         g (a,b) = pmNodeRef b ++"-"++ pmNodeRef a ++"+1"
-        obs | val == Nothing = ""
+        obs | isNothing val = ""
             | otherwise = "observed=np.load('"++ name ++".npy'), "
-        ctor | (SubrangeT _ lo hi) <- t, val == Nothing =
+        ctor | (SubrangeT _ lo hi) <- t, isNothing val =
                let kwargs = case (lo,hi) of
                      (Just a, Just b)  -> "lower="++ pmNodeRef a ++
                                         ", upper="++ pmNodeRef b
@@ -240,7 +240,7 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
   setCurrentDirectory tmpDir
   let initEnv | isJust init = unifyTuple block rets (fromJust init) given
               | otherwise = Map.map fst given
-  forM_ (Map.toList initEnv) $ \(LVar i,c) -> do
+  forM_ (Map.toList initEnv) $ \(LVar i,c) -> 
     writeNPy (pmId i ++".npy") c
   writeFile "main.py" $
     pmProgram prog ++"\n  "++

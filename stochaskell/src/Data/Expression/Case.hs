@@ -35,7 +35,7 @@ caseD' k fs = do
     let ids = [(Dummy d i, t) | (i,t) <- zip [0..] ts]
         args = [DExpr . return $ Var i t | (i,t) <- ids]
     return . runLambda ids . sequence $ fromDExpr <$> f args
-  dag <- topDAG <$> get
+  dag <- gets topDAG
   if varies dag [k] || variesLambda' dag `any` cases
   then simplify $ Case k cases (tupleT . foldr1 (zipWith coerce) $ map typeRef . fHead <$> cases)
   else liftBlock $ caseD' k fs

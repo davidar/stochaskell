@@ -85,7 +85,7 @@ extractNodeRef fNodeRef fNode env block = go where
   extractNode :: Node -> State Block NodeRef
   extractNode n = do
     node <- extractNode' n
-    dag <- topDAG <$> get
+    dag <- gets topDAG
     if stickNode dag node then fNode node else liftBlock $ extractNode n
 
   extractNode' :: Node -> State Block Node
@@ -154,7 +154,7 @@ extractType env block = go where
       ts' <- sequence $ go <$> ts
       return $ TupleT ts'
     UnionT tss -> do
-      tss' <- sequence $ sequence . map go <$> tss
+      tss' <- sequence $ mapM go <$> tss
       return $ UnionT tss'
     UnknownType -> return UnknownType
   f :: (Traversable t) => t NodeRef -> State Block (t NodeRef)
@@ -169,7 +169,7 @@ optimiseD ol = fixpt f
           extractNodeRef (optimiseNodeRef ol) (optimiseNode ol) emptyEEnv block ret
 
 flattenConds :: [(NodeRef,NodeRef)] -> State Block [(NodeRef,NodeRef)]
-flattenConds cvs = concat <$> (sequence $ flattenCond <$> cvs) where
+flattenConds cvs = concat <$> sequence (flattenCond <$> cvs) where
   flattenCond (Cond cas _, b)
     | isConst `all` map snd cas = flattenConds [(c,b) | (c,a) <- cas, getConstVal a == Just 1]
     | otherwise = do
@@ -206,9 +206,7 @@ optimiseBlockArray ol a' t
     let cs = getConds (head js)
     vs <- sequence $ do
       c <- cs
-      let f (Cond cvs' t') = case lookup c cvs' of
-            Just v -> v
-            Nothing -> Unconstrained t'
+      let f (Cond cvs' t') = fromMaybe (Unconstrained t') (lookup c cvs')
           f r = r
       return $ optimiseBlockArray ol (f <$> a') t
     optimiseNodeRef ol $ Cond (zip cs vs) t
@@ -261,7 +259,7 @@ optimiseDet lg a t = do
         det' = fromDExpr . det . DExpr . blockMatrix'
 
 extractIndex :: DExpr -> [DExpr] -> DExpr
-extractIndex e = DExpr . (extractIndexNode emptyEEnv block $ lookupBlock r block)
+extractIndex e = DExpr . extractIndexNode emptyEEnv block (lookupBlock r block)
   where (Var r _, block) = runDExpr e
 
 extractIndexNode :: EEnv -> Block -> Node -> [DExpr] -> State Block NodeRef

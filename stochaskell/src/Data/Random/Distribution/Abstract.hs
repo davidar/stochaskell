@@ -1,5 +1,5 @@
-{-# LANGUAGE FlexibleContexts, MultiParamTypeClasses, FunctionalDependencies,
-             FlexibleInstances, MonadComprehensions #-}
+{-# LANGUAGE FlexibleContexts, FunctionalDependencies,
+  FlexibleInstances, MonadComprehensions #-}
 module Data.Random.Distribution.Abstract where
 
 import Data.Array.Abstract
@@ -162,7 +162,7 @@ cdfUniform x a b | x < a = 0
                  | x > b = 1
                  | otherwise = (x - a) / (b - a)
 lpdfDiscreteUniform x a b | x < a || b < x = log 0
-                          | otherwise = log $ 1 / (fromIntegral $ b - a + 1)
+                          | otherwise = log $ 1 / fromIntegral (b - a + 1)
 
 newtype Uniforms a = Uniforms a
 uniforms a b = sample $ Uniforms (a,b)
@@ -172,8 +172,8 @@ instance Distribution Wishart (Integer, ShapedMatrix Double) IO (ShapedMatrix Do
   sample (Wishart (n,v)) = do
     c <- joint vector [ chiSquare (n-i+1) | i <- 1...p ] :: IO (ShapedVector Double)
     z <- joint matrix [ normal 0 1 | i <- 1...p, j <- 1...p ] :: IO (ShapedMatrix Double)
-    let a = matrix [ if i == j then (c!i)
-                else if i >  j then (z!i!j)
+    let a = matrix [ if i == j then c!i
+                else if i >  j then z!i!j
                 else 0 | i <- 1...p, j <- 1...p ] :: ShapedMatrix Double
         l = chol v :: ShapedMatrix Double
     return $ l <> a <> tr' a <> tr' l
