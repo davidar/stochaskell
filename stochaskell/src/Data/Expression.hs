@@ -177,6 +177,11 @@ data Node = Apply { fName :: String
                   , cAlts :: [Lambda [NodeRef]]
                   , typeNode :: Type
                   }
+          | Unfold
+                  { uFunc :: Lambda NodeRef
+                  , uSeed :: NodeRef
+                  , typeNode :: Type
+                  }
           | Function
                   { fFunc :: Lambda NodeRef
                   , typeNode :: Type
@@ -222,6 +227,9 @@ instance Show Node where
                     | otherwise = "C"++ show i ++" "++ unwords (map show $ inputs dag)
                 rhs = indent (showLet dag ret)
             return $ lhs ++" ->\n"++ rhs
+  show (Unfold (Lambda dag hd) seed _) =
+    "unfold "++ show seed ++" $ \\"++ show (head $ inputs' dag) ++" ->\n"++
+      indent (showLet dag hd)
   show (Function (Lambda dag hd) _) =
     "\\"++ unwords (show <$> inputs' dag) ++" ->\n"++
       indent (showLet dag hd)
@@ -296,6 +304,7 @@ data LVal = LVar Id
           | LField Id Type Tag Int
           | LCond Bool LVal DExpr
           | LConstr DExpr
+          | LUnfold (Lambda NodeRef)
           deriving (Eq, Ord, Show)
 
 getId' :: LVal -> Maybe Id
@@ -1285,6 +1294,8 @@ stickNode dag a = case a of
     varies dag [sd,ls] || variesLambda dag lam
   Case hd alts _ ->
     varies dag [hd] || variesLambda' dag `any` alts
+  Unfold lam sd _ ->
+    varies dag [sd] || variesLambda dag lam
   Function lam _ ->
     variesLambda dag lam
 

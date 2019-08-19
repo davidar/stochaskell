@@ -12,7 +12,7 @@ module Language.Stochaskell
   -- ** Array manipulation
   , Indexable(..)
   -- ** Recursion
-  , foldlE, foldrE, scanlE, scanrE
+  , foldlE, foldrE, scanlE, scanrE, unfoldE
   -- *** Helpers
   , constSymbol
   , d
@@ -122,6 +122,7 @@ import Data.Expression.Case
 import Data.Expression.Const hiding (isScalar)
 import Data.Expression.Const.IO
 import Data.Expression.Eval
+import Data.Expression.Unfold
 import Data.List.Utils hiding (join)
 import Data.Number.Transfinite hiding (log,isNaN,isInfinite)
 import Data.Program

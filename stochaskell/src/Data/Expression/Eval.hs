@@ -187,6 +187,11 @@ evalNode env block (Apply "poissonProcess_lpdf" [y,_,Var i _,mean] _) = do
   rates <- sequence $ evalFn1 env block lam <$> toList y'
   mean' <- evalNodeRef env block mean
   return $ sum (log <$> rates) - mean'
+evalNode env block (Apply "unfold" [seed] _) = do
+  let lam = head [lam | LUnfold lam <- Map.keys env]
+      f = evalFn1 env block lam
+  r <- evalNodeRef env block seed
+  f r
 evalNode env block n@(Apply fn args _) = evalContext (show n) $ do
   js <- sequence (evalNodeRef env block <$> args)
   unsafeCatch $ f js
@@ -211,10 +216,18 @@ evalNode env block (FoldScan fs lr lam seed ls _) = do
     (Scan, Left_)  -> scanlConst' (flip f) r xs
 evalNode env block (Case hd alts _) = do
   k <- evalNodeRef env block hd
-  rets <- evalFn' env block (alts !! (integer k - 1)) []
+  rets <- case k of
+    Tagged i cs -> evalFn' env block (alts !! i) cs
+    _ | typeRef hd == IntT ->
+      evalFn' env block (alts !! (integer k - 1)) []
   case rets of
     [ret] -> return ret
     _ -> return $ Tagged 0 rets
+evalNode env block (Unfold lam seed _) = do
+  let env' = Map.insert (LUnfold lam) 0 env
+      f = evalFn1 env' block lam
+  r <- evalNodeRef env block seed
+  f r
 evalNode _ _ n@Function{} = Left $ "evalNode "++ show n
 
 evalFn :: Env -> Block -> Lambda NodeRef -> [ConstVal] -> Eval
