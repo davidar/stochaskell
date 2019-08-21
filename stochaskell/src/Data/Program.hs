@@ -74,6 +74,13 @@ data PNode = Dist { dName :: String
                     , cNS :: NS
                     , typePNode :: Type
                     }
+           | UnfoldP
+                    { uAux :: [PNode]
+                    , uFunc :: Lambda NodeRef
+                    , uSeed :: NodeRef
+                    , uNS :: NS
+                    , typePNode :: Type
+                    }
            deriving (Eq)
 
 dependsPNode :: Block -> PNode -> Set Id
@@ -146,6 +153,10 @@ instance Show PNode where
     "chain "++ show range ++" "++ show x ++" $ \\"++ show i ++" "++ show j ++" ->\n"++
       (indent . showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret)
     where [i,j] = inputs' dag
+  show (UnfoldP refs (Lambda dag ret) seed ns _) =
+    "unfoldP "++ show seed ++" $ \\"++ show i ++" ->\n"++
+      (indent . showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret)
+    where [i] = inputs' dag
 
 data PBlock = PBlock { definitions :: Block
                      , actions     :: [PNode]
@@ -283,6 +294,29 @@ chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
 -- | convenience function for calling 'chainRange'' starting at 1 and ignoring indices
 chain' :: (ExprTuple t) => Z -> (t -> P t) -> t -> P t
 chain' n p = chainRange' (1,n) (const p)
+
+unfoldP :: forall t f.
+  (Traversable f, Constructor (f t), ExprTuple t, ExprType (f (FixE f)), ExprType (f t))
+  => (t -> P (Expression (f t))) -> t -> P (FixE f)
+unfoldP f r = fmap FixE . dist' $ \ns -> do
+  seed <- fromExpr $ detuple r
+  block <- get
+  d <- gets nextLevel
+  let i = Dummy 99 0
+      s = typeRef seed
+      g :: t -> P (FixE f)
+      g x = fmap FixE . dist $ do
+        i <- fromExpr (detuple x)
+        return $ Dist "unfold" [i] RecursiveT
+      q :: P (Expression (f (FixE f)))
+      q = do
+        y <- f (entuple . expr . return $ Var i s)
+        fromCaseP (fmap fromConcrete . traverse g) y
+      TypeIs t = typeOf :: TypeOf (Expression (f (FixE f)))
+  (lam, racts) <- runLambdaP ns [(i,s)] $ do
+    z <- fromProg q
+    liftExprBlock $ fromExpr z
+  return $ UnfoldP racts lam seed ns t
 
 -- | creates a mixture distribution, eg.
 --
