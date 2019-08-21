@@ -1048,38 +1048,36 @@ samplePNode env block (HODist "orderedSample" d [n] _) =
   fromList . sort <$> sequence [samplePNode env block d | _ <- [1..n']]
   where n' = toInteger . fromRight' $ evalNodeRef env block n
 
-samplePNode env block (Switch hd alts ns _) = do
-  let env' = Map.fromList (inputsL ldag `zip` ks) `Map.union` env
-  env'' <- samplePNodes env' block' idents
-  let env''' = Map.filterWithKey (const . p . getId') env''
-  return . constTuple . fromRight' . sequence $ evalNodeRef env''' block' <$> lhd
+samplePNode env block (Switch hd alts ns _) =
+  constTuple <$> sampleLambda' env block ns refs lam ks
   where Tagged c ks = fromRight' $ evalNodeRef env block hd
-        (Lambda ldag lhd, ds) = alts !! c
-        block' = deriveBlock ldag block
-        idents = [ (Volatile ns (dagLevel ldag) i, d) | (i,d) <- zip [0..] ds ]
+        (lam, refs) = alts !! c
         constTuple [x] = x
         constTuple xs = Tagged 0 xs
-        p (Just Internal{}) = False
-        p Nothing = False
-        p _ = True
 
-samplePNode env block (Chain (lo,hi) refs (Lambda dag ret) x ns _) =
+samplePNode env block (Chain (lo,hi) refs lam x ns _) =
   chainRange (lo',hi') f x'
   where lo' = integer . fromRight' $ evalNodeRef env block lo
         hi' = integer . fromRight' $ evalNodeRef env block hi
         x' = fromRight' $ evalNodeRef env block x
-        block' = deriveBlock dag block
-        idents = [ (Volatile ns (dagLevel dag) i, d) | (i,d) <- zip [0..] refs ]
-        p (Just Internal{}) = False
-        p Nothing = False
-        p _ = True
-        f i x = do
-          let env' = Map.fromList (inputsL dag `zip` [i,x]) `Map.union` env
-          env'' <- samplePNodes env' block' idents
-          let env''' = Map.filterWithKey (const . p . getId') env''
-          return . fromRight' $ evalNodeRef env''' block' ret
+        f i x = sampleLambda env block ns refs lam [i,x]
 
 samplePNode _ _ d = error $ "samplePNode: unrecognised distribution "++ show d
+
+sampleLambda :: Env -> Block -> NS -> [PNode] -> Lambda NodeRef -> [ConstVal] -> IO ConstVal
+sampleLambda env block ns refs (Lambda dag ret) args =
+  head <$> sampleLambda' env block ns refs (Lambda dag [ret]) args
+sampleLambda' :: Env -> Block -> NS -> [PNode] -> Lambda [NodeRef] -> [ConstVal] -> IO [ConstVal]
+sampleLambda' env block ns refs (Lambda dag rets) args = do
+  let block' = deriveBlock dag block
+      idents = [ (Volatile ns (dagLevel dag) i, d) | (i,d) <- zip [0..] refs ]
+      env1 = Map.fromList (inputsL dag `zip` args) `Map.union` env
+  env2 <- samplePNodes env1 block' idents
+  let p (Just Internal{}) = False
+      p Nothing = False
+      p _ = True
+      env3 = Map.filterWithKey (const . p . getId') env2
+  return . fromRight' . sequence $ evalNodeRef env3 block' <$> rets
 
 
 ------------------------------------------------------------------------------
