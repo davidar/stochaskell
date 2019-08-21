@@ -220,6 +220,15 @@ evalPBlock (PBlock block _ given _) rets env = do
   xs <- sequence (evalNodeRef (Map.union (Map.map fst given) env) block <$> rets)
   return $ fromConstVals xs
 
+runLambdaP :: NS -> [(Id,Type)] -> State PBlock r -> State Block (Lambda r, [PNode])
+runLambdaP ns ids s = do
+  block <- get
+  let d = nextLevel block
+      (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
+        PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
+  put $ Block block'
+  return (Lambda dag ret, reverse acts)
+
 caseP :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
 caseP n e ps = P $ do
   k <- liftExprBlock $ fromDExpr e
@@ -241,15 +250,9 @@ caseP' n k ps = distDs n $ \ns -> do
     (ts,p) <- zip tss ps
     let ids = [(Dummy d i, t) | (i,t) <- zip [0..] ts]
         args = [DExpr . return $ Var i t | (i,t) <- ids]
-    return $ do
-      block <- get
-      let s = do
-            r <- fromProg $ p args
-            liftExprBlock . sequence $ fromDExpr <$> r
-          (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
-            PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
-      put $ Block block'
-      return (Lambda dag ret, reverse acts)
+    return . runLambdaP ns ids $ do
+      r <- fromProg $ p args
+      liftExprBlock . sequence $ fromDExpr <$> r
   return $ Switch k cases ns (tupleT . foldr1 (zipWith E.coerce) $ map typeRef . fHead . fst <$> cases)
 
 fromCaseP :: forall c t. (Constructor c, ExprTuple t) => (c -> P t) -> Expression c -> P t
@@ -266,21 +269,16 @@ switchOf f = fromCaseP (f . fromConcrete)
 -- > chainRange' (1,10) (\i x -> normal x 1) 0 -- 10-step standard normal random walk from 0
 chainRange' :: forall t. (ExprTuple t) => Interval Z -> (Z -> t -> P t) -> t -> P t
 chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
-  block <- get
-  let d = nextLevel block
-      TypeIs t = typeOf :: TypeOf t
+  let TypeIs t = typeOf :: TypeOf t
       ids = [(Dummy 99 0, IntT), (Dummy 99 1, t)]
       args = [DExpr . return $ Var i t | (i,t) <- ids]
-      s = do
-        r <- fromProg $ p (Expression $ head args) (entuple . Expression $ args !! 1)
-        liftExprBlock . fromExpr $ detuple r
-      (ret, PBlock (Block (dag:block')) acts _ _) = runState s $
-        PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
-  put $ Block block'
+  (lam, racts) <- runLambdaP ns ids $ do
+    r <- fromProg $ p (Expression $ head args) (entuple . Expression $ args !! 1)
+    liftExprBlock . fromExpr $ detuple r
   lo' <- fromExpr lo
   hi' <- fromExpr hi
   x' <- fromExpr $ detuple x
-  return $ Chain (lo',hi') (reverse acts) (Lambda dag ret) x' ns t
+  return $ Chain (lo',hi') racts lam x' ns t
 
 -- | convenience function for calling 'chainRange'' starting at 1 and ignoring indices
 chain' :: (ExprTuple t) => Z -> (t -> P t) -> t -> P t
