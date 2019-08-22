@@ -1,24 +1,26 @@
 .PHONY: build
 .PRECIOUS: %.prof
 
+PROF = --profile --work-dir .stack-work.prof
+
 build: env
 	stack build --interleaved-output
 
 trace: env
-	stack build --interleaved-output --trace
+	stack build --interleaved-output $(PROF)
 
 %-exe: build
 	stack exec $@
 
 %.trace: trace
-	stack exec $* -- +RTS -xc
+	stack exec $(PROF) $* -- +RTS -xc
 
 %.prof: trace
-	stack exec $* -- +RTS -p
+	stack exec $(PROF) $* -- +RTS -p
 	grep '[0-9][0-9][.]' $@
 
 %.hp: trace
-	stack exec $* -- +RTS -h
+	stack exec $(PROF) $* -- +RTS -h
 	hp2ps -cg $@
 
 env: edward/env pymc3/env
