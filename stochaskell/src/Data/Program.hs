@@ -964,7 +964,7 @@ sampleP' env p = fromConstVals <$> samplePBlock env pb rets
 samplePBlock :: Env -> PBlock -> [NodeRef] -> IO [ConstVal]
 samplePBlock env (PBlock block refs given ns) rets = go where
   go = do
-    env' <- samplePNodes (evalBlock block env) block idents
+    env' <- samplePNodes (evalBlock block env, block, Nothing) idents
     let check (k@LVar{},(v,t)) = case Map.lookup k env' of
           Nothing -> error $ "couldn't find "++ show k ++" in "++ show env'
           Just c -> v == c
@@ -981,17 +981,18 @@ samplePBlock env (PBlock block refs given ns) rets = go where
   p' Nothing = False
   p' _ = True
 
-type PContext = (Env,Block)
+type PContext = (Env, Block, Maybe (NS, [PNode], Lambda NodeRef))
 evalNodeRef' :: PContext -> NodeRef -> ConstVal
-evalNodeRef' (env,block) = fromRight' . evalNodeRef env block
-evalShape' (env,block) = evalShape env block
+evalNodeRef' (env,block,_) = fromRight' . evalNodeRef env block
+evalShape' :: PContext -> [(NodeRef,NodeRef)] -> [(Integer,Integer)]
+evalShape' (env,block,_) = evalShape env block
 
-samplePNodes :: Env -> Block -> [(Id, PNode)] -> IO Env
-samplePNodes env _ [] = return env
-samplePNodes env block ((ident,node):rest) = do
-    val <- samplePNode (env,block) node
+samplePNodes :: PContext -> [(Id, PNode)] -> IO Env
+samplePNodes (env,_,_) [] = return env
+samplePNodes ctx@(env,block,etc) ((ident,node):rest) = do
+    val <- samplePNode ctx node
     let env' = evalBlock block $ Map.insert (LVar ident) val env
-    samplePNodes env' block rest
+    samplePNodes (env', block, etc) rest
 
 samplePNode :: PContext -> PNode -> IO ConstVal
 samplePNode ctx d@(Dist f js (SubrangeT t lo hi)) = do
@@ -1074,13 +1075,17 @@ samplePNode ctx (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
   where n' = toInteger $ evalNodeRef' ctx n
         v' = toMatrix $ evalNodeRef' ctx v
 
-samplePNode ctx@(env,block) (Loop shp (Lambda ldag hd) _)
+samplePNode ctx@(_,_,Just (ns,refs,lam)) (Dist "unfold" [seed] _) =
+  sampleLambda ctx ns refs lam [seed']
+  where seed' = evalNodeRef' ctx seed
+
+samplePNode ctx@(env,block,etc) (Loop shp (Lambda ldag hd) _)
   | isInfinite `any` his = error "cannot sample infinite loop" -- TODO: implement lazily
   | otherwise = listArray' (evalShape' ctx shp) <$> sequence arr
   where his = evalNodeRef' ctx <$> map snd shp
         block' = deriveBlock ldag block
         arr = [ let env' = Map.fromList (inputsL ldag `zip` idx) `Map.union` env
-                in samplePNode (env', block') hd
+                in samplePNode (env', block', etc) hd
               | idx <- evalRange env block shp ]
 
 samplePNode ctx (HODist "orderedSample" d [n] _) =
@@ -1101,17 +1106,22 @@ samplePNode ctx (Chain (lo,hi) refs lam x ns _) =
         x' = evalNodeRef' ctx x
         f i x = sampleLambda ctx ns refs lam [i,x]
 
+samplePNode ctx@(env,block,_) (UnfoldP refs lam seed ns _) =
+  sampleLambda ctx' ns refs lam [seed']
+  where seed' = evalNodeRef' ctx seed
+        ctx' = (env, block, Just (ns,refs,lam))
+
 samplePNode _ d = error $ "samplePNode: unrecognised distribution "++ show d
 
 sampleLambda :: PContext -> NS -> [PNode] -> Lambda NodeRef -> [ConstVal] -> IO ConstVal
 sampleLambda ctx ns refs (Lambda dag ret) args =
   head <$> sampleLambda' ctx ns refs (Lambda dag [ret]) args
 sampleLambda' :: PContext -> NS -> [PNode] -> Lambda [NodeRef] -> [ConstVal] -> IO [ConstVal]
-sampleLambda' (env,block) ns refs (Lambda dag rets) args = do
+sampleLambda' (env,block,etc) ns refs (Lambda dag rets) args = do
   let block' = deriveBlock dag block
       idents = [ (Volatile ns (dagLevel dag) i, d) | (i,d) <- zip [0..] refs ]
       env1 = Map.fromList (inputsL dag `zip` args) `Map.union` env
-  env2 <- samplePNodes env1 block' idents
+  env2 <- samplePNodes (env1, block', etc) idents
   let p (Just Internal{}) = False
       p Nothing = False
       p _ = True
