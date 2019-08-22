@@ -5,7 +5,6 @@ module Main where
 import Language.Stochaskell
 import Language.Stochaskell.Expression
 
-import GHC.Generics (Generic)
 import System.IO
 
 -- https://cran.r-project.org/web/packages/engsoccerdata/README.html

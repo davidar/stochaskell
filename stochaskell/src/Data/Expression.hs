@@ -631,7 +631,8 @@ class ExprType c => Constructor c where
     return $ Data c js t
     where (c, args) = deconstruct fromExpr m
 
-newtype FixE f = FixE { unfixE :: Expression (f (FixE f)) }
+newtype FixE f = FixE { unfixE :: FixE' f }
+type FixE' f = Expression (f (FixE f))
 
 class GConstructor f where
   gtypeOf :: TypeOf (f p)

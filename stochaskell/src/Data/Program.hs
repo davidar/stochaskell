@@ -297,8 +297,8 @@ chain' n p = chainRange' (1,n) (const p)
 
 unfoldP :: forall t f.
   (Traversable f, Constructor (f t), ExprTuple t, ExprType (f (FixE f)), ExprType (f t))
-  => (t -> P (Expression (f t))) -> t -> P (FixE f)
-unfoldP f r = fmap FixE . dist' $ \ns -> do
+  => (t -> P (Expression (f t))) -> t -> P (FixE' f)
+unfoldP f r = dist' $ \ns -> do
   seed <- fromExpr $ detuple r
   block <- get
   d <- gets nextLevel

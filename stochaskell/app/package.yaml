@@ -3,6 +3,9 @@ dependencies:
 - base >=4.10 && <5
 - stochaskell
 executables:
+  autostat-exe:
+    main: Main.hs
+    source-dirs: autostat
   benchmark-exe:
     main: Main.hs
     source-dirs: benchmark

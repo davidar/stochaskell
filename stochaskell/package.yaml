@@ -29,6 +29,7 @@ dependencies:
 - diagrams-lib
 - directory
 - extra
+- generic-data
 - hmatrix
 - lazy-csv
 - logfloat
