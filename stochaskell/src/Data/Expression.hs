@@ -1042,6 +1042,7 @@ simplify (Apply "||" [_,Const 1 _] t) = return $ Const 1 t
 simplify (Apply "#>" [_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "<#" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "replaceIndex" [Const 0 _,_,Const 0 _] t) = return $ Const 0 t
+simplify (Apply "vectorSize" [v] _) | ArrayT _ [(Const 1 _,n)] _ <- typeRef v = return n
 simplify (Apply s js t) | s == "+" || s == "+s" = do
   block <- get
   case simplifySum block js of
