@@ -974,7 +974,7 @@ samplePBlock env (PBlock block refs given ns) rets = go where
         env'' = Map.filterWithKey (const . p' . getId') env'
     if check `all` Map.toList given
     then return $ map (fromRight' . evalNodeRef env'' block) rets
-    else trace "rejecting sample due to failed conditions" go
+    else {-trace "rejecting sample due to failed conditions"-} go
   idents = [ (Volatile ns (dagLevel $ topDAG block) i, d)
            | (i,d) <- zip [0..] $ reverse refs ]
   p' (Just Internal{}) = False
