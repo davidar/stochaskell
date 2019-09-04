@@ -109,12 +109,13 @@ dotPNodes :: Map Id PNode -> String
 dotPNodes pn = unlines [dotPNode (dotId [] i) n | (i,n) <- Map.toList pn]
 
 dotPBlock :: PBlock -> [NodeRef] -> String
-dotPBlock pb@(PBlock block _ _ _) rets =
+dotPBlock pb@(PBlock block _ given _) rets =
   dotDAG [] (topDAG block) Nothing ++"\n"++
   --"subgraph cluster_program {\n"++ indent (
   --  "style=\"invis\"\n"++
     dotPNodes (pnodes pb) ++"\n"++
-    unlines [dotId [] i ++" [style=\"bold\"]" | Var i _ <- rets]
+    unlines [dotId [] i ++" [style=\"bold\"]" | Var i _ <- rets] ++"\n"++
+    unlines [dotId [] i ++" [style=\"filled\" fillcolor=\"gray\"]" | LVar i <- Map.keys given]
   --) ++"\n}"
 
 edgeNodeRefs :: [Label] -> Label -> [NodeRef] -> String
@@ -182,7 +183,7 @@ graphviz :: (ExprTuple t) => P t -> String
 graphviz prog = "/*\n"++ showPBlock pb (show rets) ++"\n*/\n\n"++
   "strict digraph {\n"++ indent (
     "compound=\"true\"\n"++
-    "concentrate=\"true\"\n"++
+    --"concentrate=\"true\"\n"++
     dotPBlock pb rets ++"\n"++
     edgePBlock pb
   ) ++"\n}"
