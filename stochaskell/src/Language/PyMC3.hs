@@ -35,10 +35,15 @@ pmId = show
 
 pmNodeRef :: NodeRef -> String
 pmNodeRef (Var s _) = pmId s
+pmNodeRef (Const c RealT) = "float("++ show c ++")"
 pmNodeRef (Const c _) = show c
 pmNodeRef (Index (Var f (ArrayT _ sh _)) js) =
   pmId f ++"["++ intercalate "," (zipWith g (reverse js) (map fst sh)) ++"]"
   where g i l = pmNodeRef i ++"-"++ pmNodeRef l
+
+pmNodeRef' :: NodeRef -> String
+pmNodeRef' (Var s IntT) = "int("++ pmId s ++".eval())"
+pmNodeRef' r = pmNodeRef r
 
 pmBuiltinFunctions =
   [("inv",      "pm.math.matrix_inverse")
@@ -48,6 +53,9 @@ pmBuiltinFunctions =
   ,("chol",     "theano.tensor.slinalg.cholesky")
   ,("asColumn", "ascolumn")
   ,("asRow",    "asrow")
+  ,("negate",   "-")
+  ,("==",       "tt.eq")
+  ,("ifThenElse", "ifelse")
   ,("quad_form_diag", "quad_form_diag")
   ]
 
@@ -66,6 +74,7 @@ pmBuiltinDistributions =
   ,("cauchys",         ["Cauchy",       "alpha", "beta"])
   ,("gamma",           ["Gamma",        "alpha", "beta"])
   ,("inv_gamma",       ["InverseGamma", "alpha", "beta"])
+  ,("multi_normal",    ["MvNormal",     "mu", "cov"])
   ,("normal",          ["Normal",       "mu", "sd"])
   ,("normals",         ["Normal",       "mu", "sd"])
   ,("uniform",         ["Uniform",      "lower", "upper"])
@@ -78,9 +87,11 @@ pmPrelude = unlines
   ["import numpy as np"
   ,"import pymc3 as pm"
   ,"import sys"
+  ,"import theano"
   ,"import theano.tensor as tt"
   ,"import theano.tensor.basic"
   ,"import theano.tensor.slinalg"
+  ,"from theano.ifelse import ifelse"
 --  ,"from memory_profiler import profile"
   ,""
   ,"def ascolumn(a): return a.dimshuffle(0,'x')"
@@ -95,13 +106,15 @@ pmPrelude = unlines
   ,"  tri_index[np.triu_indices(n, k=1)] = np.arange(shape)"
   ,"  tri_index[np.triu_indices(n, k=1)[::-1]] = np.arange(shape)"
   ,"  return pm.Deterministic(name, tt.fill_diagonal(C_triu[tri_index], 1))"
+  ,""
+  ,"theano.config.floatX = 'float32'"
   ]
 
 pmNode :: (Map Id PNode, Env) -> Label -> Node -> String
 pmNode (r,given) _ (Apply "getExternal" [Var i t] _) =
   case Map.lookup i r of
     Just n -> pmPNode (pmId i) n (Map.lookup (LVar i) given)
-    Nothing -> pmId i ++" = tt.as_tensor_variable(np.load('"++ pmId i ++".npy'))"
+    Nothing -> pmId i ++" = tt.as_tensor_variable(np.load('"++ pmId i ++".npy').astype('float32'))"
 pmNode _ name (Apply "tr'" [a] _) =
   name ++" = "++ pmNodeRef a ++".T"
 pmNode _ name (Apply op [i,j] _) | op == "#>" || op == "<>" =
@@ -113,9 +126,10 @@ pmNode _ name (Apply f js _) | s /= "" =
   name ++" = "++ s ++"("++ pmNodeRef `commas` js ++")"
   where s = fromMaybe "" $ lookup f pmBuiltinFunctions
 pmNode r name (Array sh (Lambda dag ret) _)
-  | pmDAG r dag /= "" = undefined -- TODO: or ret depends on index
+  | pmDAG r dag /= "" = -- TODO: or ret depends on index
+    pmArray name (inputs dag) sh (pmDAG r dag) (pmNodeRef ret)
   | otherwise = name ++" = "++ pmNodeRef ret ++" * np.ones(("++
-                  pmNodeRef `commas` map snd sh ++"))"
+                  pmNodeRef' `commas` map snd sh ++"), dtype='float32')"
 pmNode _ _ n = error $ "pmNode "++ show n
 
 pmPNode :: Label -> PNode -> Maybe ConstVal -> String
@@ -127,20 +141,28 @@ pmPNode name (Dist "lkj_corr" [v] (ArrayT _ [(Const 1 _, Const n _),_] _)) Nothi
   name ++" = lkj_corr('"++ name ++"', eta="++ pmNodeRef v ++", n="++ show n ++")"
 pmPNode name (Dist f args t) val =
   pmPNode' name f (map pmNodeRef args) t val
-
 pmPNode name (Loop sh (Lambda defs dist) _) Nothing =
+  pmLoop name (inputs defs) sh (pmDAG (Map.empty, emptyEnv) defs) dist
+pmPNode name (HODist "orderedSample" d [n] _) Nothing =
+  pmLoop name [Dummy 1 1] [(Const 1 IntT,n)] "" d
+pmPNode _ n _ = error $ "pmPNode "++ show n
+
+pmArray :: Label -> [Id] -> [(NodeRef,NodeRef)] -> String -> String -> String
+pmArray name params sh context ret =
   "def "++ fn ++":\n"++
-    pmDAG (Map.empty, emptyEnv) defs ++"\n  "++
+    context ++"\n  "++
     "return "++ ret ++"\n"++
   name ++" = pm.Deterministic('"++ name ++"', "++
-    "tt.stack("++ go (inputs defs) sh ++"))"
-  where fn = name ++"_fn("++ pmId `commas` inputs defs ++")"
+    "tt.stack("++ go params sh ++"))"
+  where fn = name ++"_fn("++ pmId `commas` params ++")"
         go [] [] = fn
         go (i:is) ((a,b):sh) =
           "["++ go is sh ++" for "++ pmId i ++" in xrange("++
-            pmNodeRef a ++", "++ pmNodeRef b ++"+1)]"
-        name' = name ++ concat ["_' + str("++ pmId i ++") + '"
-                               | i <- inputs defs]
+            pmNodeRef' a ++", "++ pmNodeRef' b ++"+1)]"
+
+pmLoop :: Label -> [Id] -> [(NodeRef,NodeRef)] -> String -> PNode -> String
+pmLoop name params sh context dist = pmArray name params sh context ret
+  where name' = name ++ concat ["_' + str("++ pmId i ++") + '" | i <- params]
         ret = fromJust . stripPrefix (name' ++" = ") $
           pmPNode name' dist Nothing
 
@@ -151,9 +173,9 @@ pmPNode' name f args t val | isJust (lookup f pmBuiltinDistributions) =
   where c:params = fromJust $ lookup f pmBuiltinDistributions
         h p a = p ++"="++ a
         ps = intercalate ", " (zipWith h params args)
-        g (a,b) = pmNodeRef b ++"-"++ pmNodeRef a ++"+1"
+        g (a,b) = pmNodeRef' b ++"-"++ pmNodeRef' a ++"+1"
         obs | isNothing val = ""
-            | otherwise = "observed=np.load('"++ name ++".npy'), "
+            | otherwise = "observed=np.load('"++ name ++".npy').astype('float32'), "
         ctor | (SubrangeT _ lo hi) <- t, isNothing val =
                let kwargs = case (lo,hi) of
                      (Just a, Just b)  -> "lower="++ pmNodeRef a ++
@@ -185,7 +207,7 @@ pmProgram prog =
 pmEnv :: Env -> String
 pmEnv env | Map.null env = "None"
 pmEnv env = "{"++ g `commas` [k | LVar k <- Map.keys env] ++"}"
-  where g i = "'"++ pmId i ++"': np.load('"++ pmId i ++".npy')"
+  where g i = "'"++ pmId i ++"': np.load('"++ pmId i ++".npy').astype('float32')"
 
 data PyMC3Inference
   = PyMC3Sample
@@ -236,19 +258,18 @@ defaultPyMC3Inference = PyMC3Sample
 -- | perform inference via the PyMC3 code generation backend
 runPyMC3 :: (ExprTuple t, Read t) => PyMC3Inference -> P t -> Maybe t -> IO [t]
 runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
-  pwd <- getCurrentDirectory
-  setCurrentDirectory tmpDir
   let initEnv | isJust init = unifyTuple block rets (fromJust init) given
               | otherwise = Map.map fst given
   forM_ (Map.toList initEnv) $ \(LVar i,c) -> 
-    writeNPy (pmId i ++".npy") c
-  writeFile "main.py" $
+    writeNPy (tmpDir ++"/"++ pmId i ++".npy") c
+  writeFile (tmpDir ++"/main.py") $
     pmProgram prog ++"\n  "++
     "trace = "++ show sample{pmStart = initEnv Map.\\ given} ++"\n  "++
     "print(map(list, zip("++ g `commas` Map.keys latents ++")))\n\n"++
     "main()"
-  out <- readProcess (pwd ++"/pymc3/env/bin/python") ["main.py"] ""
-  setCurrentDirectory pwd
+  pwd <- getCurrentDirectory
+  let python = pwd ++"/pymc3/env/bin/python"
+  out <- flip readCreateProcess "" $ (proc python ["main.py"]) { cwd = Just tmpDir }
   let vals = zipWith reshape lShapes <$> read out
   return [let env = Map.fromList [(LVar i, x)
                                  | ((i,d),x) <- Map.toAscList latents `zip` xs]
