@@ -41,6 +41,10 @@ edNodeRef (Index (Var f (ArrayT _ sh _)) js) =
   edId f ++"["++ intercalate "," (zipWith g (reverse js) (map fst sh)) ++"]"
   where g i l = edNodeRef i ++"-"++ edNodeRef l
 
+edNodeRef' :: NodeRef -> String
+edNodeRef' (Var s IntT) = "int("++ edId s ++".eval())"
+edNodeRef' r = edNodeRef r
+
 edBuiltinFunctions =
   [("#>",       "ed.dot")
   ,("**",       "tf.pow")
@@ -51,6 +55,7 @@ edBuiltinFunctions =
   ,("tr'",      "tf.matrix_transpose")
   ,("exp",      "tf.exp")
   ,("diag",     "tf.diag")
+  ,("negate",   "-")
   ,("==",       "all_equal")
   ,("asColumn", "ascolumn")
   ,("asRow",    "asrow")
@@ -109,12 +114,12 @@ edNode r name (Array sh (Lambda dag ret) (ArrayT _ _ t))
     name ++" = tf.stack("++ go (inputs dag) sh ++")"
   | otherwise =
     name ++" = "++ edNodeRef ret ++" * tf.ones(["++
-      edNodeRef `commas` map snd sh ++"], dtype="++ dtype t ++")"
+      edNodeRef' `commas` map snd sh ++"], dtype="++ dtype t ++")"
   where fn = name ++"_fn("++ edId `commas` inputs dag ++")"
         go [] [] = fn
         go (i:is) ((a,b):sh) =
           "["++ go is sh ++" for "++ edId i ++" in xrange("++
-            edNodeRef a ++", "++ edNodeRef b ++"+1)]"
+            edNodeRef' a ++", "++ edNodeRef' b ++"+1)]"
 edNode _ _ n = error $ "edNode "++ show n
 
 edPNode :: Label -> PNode -> String
@@ -127,12 +132,11 @@ edPNode name d@(Dist f args t)
         h p a = p ++"="++ edNodeRef a
         ps | null params = edNodeRef `commas` args
            | otherwise = intercalate ", " (zipWith h params args)
-        g (a,b) = edNodeRef b ++"-"++ edNodeRef a ++"+1"
+        g (a,b) = edNodeRef' b ++"-"++ edNodeRef' a ++"+1"
 
 edPlaceholder :: Label -> Type -> String
 edPlaceholder name t =
-  name ++" = tf.Variable(np.load('"++ name ++".npy'), "++
-                        "trainable=False, dtype="++ dtype t ++")"
+  name ++" = tf.constant(np.load('"++ name ++".npy'), dtype="++ dtype t ++")"
 
 edDAG :: Map Id PNode -> DAG -> String
 edDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
@@ -143,7 +147,7 @@ edDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
 edProgram :: (ExprTuple t) => Int -> Int -> Double -> P t -> Maybe t -> String
 edProgram numSamples numSteps stepSize prog init =
   edPrelude ++"\n"++
-  "if True:\n"++
+  "with tf.Session().as_default():\n"++
     edDAG pn (topDAG block) ++"\n"++
   "latent = "++ latent ++"\n"++
   "data = "++ printedConds ++"\n"++
@@ -171,23 +175,21 @@ edProgram numSamples numSteps stepSize prog init =
 hmcEdward :: (ExprTuple t, Read t) => Int -> Int -> Double -> P t -> Maybe t -> IO [t]
 hmcEdward numSamples numSteps stepSize prog init =
   withSystemTempDirectory "edward" $ \tmpDir -> do
-    pwd <- getCurrentDirectory
-    setCurrentDirectory tmpDir
     when (isJust init) $
-      dump $ unifyTuple block rets (fromJust init) given
-    dump (Map.map fst given)
-    let python = pwd ++"/edward/env/bin/python"
-    --callProcess python []
-    out <- readProcess python [] $
+      dump tmpDir $ unifyTuple block rets (fromJust init) given
+    dump tmpDir (Map.map fst given)
+    writeFile (tmpDir ++"/main.py") $
       edProgram numSamples numSteps stepSize prog init
-    setCurrentDirectory pwd
+    pwd <- getCurrentDirectory
+    let python = pwd ++"/edward/env/bin/python"
+    out <- flip readCreateProcess "" $ (proc python ["main.py"]) { cwd = Just tmpDir }
     let vals = zipWith reshape lShapes <$> read out
     return [let env = Map.fromList [(LVar i, x)
                                    | ((i,d),x) <- Map.toAscList latents `zip` xs]
             in fromRight $ evalPBlock pb rets env
            | xs <- vals]
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "ed" prog
-        dump env = forM_ (Map.toList env) $ \(LVar i,c) -> 
-                     writeNPy (edId i ++".npy") c
+        dump dir env = forM_ (Map.toList env) $ \(LVar i,c) ->
+          writeNPy (dir ++"/"++ edId i ++".npy") c
         latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
         lShapes = evalShape (Map.map fst given) block . typeDims . typePNode <$> Map.elems latents
