@@ -11,7 +11,7 @@ extra-deps:
 - pango-0.13.6.0
 - plots-0.1.1.2
 - github: gibiansky/IHaskell
-  commit: 93bfa3a7a434c1dfe6873c2105c43856c282e183
+  commit: ac0882dc39d27fbb7f068834f5f111ad1b2cd340
   subdirs:
   - .
   - ipython-kernel

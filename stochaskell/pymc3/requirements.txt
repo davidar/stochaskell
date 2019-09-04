@@ -8,12 +8,12 @@ numpy==1.13.1
 pandas==0.20.3
 patsy==0.4.1
 pkg-resources==0.0.0
-pymc3==3.1
+pymc3==3.6
 pyparsing==2.2.0
 python-dateutil==2.6.1
 pytz==2017.2
 scipy==0.19.1
 six==1.10.0
 subprocess32==3.2.7
-Theano==0.9.0
+Theano==1.0.4
 tqdm==4.15.0
