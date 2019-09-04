@@ -35,7 +35,7 @@ pmId = show
 
 pmNodeRef :: NodeRef -> String
 pmNodeRef (Var s _) = pmId s
-pmNodeRef (Const c RealT) = "float("++ show c ++")"
+pmNodeRef (Const c RealT) = show $ real c
 pmNodeRef (Const c _) = show c
 pmNodeRef (Index (Var f (ArrayT _ sh _)) js) =
   pmId f ++"["++ intercalate "," (zipWith g (reverse js) (map fst sh)) ++"]"
