@@ -1,6 +1,6 @@
 {-# LANGUAGE GADTs, ImpredicativeTypes, FlexibleInstances, ScopedTypeVariables,
              FlexibleContexts, TypeFamilies, MultiParamTypeClasses,
-             MonadComprehensions, GeneralizedNewtypeDeriving #-}
+             MonadComprehensions, GeneralizedNewtypeDeriving, LambdaCase #-}
 module Data.Program where
 
 import Prelude hiding (isInfinite)
@@ -171,6 +171,10 @@ pnodes :: PBlock -> Map Id PNode
 pnodes (PBlock _ refs _ ns) = pnodes' ns 0 $ reverse refs
 pnodes' :: NS -> Level -> [PNode] -> Map Id PNode
 pnodes' ns d = Map.fromList . zip (Volatile ns d <$> [0..])
+
+latentPNodes :: PBlock -> Map Id PNode
+latentPNodes pb@(PBlock _ _ given _) =
+  pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
 
 showPNodes :: NS -> Level -> [PNode] -> String -> String
 showPNodes ns d refs ret = "do "++ indent' 0 3 s ++"\n"++
@@ -353,6 +357,12 @@ instance (IfB t, BooleanOf t ~ B) => IfB (P t) where
     x <- conditionGuards c p
     y <- conditionGuards (notB c) q
     return $ ifB c x y
+
+initEnv :: (ExprTuple t) => NS -> P t -> Maybe t -> Env
+initEnv ns prog = \case
+  Just init -> unifyTuple block rets init given
+  Nothing -> Map.map fst given
+  where (rets, pb@(PBlock block _ given _)) = runProgExprs ns prog
 
 
 ------------------------------------------------------------------------------

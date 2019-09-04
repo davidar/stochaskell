@@ -10,7 +10,7 @@ module Language.PyMC3
   ( PyMC3Inference(..), PyMC3Step(..)
   , defaultPyMC3Inference
   , runPyMC3
-  , pmProgram
+  , pmProgram, pmProgram'
   ) where
 
 import Control.Monad
@@ -197,8 +197,7 @@ pmProgram :: (ExprTuple t) => P t -> String
 pmProgram prog =
   pmPrelude ++"\n"++
   --"@profile(stream=sys.stderr)\n"++
-  "def main():\n"++
-  " with pm.Model() as model:\n"++
+  "with pm.Model() as model:\n"++
     pmDAG (pn, Map.map fst given) (topDAG block)
   where pb@(PBlock block _ given _) = snd $ runProgExprs "pm" prog
         skel = modelSkeleton pb
@@ -255,18 +254,20 @@ defaultPyMC3Inference = PyMC3Sample
   , pmTune = 500
   }
 
+pmProgram' :: (ExprTuple t) => PyMC3Inference -> P t -> Maybe t -> String
+pmProgram' sample prog init =
+  pmProgram prog ++"\n\n  "++
+  "trace = "++ show sample{pmStart = initEnv "pm" prog init Map.\\ given} ++"\n  "++
+  "print(map(list, zip("++ g `commas` Map.keys (latentPNodes pb) ++")))"
+  where (rets, pb@(PBlock block _ given _)) = runProgExprs "pm" prog
+        g i = "trace['"++ pmId i ++"'].tolist()"
+
 -- | perform inference via the PyMC3 code generation backend
 runPyMC3 :: (ExprTuple t, Read t) => PyMC3Inference -> P t -> Maybe t -> IO [t]
 runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
-  let initEnv | isJust init = unifyTuple block rets (fromJust init) given
-              | otherwise = Map.map fst given
-  forM_ (Map.toList initEnv) $ \(LVar i,c) -> 
+  forM_ (Map.toList $ initEnv "pm" prog init) $ \(LVar i,c) ->
     writeNPy (tmpDir ++"/"++ pmId i ++".npy") c
-  writeFile (tmpDir ++"/main.py") $
-    pmProgram prog ++"\n  "++
-    "trace = "++ show sample{pmStart = initEnv Map.\\ given} ++"\n  "++
-    "print(map(list, zip("++ g `commas` Map.keys latents ++")))\n\n"++
-    "main()"
+  writeFile (tmpDir ++"/main.py") $ pmProgram' sample prog init
   pwd <- getCurrentDirectory
   let python = pwd ++"/pymc3/env/bin/python"
   out <- flip readCreateProcess "" $ (proc python ["main.py"]) { cwd = Just tmpDir }
@@ -276,6 +277,5 @@ runPyMC3 sample prog init = withSystemTempDirectory "pymc3" $ \tmpDir -> do
           in fromRight $ evalPBlock pb rets env
          | xs <- vals]
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "pm" prog
-        g i = "trace['"++ pmId i ++"'].tolist()"
-        latents = pnodes pb Map.\\ Map.fromList [(k,v) | (LVar k,v) <- Map.toList given]
+        latents = latentPNodes pb
         lShapes = evalShape (Map.map fst given) block . typeDims . typePNode <$> Map.elems latents

@@ -148,7 +148,7 @@ edProgram :: (ExprTuple t) => Int -> Int -> Double -> P t -> Maybe t -> String
 edProgram numSamples numSteps stepSize prog init =
   edPrelude ++"\n"++
   "with tf.Session().as_default():\n"++
-    edDAG pn (topDAG block) ++"\n"++
+    edDAG pn (topDAG block) ++"\n\n"++
   "latent = "++ latent ++"\n"++
   "data = "++ printedConds ++"\n"++
   "inference = ed.HMC(latent, data)\n"++
