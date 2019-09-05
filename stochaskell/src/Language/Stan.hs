@@ -453,6 +453,7 @@ runStan method prog init = withSystemTempDirectory "stan" $ \tmpDir -> do
     _ <- waitForProcess pid
     content <- LC.lines <$> LC.readFile (basename ++".csv")
     let table = map (LC.split ',') $ filter noComment content
+    LC.putStrLn . LC.unlines $ filter (('#' ==) . LC.head) content
     putStrLn' $ "Extracting: "++ stanNodeRef `commas` rets
 
     putStrLn' "--- Removing temporary files ---"
