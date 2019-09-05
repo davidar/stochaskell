@@ -58,11 +58,11 @@ dotNode r name (Array sh (Lambda dag ret) _) =
           Var i _ -> " ["
           Const c _ -> " [label=\""++ show c ++"\" "
         idx j = if Just j == getId ret then name else dotId r' j
-dotNode r name (FoldScan _ _ (Lambda dag ret) seed ls _) =
+dotNode r name (FoldScan fs lr (Lambda dag ret) seed ls _) =
   dotConsts (r' ++ [elemt]) [ls] ++"\n"++
   dotConsts (r' ++ [accum]) [seed] ++"\n"++
   "subgraph cluster_foldscan_"++ name ++" {\n"++ indent (
-    "label=\"fold/scan\"\n"++
+    "label=\""++ lbl ++"\"\n"++
     elemt ++" [shape=\"rectangle\" label=\"elem\"]\n"++
     accum ++" [shape=\"rectangle\" label=\"accum\"]\n"++
     dotDAG r' dag (Just ret) ++"\n"++
@@ -75,6 +75,11 @@ dotNode r name (FoldScan _ _ (Lambda dag ret) seed ls _) =
         [i,j] = inputs dag
         elemt = if Just i == getId ret then name else dotId r' i
         accum = if Just j == getId ret then name else dotId r' j
+        lbl = case (fs,lr) of
+          (Fold, Right_) -> "foldr"
+          (Fold, Left_)  -> "foldl"
+          (Scan, Right_) -> "scanr"
+          (Scan, Left_)  -> "scanl"
 dotNode _ _ n = error $ "dotNode "++ show n
 
 dotDAG :: [Label] -> DAG -> Maybe NodeRef -> String
