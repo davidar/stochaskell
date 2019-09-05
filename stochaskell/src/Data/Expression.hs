@@ -1054,10 +1054,12 @@ simplify (Apply s js t) | s == "+" || s == "+s" = do
     [a] -> return a
     [a,b] -> liftcons (Apply "+" [a,b] t)
     js' -> liftcons (Apply "+s" js' t)
-  where simplifySum block refs = sort $ do
+  where constpart = sum . catMaybes $ getConstVal <$> js
+        constpart' = if isZeros constpart then [] else [Const constpart t]
+        simplifySum block refs = (constpart' ++) . sort $ do
           ref <- refs
           case ref of
-            Const c _ | isZeros c -> mzero
+            Const{} -> mzero
             Var i@Internal{} _ | Apply f js _ <- lookupBlock i block
                               , f `elem` ["+","+s"] -> simplifySum block js
             _ -> return ref

@@ -16,7 +16,9 @@ dotId r j = case j of
   Volatile ns level i -> prefix level ++"_x_"++ ns ++"_"++ show level ++"_"++ show i
   Internal level i    -> prefix level ++"_v_"++ show level ++"_"++ show i
   Symbol name _       -> name
-  where prefix level = if level == 0 then "" else r !! (level - 1)
+  where prefix level = if level == 0 then ""
+                  else if level <= length r then r !! (level - 1)
+                  else error $ "level = "++ show level ++" but r = "++ show r
 
 dotConst :: [Label] -> ConstVal -> String
 dotConst r c = last r ++"_c_"++ (replace "." "_" $ replace "-" "_" $ show c)
@@ -158,14 +160,14 @@ edgeDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
   in edgeNode r name n
 
 edgePNode :: Label -> PNode -> String
-edgePNode name (Dist f js _) = edgeNodeRefs [] name js
+edgePNode name (Dist f js _) = edgeNodeRefs [name] name js
 edgePNode name (Loop sh (Lambda dag body) _) =
   unlines [edgeNodeRefs r' (dotId r' j) [lo,hi]
           | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   edgeDAG r' dag Nothing ++"\n"++
   edgePNode name body
   where r' = [name]
-edgePNode name (HODist f n js _) = edgePNode name n ++"\n"++ edgeNodeRefs [] name js
+edgePNode name (HODist f n js _) = edgePNode name n ++"\n"++ edgeNodeRefs [name] name js
 
 edgePNodes :: Map Id PNode -> String
 edgePNodes pn =
