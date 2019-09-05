@@ -4,6 +4,7 @@
   DefaultSignatures, UndecidableInstances #-}
 module Data.Expression where
 
+import Prelude hiding (isInfinite)
 import qualified Data.Array as A
 import qualified Data.Array.Abstract as AA
 import Data.Array.Abstract ((!))
@@ -136,6 +137,7 @@ symbols names = symbol . return <$> names
 instance Show NodeRef where
   --show (Var i t) = "("++ show i ++" :: "++ show t ++")"
   show (Var i _) = show i
+  show (Const c _) | isInfinite c = show (real c)
   show (Const c IntT) = show (integer c)
   show (Const c RealT) = show (real c)
   --show (Const c t) = "("++ show c ++" :: "++ show t ++")"
@@ -848,8 +850,11 @@ runLambda ids s = do
 
 -- does a list of expressions depend on the inputs to this block?
 varies :: DAG -> [NodeRef] -> Bool
-varies (DAG level inp _) xs = level == 0 || any p xs
-  where p (Var i _) = i `elem` map fst inp || idLevel i == level
+varies dag refs = varies' dag refs []
+varies' :: DAG -> [NodeRef] -> [Id] -> Bool
+varies' (DAG level inp _) xs blacklist = level == 0 || any p xs
+  where p (Var i _) | i `elem` blacklist = False
+        p (Var i _) = i `elem` map fst inp || idLevel i == level
         p (Var Symbol{} _) = False
         p (Const _ _) = False
         p (Data _ is _) = any p is
@@ -864,7 +869,7 @@ variesLambda :: DAG -> Lambda NodeRef -> Bool
 variesLambda dag (Lambda adag ret) = variesLambda' dag (Lambda adag [ret])
 variesLambda' :: DAG -> Lambda [NodeRef] -> Bool
 variesLambda' dag (Lambda adag rets) =
-  varies dag (rets \\ inputs' adag) ||
+  varies' dag rets (inputs adag) ||
   (not . null $ inputs dag `intersect` collectIds adag) ||
   any p (collectIds adag)
   where p (Internal l _) = l == dagLevel dag
