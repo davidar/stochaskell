@@ -537,6 +537,12 @@ solveNode env block (Apply "<>" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (reDExpr env block a <\> val)
 solveNode env block (Apply "<>" [a,b] _) val | evaluable env block b =
   solveNodeRef env block a (tr' $ tr' (reDExpr env block b) <\> tr' val)
+solveNode env block (Apply "quad_form_diag" [m,v] _) val
+  | (ArrayT (Just "corr_matrix") _ _) <- typeRef m
+  = solveNodeRef env block m m' `unionEEnv` solveNodeRef env block v v'
+  where m' = matrix [ (val!i!j) / ((v'!i) * (v'!j)) | i <- 1...n, j <- 1...n ]
+        v' = vector [ sqrt (val!i!i) | i <- 1...n ]
+        n = vectorSize val
 solveNode env block (Apply "==" [a,b] _) val = EEnv $
   Map.singleton (LConstr $ ifB val (a' ==* b') (a' /=* b')) true
   where a' = reDExpr env block a
