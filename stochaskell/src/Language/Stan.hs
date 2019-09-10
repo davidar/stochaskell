@@ -86,19 +86,22 @@ stanNodeRef r = error $ "stanNodeRef "++ show r
 -- TYPES                                                                    --
 ------------------------------------------------------------------------------
 
+stanSubrange :: Type -> String
+stanSubrange (SubrangeT t Nothing  Nothing ) = ""
+stanSubrange (SubrangeT t (Just l) Nothing ) =
+  "<lower="++ stanNodeRef l ++">"
+stanSubrange (SubrangeT t Nothing  (Just h)) =
+  "<upper="++ stanNodeRef h ++">"
+stanSubrange (SubrangeT t (Just l) (Just h)) =
+  "<lower="++ stanNodeRef l ++
+  ",upper="++ stanNodeRef h ++">"
+
 stanType :: Bool -> Type -> String
 stanType _ IntT = "int"
 stanType _ RealT = "real"
 stanType False (SubrangeT t _ _) = stanType False t
-stanType True (SubrangeT t Nothing  Nothing ) =
-  stanType False t
-stanType True (SubrangeT t (Just l) Nothing ) =
-  stanType False t ++"<lower="++ stanNodeRef l ++">"
-stanType True (SubrangeT t Nothing  (Just h)) =
-  stanType False t ++"<upper="++ stanNodeRef h ++">"
-stanType True (SubrangeT t (Just l) (Just h)) =
-  stanType False t ++"<lower="++ stanNodeRef l ++
-                     ",upper="++ stanNodeRef h ++">"
+stanType True s@(SubrangeT t _ _) =
+  stanType False t ++ stanSubrange s
 stanType _ (ArrayT _ [(Const 1 _,n)] RealT) =
   "vector["++ stanNodeRef n ++"]"
 stanType _ (ArrayT (Just k) [(Const 1 _,m), (Const 1 _,n)] RealT) |
@@ -106,15 +109,21 @@ stanType _ (ArrayT (Just k) [(Const 1 _,m), (Const 1 _,n)] RealT) |
   k ++"["++ stanNodeRef m ++"]"
 stanType _ (ArrayT _ [(Const 1 _,m), (Const 1 _,n)] RealT) =
   "matrix["++ stanNodeRef m ++","++ stanNodeRef n ++"]"
+stanType showRange (ArrayT _ [(Const 1 _,m), (Const 1 _,n)] s@(SubrangeT RealT _ _)) =
+  "matrix"++ (if showRange then stanSubrange s else "")
+    ++"["++ stanNodeRef m ++","++ stanNodeRef n ++"]"
 stanType showRange (ArrayT kind n t) =
     fromMaybe (stanType showRange t) kind ++
       "["++ stanNodeRef `commas` map snd n ++"]"
 
 stanDecl :: Bool -> Label -> Type -> String
 stanDecl showRange name (ArrayT _ n t)
-  | length n > 2 || t /= RealT =
+  | length n > 2 || p t =
     stanType showRange t ++" "++ name ++
       "["++ stanNodeRef `commas` map snd n ++"];"
+  where p RealT = False
+        p (SubrangeT RealT _ _) = False
+        p _ = True
 stanDecl showRange name t = stanType showRange t ++" "++ name ++";"
 
 
