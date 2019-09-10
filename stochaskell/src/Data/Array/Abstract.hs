@@ -10,6 +10,7 @@ module Data.Array.Abstract
   , Interval
   , Joint(..)
   , LinearOperator(..)
+  , MLDivide(..)
   , Matrix(..)
   , Scalable(..)
   , ShapedMatrix(..)
@@ -278,15 +279,12 @@ instance LA.Transposable (ShapedMatrix Double) (ShapedMatrix Double) where
     tr' (ShMat r c m) = ShMat c r $ LA.tr' m
 
 infixr 8 #>
-infixl 7 <\>
 -- | generalised linear operator interface
 class LinearOperator m v | m -> v, v -> m where
     -- | see 'Numeric.LinearAlgebra.#>'
     (#>)  :: m -> v -> v
     -- | see 'Numeric.LinearAlgebra.<#'
     (<#)  :: v -> m -> v
-    -- | see 'Numeric.LinearAlgebra.<\>'
-    (<\>) :: m -> v -> v
     -- | convert vector to diagonal matrix
     diag  :: v -> m
     -- | convert vector to column
@@ -299,10 +297,19 @@ class LinearOperator m v | m -> v, v -> m where
 
 instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) where
     (ShMat r _ m)  #> (ShVec _ v) = ShVec r . head . LAD.toColumns $ (LA.<>)  m (LAD.asColumn v)
-    (ShMat _ c m) <\> (ShVec _ v) = ShVec c . head . LAD.toColumns $ (LA.<\>) m (LAD.asColumn v)
     diag     (ShVec n v) = ShMat n n $ LAD.diag v
     asColumn (ShVec (l,h) v) = ShMat (l,h) (l,l) $ LAD.asColumn v
     asRow    (ShVec (l,h) v) = ShMat (l,l) (l,h) $ LAD.asRow v
+
+infixl 7 <\>
+class MLDivide m v | v -> m where
+    -- | see 'Numeric.LinearAlgebra.<\>'
+    (<\>) :: m -> v -> v
+
+instance MLDivide (ShapedMatrix Double) (ShapedVector Double) where
+    (ShMat _ c m) <\> (ShVec _ v) = ShVec c . head . LAD.toColumns $ (LA.<\>) m (LAD.asColumn v)
+instance MLDivide (ShapedMatrix Double) (ShapedMatrix Double) where
+    (ShMat _ c m) <\> (ShMat _ c' v) = ShMat c c' $ (LA.<\>) m v
 
 class SquareMatrix m e | m -> e where
     -- | lower-triangular Cholesky decomposition, see 'Numeric.LinearAlgebra.chol'

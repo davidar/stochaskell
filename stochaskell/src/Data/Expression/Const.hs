@@ -419,12 +419,16 @@ instance Semigroup ConstVal where
 
 instance LinearOperator ConstVal ConstVal where
     m  #> v = fromVector $ toMatrix m  #> toVector v
-    m <\> v = fromVector $ toMatrix m <\> toVector v
     diag     = fromMatrix . diag     . toVector
     asColumn a | isZeros a = 0
     asColumn a = fromMatrix . asColumn $ toVector a
     asRow    a | isZeros a = 0
     asRow    a = fromMatrix . asRow    $ toVector a
+
+instance MLDivide ConstVal ConstVal where
+    m <\> v = case dimension v of
+      1 -> fromVector $ toMatrix m <\> toVector v
+      2 -> fromMatrix $ toMatrix m <\> toMatrix v
 
 instance Matrix ConstVal Integer ConstVal where
     blockMatrix = fromMatrix . blockMatrix . map (map toMatrix)

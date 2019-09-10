@@ -1688,14 +1688,6 @@ instance AA.LinearOperator DExpr DExpr where
         j <- fromDExpr m
         let (ArrayT _ [_,c] t) = typeRef j
         simplify $ Apply "<#" [i,j] (ArrayT (Just "row_vector") [c] t)
-    m <\> v = DExpr $ do
-        i <- fromDExpr m
-        j <- fromDExpr v
-        let (ArrayT _ [_,c] t) = typeRef i
-            t' = case typeRef j of
-              ArrayT _ [_]   _ -> ArrayT (Just "vector") [c] t
-              ArrayT _ [_,n] _ -> ArrayT (Just "matrix") [c,n] t
-        simplify $ Apply "<\\>" [i,j] t'
     diag v = DExpr $ do
         i <- fromDExpr v
         let (ArrayT _ [n] t) = typeRef i
@@ -1727,10 +1719,23 @@ instance AA.LinearOperator DExpr DExpr where
 instance AA.LinearOperator (Expression [[e]]) (Expression [e]) where
     m #> v   = Expression $ erase m AA.#>  erase v
     v <# m   = Expression $ erase v AA.<#  erase m
-    m <\> v  = Expression $ erase m AA.<\> erase v
     diag     = Expression . AA.diag     . erase
     asColumn = Expression . AA.asColumn . erase
     asRow    = Expression . AA.asRow    . erase
+
+instance AA.MLDivide DExpr DExpr where
+    m <\> v = DExpr $ do
+        i <- fromDExpr m
+        j <- fromDExpr v
+        let (ArrayT _ [_,c] t) = typeRef i
+            t' = case typeRef j of
+              ArrayT _ [_]   _ -> ArrayT (Just "vector") [c] t
+              ArrayT _ [_,n] _ -> ArrayT (Just "matrix") [c,n] t
+        simplify $ Apply "<\\>" [i,j] t'
+instance AA.MLDivide RMat RVec where
+    m <\> v  = Expression $ erase m AA.<\> erase v
+instance AA.MLDivide RMat RMat where
+    m <\> v  = Expression $ erase m AA.<\> erase v
 
 instance AA.SquareMatrix DExpr DExpr where
     chol m = DExpr $ do
