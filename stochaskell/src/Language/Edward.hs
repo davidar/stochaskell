@@ -89,6 +89,18 @@ edPrelude = unlines
   ,"def all_equal(x,y): return tf.reduce_all(tf.equal(x,y))"
   ,"def ascolumn(a): return tf.reshape(a, (-1, 1))"
   ,"def asrow(a):    return tf.reshape(a, ( 1,-1))"
+  ,"def samples(inference, latent):"
+  ,"  s = []"
+  ,"  for x,q in latent.items():"
+        -- http://edwardlib.org/tutorials/automated-transformations
+  ,"    x_unconstrained = inference.transformations[x]"
+  ,"    try:"
+  ,"      params = x_unconstrained.bijector.inverse(q.params)"
+  ,"    except AttributeError:"
+  ,"      sys.stderr.write(str(x) + ' is already unconstrained\\n')"
+  ,"      params = q.params"
+  ,"    s.append(params.eval().tolist())"
+  ,"  return map(list, zip(*s))"
   ]
 
 edNode :: Map Id PNode -> Label -> Node -> String
@@ -154,9 +166,10 @@ edProgram numSamples numSteps stepSize prog init =
   "inference = ed.HMC(latent, data)\n"++
   "stdout = sys.stdout; sys.stdout = sys.stderr\n"++
   "inference.run(step_size="++ show stepSize ++
-               ",n_steps="++ show numSteps ++")\n"++
+               ",n_steps="++ show numSteps ++
+               ",auto_transform=True)\n"++
   "sys.stdout = stdout\n"++
-  "print(map(list, zip(*[q.params.eval().tolist() for q in latent.values()])))"
+  "print(samples(inference, latent))"
   where (_, pb@(PBlock block _ given _)) = runProgExprs "ed" prog
         skel = modelSkeleton pb
         pn = Map.filterWithKey (const . (`Set.member` skel)) $ pnodes pb
@@ -186,7 +199,7 @@ hmcEdward numSamples numSteps stepSize prog init =
     let vals = zipWith reshape lShapes <$> read out
     return [let env = Map.fromList [(LVar i, x)
                                    | ((i,d),x) <- Map.toAscList latents `zip` xs]
-            in fromRight $ evalPBlock pb rets env
+            in fromRight' $ evalPBlock pb rets env
            | xs <- vals]
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "ed" prog
         dump dir env = forM_ (Map.toList env) $ \(LVar i,c) ->
