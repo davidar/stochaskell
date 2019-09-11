@@ -113,6 +113,7 @@ pmPrelude = unlines
 pmNode :: (Map Id PNode, Env) -> Label -> Node -> String
 pmNode (r,given) _ (Apply "getExternal" [Var i t] _) =
   case Map.lookup i r of
+    _ | idLevel i > 0 -> ""
     Just n -> pmPNode (pmId i) n (Map.lookup (LVar i) given)
     Nothing -> pmId i ++" = tt.as_tensor_variable(np.load('"++ pmId i ++".npy').astype('float32'))"
 pmNode _ name (Apply "tr'" [a] _) =
@@ -141,6 +142,11 @@ pmPNode name (Dist "lkj_corr" [v] (ArrayT _ [(Const 1 _, Const n _),_] _)) Nothi
   name ++" = lkj_corr('"++ name ++"', eta="++ pmNodeRef v ++", n="++ show n ++")"
 pmPNode name (Dist f args t) val =
   pmPNode' name f (map pmNodeRef args) t val
+pmPNode name (Loop sh (Lambda dag (Dist d args _)) t) val
+  | not (any p $ nodes dag), not (varies dag args)
+  = pmPNode name (Dist d args t) val
+  where p (_, Apply "getExternal" _ _) = False
+        p _ = True
 pmPNode name (Loop sh (Lambda defs dist) _) Nothing =
   pmLoop name (inputs defs) sh (pmDAG (Map.empty, emptyEnv) defs) dist
 pmPNode name (HODist "orderedSample" d [n] _) Nothing =
@@ -157,7 +163,7 @@ pmArray name params sh context ret =
   where fn = name ++"_fn("++ pmId `commas` params ++")"
         go [] [] = fn
         go (i:is) ((a,b):sh) =
-          "["++ go is sh ++" for "++ pmId i ++" in xrange("++
+          "["++ go is sh ++" for "++ pmId i ++" in range("++
             pmNodeRef' a ++", "++ pmNodeRef' b ++"+1)]"
 
 pmLoop :: Label -> [Id] -> [(NodeRef,NodeRef)] -> String -> PNode -> String
