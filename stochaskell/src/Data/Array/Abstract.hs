@@ -292,8 +292,8 @@ class LinearOperator m v | m -> v, v -> m where
     -- | convert vector to row
     asRow :: v -> m
     -- | outer product
-    outer :: (LinearOperator m v, Num m) => v -> v -> m
-    outer u v = asColumn u * asRow v
+    outer :: (LinearOperator m v, Semigroup m) => v -> v -> m
+    outer u v = asColumn u <> asRow v
 
 instance LinearOperator (ShapedMatrix Double) (ShapedVector Double) where
     (ShMat r _ m)  #> (ShVec _ v) = ShVec r . head . LAD.toColumns $ (LA.<>)  m (LAD.asColumn v)
