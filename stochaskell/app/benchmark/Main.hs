@@ -123,7 +123,7 @@ covtype :: IO ()
 covtype = do
   let n = 581012; d = 54
   --(xData,wTrue,bTrue,yData) <- simulate (model n d)
-  table <- readRealMatrix "data/covtype.std.data" (1,n) (1,55)
+  table <- readRealMatrix "data/covtype.std.data"
   let xData = constExpr $ table `slice` [[i,j] | i <- 1...n, j <- 1...d]
       yData = constExpr . binarize (1 ==) $ table `slice` [[i,55] | i <- 1...n]
 

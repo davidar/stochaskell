@@ -12,24 +12,18 @@ import Data.Binary
 import Data.Binary.IEEE754
 import Data.Binary.Put
 import qualified Data.ByteString.Lazy.Char8 as LC
+import qualified Data.Csv as CSV
 import Data.Expression.Const
-import Text.CSV.Lazy.ByteString
+import qualified Data.Vector as V
+import GHC.Exts
 import Util
 
 -- | read CSV file into a matrix
-readRealMatrix :: FilePath -> Interval Integer -> Interval Integer -> IO ConstVal
-readRealMatrix fname (rlo,rhi) (clo,chi) = do
-  table <- fromCSVTable . csvTable . parseCSV <$> LC.readFile fname
-  a <- newArray ([rlo,clo],[rhi,chi]) 0 :: IO (IOUArray [Integer] Double)
-  let go :: Integer -> [[LC.ByteString]] -> IO ()
-      go _ [] = return ()
-      go i (row:rows) = do
-        forM_ (zip [clo..] row) $ \(j,x) ->
-          writeArray a [i,j] $ read (LC.unpack x)
-        go (i+1) rows
-  go rlo $ take (fromInteger (rhi-rlo+1)) table
-  a' <- freeze a
-  return $ Approx a'
+readRealMatrix :: FilePath -> IO ConstVal
+readRealMatrix fname = do
+  contents <- LC.readFile fname
+  let table = fromRight' $ CSV.decode CSV.NoHeader contents :: V.Vector (V.Vector Double)
+  return . list $ fromList . map real . toList <$> table
 
 writeNPy :: FilePath -> ConstVal -> IO ()
 writeNPy fname (Approx a) = LC.writeFile fname dat
