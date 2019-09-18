@@ -130,15 +130,16 @@ covtype = do
   let post = [ (w,b) | (x,w,b,y) <- logreg n d, x == xData, y == yData ]
       stepSize = 0.0001
 
-  msgStan   <- benchStanHMC   100 10 stepSize post Nothing
-  msgPyMC3  <- benchPyMC3HMC  100 10 stepSize post Nothing
-  msgEdward <- benchEdwardHMC 100 10 stepSize post Nothing
+  replicateM_ 11 $ do
+    msgStan   <- benchStanHMC   100 10 stepSize post Nothing
+    msgPyMC3  <- benchPyMC3HMC  100 10 stepSize post Nothing
+    msgEdward <- benchEdwardHMC 100 10 stepSize post Nothing
 
-  putStrLn "==="
-  --putStrLn $ "TRUTH:\t"++  show (wTrue,   bTrue)
-  putStrLn msgStan
-  putStrLn msgPyMC3
-  putStrLn msgEdward
+    putStrLn "==="
+    --putStrLn $ "TRUTH:\t"++  show (wTrue,   bTrue)
+    putStrLn msgStan
+    putStrLn msgPyMC3
+    putStrLn msgEdward
 
 poly' :: IO ()
 poly' = do
@@ -224,8 +225,6 @@ benchStanHMC numSamp numSteps stepSize p init = do
   return $ "STAN:\t"++ show means ++" took "++ show s
 
 benchPyMC3HMC numSamp numSteps stepSize p init = do
-  putStrLn $ pmProgram p
-  t <- tic
   let method = defaultPyMC3Inference
         { pmDraws = numSamp
         , pmStep = Just HamiltonianMC
@@ -236,6 +235,8 @@ benchPyMC3HMC numSamp numSteps stepSize p init = do
         , pmInit = Nothing
         , pmTune = 0
         }
+  putStrLn $ pmProgram' method p init
+  t <- tic
   samples <- runPyMC3 method p init
   s <- toc t
   let aPyMC3 = mean (map fst samples)
