@@ -221,6 +221,7 @@ data PyMC3Inference
     , pmInit :: Maybe String
     , pmStart :: Env
     , pmTune :: Int
+    , pmChains :: Maybe Int
     }
 
 instance Show PyMC3Inference where
@@ -229,6 +230,7 @@ instance Show PyMC3Inference where
                                 ++",init="++ maybe "None" show pmInit
                                 ++",start="++ pmEnv pmStart
                                 ++",tune="++ show pmTune
+                                ++",chains="++ maybe "None" show pmChains
                                 ++")"
 
 data PyMC3Step
@@ -258,6 +260,7 @@ defaultPyMC3Inference = PyMC3Sample
   , pmInit = Just "auto"
   , pmStart = emptyEnv
   , pmTune = 500
+  , pmChains = Nothing
   }
 
 pmProgram' :: (ExprTuple t) => PyMC3Inference -> P t -> Maybe t -> String
