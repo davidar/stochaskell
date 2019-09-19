@@ -62,6 +62,7 @@ module Language.Stochaskell
   , corrLKJ
   -- ** Logarithmic probability density functions
   , lpdf, lpdfAux
+  , density, density'
   -- *** Primitives
   , lpdfGamma, lpdfNegBinomial, lpdfNormal, lpdfPoisson
   , lpdfUniform, lpdfDiscreteUniform
@@ -83,12 +84,14 @@ module Language.Stochaskell
   , chain
   , chainRange
   , debug
+  , deepseq
   , fromCase
   , fromCaseP
   , fromRight'
   , interpolate
   , iterateLimit
   , linspace
+  , logFromLogFloat
   , loop
   , mean
   , qfDiag
@@ -114,6 +117,7 @@ module Language.Stochaskell
   ) where
 
 import Prelude ()
+import Control.DeepSeq
 import Control.Monad.HT (iterateLimit)
 import Data.Array.Abstract
 import Data.Either.Utils
@@ -124,6 +128,7 @@ import Data.Expression.Const.IO
 import Data.Expression.Eval
 import Data.Expression.Unfold
 import Data.List.Utils hiding (join)
+import Data.Number.LogFloat
 import Data.Number.Transfinite hiding (log,isNaN,isInfinite)
 import Data.Program
 import Data.Random.Distribution.Abstract

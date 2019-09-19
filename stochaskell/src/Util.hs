@@ -23,6 +23,10 @@ import Text.Printf (printf)
 
 type Label = String
 
+infixr 0 $!!!
+($!!!) :: (Show a) => (a -> b) -> a -> b
+f $!!! x = show x `deepseq` f x
+
 fixpt :: (Eq a) => (a -> a) -> a -> a
 fixpt = fixpt' 0
 fixpt' :: (Eq a) => Int -> (a -> a) -> a -> a

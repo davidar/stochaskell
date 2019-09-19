@@ -5,6 +5,7 @@ module Data.Program where
 
 import Prelude hiding (isInfinite)
 
+import Control.DeepSeq
 import Control.Exception
 import qualified Control.Monad as Monad
 import Control.Monad.Guard
@@ -876,7 +877,7 @@ density' prog vals = densityPBlock env' pb
         env' = evalBlock (definitions pb) env
 
 densityPBlock :: Env -> PBlock -> LF.LogFloat
-densityPBlock env (PBlock block refs _ ns) = product $ do
+densityPBlock env (PBlock block refs _ ns) = product $!!! do
     (i,d) <- zip [0..] $ reverse refs
     let ident = Volatile ns (dagLevel $ topDAG block) i
     return $ case Map.lookup (LVar ident) env of
@@ -892,57 +893,57 @@ densityPNode env block (Dist "bernoulliLogit" [l] _) a
     | x == 0 = LF.logFloat (1 - p)
     | otherwise = LF.logFloat 0
   where x = toRational a
-        l' = toDouble . fromRight' $ evalNodeRef env block l
+        l' = toDouble . fromRight' $!! evalNodeRef env block l
         p = 1 / (1 + exp (-l'))
 densityPNode env block (Dist "pmf" [q] _) x = LF.logFloat p
-  where q' = map toDouble . toList . fromRight' $ evalNodeRef env block q
-        p = fromMaybe 0 . lookup x $ zip [1..] q'
+  where q' = map toDouble . toList . fromRight' $!! evalNodeRef env block q
+        p = fromMaybe 0 . lookup x $!! zip [1..] q'
 densityPNode env block (Dist "gamma" [a,b] _) x
     | x' >= 0 = LF.logToLogFloat $ lpdfGamma x' a' b'
     | otherwise = LF.logFloat 0
-  where a' = toDouble . fromRight' $ evalNodeRef env block a
-        b' = toDouble . fromRight' $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $!! evalNodeRef env block a
+        b' = toDouble . fromRight' $!! evalNodeRef env block b
         x' = toDouble x
 densityPNode env block (Dist "inv_gamma" [a,b] _) x
     | x' >= 0 = LF.logToLogFloat l
     | otherwise = LF.logFloat 0
-  where a' = toDouble . fromRight' $ evalNodeRef env block a
-        b' = toDouble . fromRight' $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $!! evalNodeRef env block a
+        b' = toDouble . fromRight' $!! evalNodeRef env block b
         x' = toDouble x
         l = a' * log b' - (a' + 1) * log x' - b' / x' - logGamma a'
 densityPNode env block (Dist "geometric" [t] _) x = p * q^k
-  where t' = toDouble . fromRight' $ evalNodeRef env block t
+  where t' = toDouble . fromRight' $!! evalNodeRef env block t
         p = LF.logFloat t'
         q = LF.logFloat (1 - t')
         k = toInteger x
 densityPNode env block (Dist "normal" [m,s] _) x =
     LF.logToLogFloat $ logPdf (Rand.Normal m' s') (toDouble x)
-  where m' = toDouble . fromRight' $ evalNodeRef env block m
-        s' = toDouble . fromRight' $ evalNodeRef env block s
+  where m' = toDouble . fromRight' $!! evalNodeRef env block m
+        s' = toDouble . fromRight' $!! evalNodeRef env block s
 densityPNode env block (Dist "normals" [m,s] _) x = product
     [LF.logToLogFloat $ logPdf (Rand.Normal a b) c | (a,b,c) <- zip3 m' s' x']
-  where m' = map toDouble . toList . fromRight' $ evalNodeRef env block m
-        s' = map toDouble . toList . fromRight' $ evalNodeRef env block s
+  where m' = map toDouble . toList . fromRight' $!! evalNodeRef env block m
+        s' = map toDouble . toList . fromRight' $!! evalNodeRef env block s
         x' = map toDouble $ toList x
 densityPNode env block (Dist "multi_normal" [m,s] _) x =
     LF.logToLogFloat $ -0.5 * real ((x' <.> (s' <\> x')) + logDet s' + n * log (2*pi))
-  where m' = fromRight' $ evalNodeRef env block m
-        s' = fromRight' $ evalNodeRef env block s
+  where m' = fromRight' $!! evalNodeRef env block m
+        s' = fromRight' $!! evalNodeRef env block s
         n = integer $ length (toList m')
         x' = x - m'
 densityPNode env block (Dist "poisson" [l] _) x =
     LF.logToLogFloat $ lpdfPoisson k l'
-  where l' = toDouble . fromRight' $ evalNodeRef env block l
+  where l' = toDouble . fromRight' $!! evalNodeRef env block l
         k = toInteger x
 densityPNode env block (Dist "uniform" [a,b] _) x =
     LF.logFloat $ if a' <= x' && x' <= b' then 1/(b' - a') else 0
-  where a' = toDouble . fromRight' $ evalNodeRef env block a
-        b' = toDouble . fromRight' $ evalNodeRef env block b
+  where a' = toDouble . fromRight' $!! evalNodeRef env block a
+        b' = toDouble . fromRight' $!! evalNodeRef env block b
         x' = toDouble x
 densityPNode env block (Dist "discreteUniform" [a,b] _) x =
     LF.logFloat $ if a' <= x' && x' <= b' then 1/fromInteger (b' - a' + 1) else 0
-  where a' = toInteger . fromRight' $ evalNodeRef env block a
-        b' = toInteger . fromRight' $ evalNodeRef env block b
+  where a' = toInteger . fromRight' $!! evalNodeRef env block a
+        b' = toInteger . fromRight' $!! evalNodeRef env block b
         x' = toInteger x
 densityPNode _ _ (Dist d _ _) _ = error $ "unrecognised density "++ d
 
@@ -954,7 +955,7 @@ densityPNode env block (Loop shp (Lambda ldag body) _) a = product
 
 densityPNode env block (HODist "orderedSample" d [n] _) a = lfact n' * product
     [ densityPNode env block d (fromRational x) | x <- entries a ]
-  where n' = toInteger . fromRight' $ evalNodeRef env block n
+  where n' = toInteger . fromRight' $!! evalNodeRef env block n
 
 
 ------------------------------------------------------------------------------
