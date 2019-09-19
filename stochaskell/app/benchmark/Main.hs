@@ -10,15 +10,22 @@ import Language.Stan
 
 logreg :: Z -> Z -> P (RMat,RVec,R,BVec)
 logreg n d = do
-  -- TODO: automatic vectorisation
-  --x <- joint matrix [ uniform (-5) 5 | i <- 1...n, j <- 1...d ]
   x <- uniforms (matrix [ -10000 | i <- 1...n, j <- 1...d ])
                 (matrix [  10000 | i <- 1...n, j <- 1...d ])
-  --w <- joint vector [ normal 0 3 | j <- 1...d ]
   w <- normals (vector [ 0 | j <- 1...d ]) (vector [ 3 | j <- 1...d ])
   b <- normal 0 3
   let z = (x #> w) + cast b
   y <- bernoulliLogits z
+  return (x,w,b,y)
+
+logreg' :: Z -> Z -> P (RMat,RVec,R,BVec)
+logreg' n d = do
+  -- TODO: automatic vectorisation
+  x <- joint matrix [ uniform (-10000) 10000 | i <- 1...n, j <- 1...d ]
+  w <- joint vector [ normal 0 3 | j <- 1...d ]
+  b <- normal 0 3
+  let z = (x #> w) + cast b
+  y <- joint vector [ bernoulliLogit (z!i) | i <- 1...n ]
   return (x,w,b,y)
 
 poly :: Z -> Z -> P (RVec,R,RVec,RVec)
@@ -119,15 +126,21 @@ birats n t = do
   y <- normals yMu (matrix [ ySigma | i <- 1...n, j <- 1...t ])
   return (x,betaMu,betaSigma,beta,ySigma,y)
 
+covtypeData :: Integer -> Integer -> IO (ConstVal,ConstVal)
+covtypeData n d = do
+  table <- readRealMatrix "data/covtype.std.data"
+  let xData = table `slice` [[i,j] | i <- 1...n, j <- 1...d]
+      yData = binarize (1 ==) $ table `slice` [[i,55] | i <- 1...n]
+  (xData,yData) `deepseq` putStrLn "loaded covtype data"
+  return (xData,yData)
+
 covtype :: IO ()
 covtype = do
   let n = 581012; d = 54
   --(xData,wTrue,bTrue,yData) <- simulate (model n d)
-  table <- readRealMatrix "data/covtype.std.data"
-  let xData = constExpr $ table `slice` [[i,j] | i <- 1...n, j <- 1...d]
-      yData = constExpr . binarize (1 ==) $ table `slice` [[i,55] | i <- 1...n]
+  (xData,yData) <- covtypeData n d
 
-  let post = [ (w,b) | (x,w,b,y) <- logreg n d, x == xData, y == yData ]
+  let post = [ (w,b) | (x,w,b,y) <- logreg n d, x == constExpr xData, y == constExpr yData ]
       stepSize = 0.0001
 
   replicateM_ 11 $ do
@@ -140,6 +153,16 @@ covtype = do
     putStrLn msgStan
     putStrLn msgPyMC3
     putStrLn msgEdward
+
+covtypeLP (wEd,bEd) (wPM,bPM) (wStan,bStan) = do
+  let n = 581012; d = 54
+  (xData,yData) <- covtypeData n d
+  putStr "Edward: "
+  print . logFromLogFloat $ logreg' n d `density'` (constExpr xData, list wEd, real bEd, constExpr yData)
+  putStr "PyMC3: "
+  print . logFromLogFloat $ logreg' n d `density'` (constExpr xData, list wPM, real bPM, constExpr yData)
+  putStr "Stan: "
+  print . logFromLogFloat $ logreg' n d `density'` (constExpr xData, list wStan, real bStan, constExpr yData)
 
 poly' :: IO ()
 poly' = do
@@ -234,6 +257,7 @@ benchPyMC3HMC numSamp numSteps stepSize p init = do
           }
         , pmInit = Nothing
         , pmTune = 0
+        , pmChains = Just 1
         }
   putStrLn $ pmProgram' method p init
   t <- tic
