@@ -81,6 +81,7 @@ edBuiltinDistributions =
 edPrelude :: String
 edPrelude = unlines
   ["import sys"
+  ,"import time"
   ,"from collections import OrderedDict"
   ,"import edward as ed"
   ,"import numpy as np"
@@ -165,9 +166,11 @@ edProgram numSamples numSteps stepSize prog init =
   "data = "++ printedConds ++"\n"++
   "inference = ed.HMC(latent, data)\n"++
   "stdout = sys.stdout; sys.stdout = sys.stderr\n"++
+  "t0 = time.time()\n"++
   "inference.run(step_size="++ show stepSize ++
                ",n_steps="++ show numSteps ++
                ",auto_transform=True)\n"++
+  "print('Edward took %fs' % (time.time() - t0))\n"++
   "sys.stdout = stdout\n"++
   "print(samples(inference, latent))"
   where (_, pb@(PBlock block _ given _)) = runProgExprs "ed" prog

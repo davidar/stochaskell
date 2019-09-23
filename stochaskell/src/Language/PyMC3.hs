@@ -87,6 +87,7 @@ pmPrelude = unlines
   ["import numpy as np"
   ,"import pymc3 as pm"
   ,"import sys"
+  ,"import time"
   ,"import theano"
   ,"import theano.tensor as tt"
   ,"import theano.tensor.basic"
@@ -266,7 +267,9 @@ defaultPyMC3Inference = PyMC3Sample
 pmProgram' :: (ExprTuple t) => PyMC3Inference -> P t -> Maybe t -> String
 pmProgram' sample prog init =
   pmProgram prog ++"\n\n  "++
+  "t0 = time.time()\n  "++
   "trace = "++ show sample{pmStart = initEnv "pm" prog init Map.\\ given} ++"\n  "++
+  "sys.stderr.write('PyMC3 took %fs\\n' % (time.time() - t0))\n  "++
   "print(map(list, zip("++ g `commas` Map.keys (latentPNodes pb) ++")))"
   where (rets, pb@(PBlock block _ given _)) = runProgExprs "pm" prog
         g i = "trace['"++ pmId i ++"'].tolist()"
