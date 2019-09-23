@@ -7,6 +7,7 @@ import Language.Stochaskell.Expression
 import Language.Edward
 import Language.PyMC3
 import Language.Stan
+import System.IO
 
 logreg :: Z -> Z -> P (RMat,RVec,R,BVec)
 logreg n d = do
@@ -166,15 +167,19 @@ covtypeLP (wEd,bEd) (wPM,bPM) (wStan,bStan) = do
 
 poly' :: IO ()
 poly' = do
-  let n = 1000; d = 7
+  let n = 50000; d = 7
+  hSetBuffering stdout NoBuffering
+  putStr "Generating synthetic data... "
+  t <- tic
   (xData,alphaTrue,betaTrue,yData) <- simulate (poly n d)
+  toc t >>= print
   let design = matrix [ let p = cast (j-1) in (xData!i)**p
                       | i <- 1...n, j <- 1...(d+1) ] :: RMat
       design' = constExpr . fromRight $ eval_ design
   let post = [ (a,b) | (x,a,b,y) <- nlm n (d+1), x == design', y == yData ]
       stepSize = 0.1
-  (_,alphaInit,betaInit,_) <- simulate (poly n d)
-  let init = Just (alphaInit, betaInit)
+  let init = Just (1, list (replicate (d+1) 0))
+  putStrLn "Starting inference"
   msgEdward <- benchEdwardHMC 1000 10 stepSize post init
   msgPyMC3  <- benchPyMC3HMC  1000 10 stepSize post init
   msgStan   <- benchStanHMC   1000 10 stepSize post init
