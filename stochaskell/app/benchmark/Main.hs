@@ -247,10 +247,10 @@ benchStanHMC numSamp numSteps stepSize p init = do
         , hmcMetric = StanUnitEMetric
         , hmcStepSize = stepSize
         }
-  samples <- runStan method p init
+  samples <- drop (numSamp `div` 2) <$> runStan method p init
   s <- toc t
   let means = map mean . transpose $ map (map (fromRight . eval_ . Expression) . fromExprTuple) samples
-  return $ "STAN:\t"++ show means ++" took "++ show s
+  return $ "STAN:\t"++ show means ++" took "++ show s ++" for "++ show (length samples) ++" samples"
 
 benchPyMC3HMC numSamp numSteps stepSize p init = do
   let method = defaultPyMC3Inference
@@ -266,19 +266,19 @@ benchPyMC3HMC numSamp numSteps stepSize p init = do
         }
   putStrLn $ pmProgram' method p init
   t <- tic
-  samples <- runPyMC3 method p init
+  samples <- drop (numSamp `div` 2) <$> runPyMC3 method p init
   s <- toc t
   let aPyMC3 = mean (map fst samples)
       bPyMC3 = mean (map snd samples)
-  return $ "PYMC3:\t"++  show (aPyMC3,  bPyMC3)  ++" took "++ show s
+  return $ "PYMC3:\t"++  show (aPyMC3,  bPyMC3)  ++" took "++ show s ++" for "++ show (length samples) ++" samples"
 
 benchEdwardHMC numSamp numSteps stepSize p init = do
   putStrLn $ edProgram numSamp numSteps stepSize p init
   t <- tic
-  samples <- hmcEdward numSamp numSteps stepSize p init
+  samples <- drop (numSamp `div` 2) <$> hmcEdward numSamp numSteps stepSize p init
   s <- toc t
   let aEdward = mean (map fst samples)
       bEdward = mean (map snd samples)
-  return $ "EDWARD:\t"++ show (aEdward, bEdward) ++" took "++ show s
+  return $ "EDWARD:\t"++ show (aEdward, bEdward) ++" took "++ show s ++" for "++ show (length samples) ++" samples"
 
 main = birats'
