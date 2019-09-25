@@ -94,10 +94,10 @@ edPrelude = unlines
   ,"  s = []"
   ,"  for x,q in latent.items():"
         -- http://edwardlib.org/tutorials/automated-transformations
-  ,"    x_unconstrained = inference.transformations[x]"
   ,"    try:"
+  ,"      x_unconstrained = inference.transformations[x]"
   ,"      params = x_unconstrained.bijector.inverse(q.params)"
-  ,"    except AttributeError:"
+  ,"    except KeyError, AttributeError:"
   ,"      sys.stderr.write(str(x) + ' is already unconstrained\\n')"
   ,"      params = q.params"
   ,"    s.append(params.eval().tolist())"
