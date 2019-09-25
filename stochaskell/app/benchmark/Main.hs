@@ -205,11 +205,10 @@ measerr' = do
   let n = 1000; tau = 0.1
   (xMuTrue,xSigmaTrue,xTrue,xMeasData,alphaTrue,betaTrue,sigmaTrue,yData) <- simulate (measerr n tau)
   let post = [ (xm,xs,x,a,b,s) | (xm,xs,x,xx,a,b,s,y) <- measerr n tau, xx == xMeasData, y == yData ]
-  (xMuInit,xSigmaInit,xInit,_,alphaInit,betaInit,sigmaInit,_) <- simulate (measerr n tau)
-  let init = (xMuInit,xSigmaInit,xInit,alphaInit,betaInit,sigmaInit)
-  samplesStan <- hmcStanInit 1000 post init
-  putStrLn $ pmProgram post
-  samplesPyMC3 <- runPyMC3 defaultPyMC3Inference{pmDraws=1000,pmInit=Nothing,pmTune=1000} post (Just init)
+      initF = do
+        (xm,xs,x,_,a,b,s,_) <- simulate (measerr n tau)
+        return (xm,xs,x,a,b,s)
+  (samplesStan, samplesPyMC3) <- benchNUTS post initF
   putStrLn "==="
   putStrLn $ "TRUTH:\t"++ show (xMuTrue,xSigmaTrue,xTrue,alphaTrue,betaTrue,sigmaTrue)
   print $ last samplesStan
@@ -299,4 +298,4 @@ retryIOError m = catchIOError m $ \err -> do
 
 main = do
   hSetBuffering stdout NoBuffering
-  replicateM_ 11 $ retryIOError birats'
+  replicateM_ 11 $ retryIOError measerr'
