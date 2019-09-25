@@ -107,8 +107,6 @@ pmPrelude = unlines
   ,"  tri_index[np.triu_indices(n, k=1)] = np.arange(shape)"
   ,"  tri_index[np.triu_indices(n, k=1)[::-1]] = np.arange(shape)"
   ,"  return pm.Deterministic(name, tt.fill_diagonal(C_triu[tri_index], 1))"
-  ,""
-  ,"theano.config.floatX = 'float32'"
   ]
 
 pmNode :: (Map Id PNode, Env) -> Label -> Node -> String
@@ -116,7 +114,7 @@ pmNode (r,given) _ (Apply "getExternal" [Var i t] _) =
   case Map.lookup i r of
     _ | idLevel i > 0 -> ""
     Just n -> pmPNode (pmId i) n (Map.lookup (LVar i) given)
-    Nothing -> pmId i ++" = tt.as_tensor_variable(np.load('"++ pmId i ++".npy').astype('float32'))"
+    Nothing -> pmId i ++" = tt.as_tensor_variable(np.load('"++ pmId i ++".npy').astype(theano.config.floatX))"
 pmNode _ name (Apply "tr'" [a] _) =
   name ++" = "++ pmNodeRef a ++".T"
 pmNode _ name (Apply op [i,j] _) | op == "#>" || op == "<>" =
@@ -131,7 +129,7 @@ pmNode r name (Array sh (Lambda dag ret) _)
   | pmDAG r dag /= "" = -- TODO: or ret depends on index
     pmArray name (inputs dag) sh (pmDAG r dag) (pmNodeRef ret)
   | otherwise = name ++" = "++ pmNodeRef ret ++" * np.ones(("++
-                  pmNodeRef' `commas` map snd sh ++"), dtype='float32')"
+                  pmNodeRef' `commas` map snd sh ++"), dtype=theano.config.floatX)"
 pmNode _ _ n = error $ "pmNode "++ show n
 
 pmPNode :: Label -> PNode -> Maybe ConstVal -> String
@@ -182,7 +180,7 @@ pmPNode' name f args t val | isJust (lookup f pmBuiltinDistributions) =
         ps = intercalate ", " (zipWith h params args)
         g (a,b) = pmNodeRef' b ++"-"++ pmNodeRef' a ++"+1"
         obs | isNothing val = ""
-            | otherwise = "observed=np.load('"++ name ++".npy').astype('float32'), "
+            | otherwise = "observed=np.load('"++ name ++".npy').astype(theano.config.floatX), "
         ctor | (SubrangeT _ lo hi) <- t, isNothing val =
                let kwargs = case (lo,hi) of
                      (Just a, Just b)  -> "lower="++ pmNodeRef a ++
@@ -200,10 +198,10 @@ pmDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
   in pmNode r name n
 
 -- | generate PyMC3 code, as used by 'runPyMC3'
-pmProgram :: (ExprTuple t) => P t -> String
-pmProgram prog =
+pmProgram :: (ExprTuple t) => P t -> String -> String
+pmProgram prog floatX =
   pmPrelude ++"\n"++
-  --"@profile(stream=sys.stderr)\n"++
+  "theano.config.floatX = '"++ floatX ++"'\n\n"++
   "with pm.Model() as model:\n"++
     pmDAG (pn, Map.map fst given) (topDAG block)
   where pb@(PBlock block _ given _) = snd $ runProgExprs "pm" prog
@@ -213,7 +211,7 @@ pmProgram prog =
 pmEnv :: Env -> String
 pmEnv env | Map.null env = "None"
 pmEnv env = "{"++ g `commas` [k | LVar k <- Map.keys env] ++"}"
-  where g i = "'"++ pmId i ++"': np.load('"++ pmId i ++".npy').astype('float32')"
+  where g i = "'"++ pmId i ++"': np.load('"++ pmId i ++".npy').astype(theano.config.floatX)"
 
 data PyMC3Inference
   = PyMC3Sample
@@ -223,6 +221,7 @@ data PyMC3Inference
     , pmStart :: Env
     , pmTune :: Int
     , pmChains :: Maybe Int
+    , pmFloatX :: String
     }
 
 instance Show PyMC3Inference where
@@ -262,11 +261,12 @@ defaultPyMC3Inference = PyMC3Sample
   , pmStart = emptyEnv
   , pmTune = 500
   , pmChains = Nothing
+  , pmFloatX = "float32"
   }
 
 pmProgram' :: (ExprTuple t) => PyMC3Inference -> P t -> Maybe t -> String
 pmProgram' sample prog init =
-  pmProgram prog ++"\n\n  "++
+  pmProgram prog (pmFloatX sample) ++"\n\n  "++
   "t0 = time.time()\n  "++
   "trace = "++ show sample{pmStart = initEnv "pm" prog init Map.\\ given} ++"\n  "++
   "sys.stderr.write('PyMC3 took %fs\\n' % (time.time() - t0))\n  "++
