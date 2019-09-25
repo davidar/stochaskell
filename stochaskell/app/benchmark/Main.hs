@@ -8,6 +8,7 @@ import Language.Edward
 import Language.PyMC3
 import Language.Stan
 import System.IO
+import System.IO.Error
 
 logreg :: Z -> Z -> P (RMat,RVec,R,BVec)
 logreg n d = do
@@ -112,18 +113,14 @@ covPrior n = do
 
 birats :: Z -> Z -> P (RVec,RVec,RMat,RMat,R,RMat)
 birats n t = do
-  x <- uniforms (vector [  0 | j <- 1...t ])
-                (vector [ 50 | j <- 1...t ])
-  betaMu <- normals (vector [   0 | _ <- 1...2 ])
-                    (vector [ 100 | _ <- 1...2 ])
+  x <- uniforms (vector [ 0 | j <- 1...t ]) (vector [ 50 | j <- 1...t ])
+  betaMu <- normals (vector [ 0 | _ <- 1...2 ]) (vector [ 100 | _ <- 1...2 ])
   betaSigma <- covPrior 2
-  beta <- normalsChol n 2 betaMu betaSigma
+  beta <- joint (designMatrix 2) [ normal betaMu betaSigma :: P RVec | i <- 1...n ]
   let beta' = tr' beta
-      beta1 = beta'!1
-      beta2 = beta'!2
-  --let yMu = matrix [ (beta1!i) + (beta2!i) * (x!j) | i <- 1...n, j <- 1...t ]
-  let yMu = asColumn beta1 + outer beta2 x
-  ySigma <- truncated 0 infinity (cauchy 0 2.5) -- TODO: check this still works
+      yMu = asColumn (beta'!1) + outer (beta'!2) x
+      --  = matrix [ (beta'!1!i) + (beta'!2!i) * (x!j) | i <- 1...n, j <- 1...t ]
+  ySigma <- truncated 0 infinity (cauchy 0 2.5)
   y <- normals yMu (matrix [ ySigma | i <- 1...n, j <- 1...t ])
   return (x,betaMu,betaSigma,beta,ySigma,y)
 
@@ -168,7 +165,6 @@ covtypeLP (wEd,bEd) (wPM,bPM) (wStan,bStan) = do
 poly' :: IO ()
 poly' = do
   let n = 50000; d = 7
-  hSetBuffering stdout NoBuffering
   putStr "Generating synthetic data... "
   t <- tic
   (xData,alphaTrue,betaTrue,yData) <- simulate (poly n d)
@@ -221,20 +217,34 @@ measerr' = do
 
 birats' :: IO ()
 birats' = do
-  let n = 100; t = 10
-  (xData,bmTrue,bsTrue,bTrue,yvTrue,yData) <- simulate (birats n t)
-  let post = [ (bm,bs,b,yv) | (x,bm,bs,b,yv,y) <- birats n t, x == xData, y == yData ]
-  (_,bmInit,bsInit,bInit,yvInit,_) <- simulate (birats n t)
-  let init = (bmInit,bsInit,bInit,yvInit)
-  samplesStan <- hmcStanInit 1000 post init
-  putStrLn $ pmProgram post
-  samplesPyMC3 <- runPyMC3 defaultPyMC3Inference{pmDraws=1000,pmInit=Nothing,pmTune=1000} post (Just init)
+  let n = 30; t = 5
+  (xData,bmTrue,bsTrue,bTrue,ysTrue,yData) <- simulate (birats n t)
+  putStrLn $ "xData = "++ show xData
+  putStrLn $ "yData = "++ show yData
+  let post = [ (bm,bs,b,ys) | (x,bm,bs,b,ys,y) <- birats n t, x == xData, y == yData ]
+      initF = do
+        (_,bm,bs,b,ys,_) <- simulate (birats n t)
+        return (bm,bs,b,ys)
+  (samplesStan, samplesPyMC3) <- benchNUTS post initF
   putStrLn "==="
-  putStrLn $ "TRUTH:\t"++ show (bmTrue,yvTrue)
+  putStrLn $ "TRUTH:\t"++ show (bmTrue,ysTrue)
   let (bmSample,_,_,yvSample) = last samplesStan
   print (bmSample,yvSample)
   let (bmSample,_,_,yvSample) = last samplesPyMC3
   print (bmSample,yvSample)
+
+benchNUTS post initF = do
+  init <- initF
+  samplesStan <- hmcStanInit 1000 post init
+  let method = defaultPyMC3Inference
+        { pmTune = 1000
+        , pmDraws = 1000
+        , pmChains = Just 1
+        , pmFloatX = "float64"
+        }
+  putStrLn $ pmProgram' method post (Just init)
+  samplesPyMC3 <- runPyMC3 method post (Just init)
+  return (samplesStan, samplesPyMC3)
 
 benchStanHMC numSamp numSteps stepSize p init = do
   t <- tic
@@ -281,4 +291,12 @@ benchEdwardHMC numSamp numSteps stepSize p init = do
       bEdward = mean (map snd samples)
   return $ "EDWARD:\t"++ show (aEdward, bEdward) ++" took "++ show s ++" for "++ show (length samples) ++" samples"
 
-main = birats'
+retryIOError m = catchIOError m $ \err -> do
+  putStrLn "FAILED:"
+  print err
+  putStrLn "Retrying..."
+  retryIOError m
+
+main = do
+  hSetBuffering stdout NoBuffering
+  replicateM_ 11 $ retryIOError birats'
