@@ -652,37 +652,47 @@ normalCond n cov noise s y x = normal m (sqrt v)
 -- LOOPS                                                                    --
 ------------------------------------------------------------------------------
 
-instance forall r f. ExprType r =>
+instance forall r f. (ExprType r, ExprType f, Show f) =>
          Joint P Z (Expression r) (Expression f) where
   joint _ ar = P $ do
-    sh <- liftExprBlock . sequence . flip map (shape ar) $ \(a,b) -> do
-      i <- fromExpr a
-      j <- fromExpr b
-      return (i,j)
+    let shp = sequence . flip map (shape ar) $ \(a,b) -> do
+          i <- fromExpr a
+          j <- fromExpr b
+          return (i,j)
+    loopShape <- liftExprBlock shp
     PBlock block dists given ns <- get
     let d = nextLevel block
-        ids = [(Dummy d i, IntT) | i <- [1..length sh]]
+        ids = [(Dummy d i, IntT) | i <- [1..length loopShape]]
         p = ar ! [expr . return $ Var i t | (i,t) <- ids]
         (ret, PBlock (Block (dag:block')) [act] _ _) =
           runState (head <$> fromProgExprs p) $
             PBlock (deriveBlock (DAG d ids Bimap.empty) block) [] Map.empty ns
         TypeIs t = typeOf :: TypeOf r -- TODO: incorrect type for transformed case
-        loopType = case t of
-          ArrayT{} ->
-            let ArrayT _ sh' t = typeRef . fst . runExpr . fst . runProg "joint" $ ar!1
-            in ArrayT Nothing (sh ++ sh') t
-          _ -> ArrayT Nothing sh t
-        loop = Loop sh (Lambda dag act) loopType
-    put $ PBlock (Block block') (loop:dists) given ns
+        loopType = do
+          sh <- shp
+          case t of
+            ArrayT{} -> do
+              let ([eret], PBlock eblock _ _ _) = runProgExprs "joint" (ar!1)
+              etype <- extractType emptyEEnv eblock (typeRef eret)
+              let ArrayT _ sh' t = etype
+              return $ ArrayT Nothing (sh ++ sh') t
+            _ -> return $ ArrayT Nothing sh t
+    put $ PBlock (Block block') dists given ns
+    loop <- Loop loopShape (Lambda dag act) <$> liftExprBlock loopType
+    PBlock block dists given ns <- get
+    put $ PBlock block (loop:dists) given ns
     let name = Volatile ns (d-1) (length dists)
-        v = Var name loopType
-    _ <- liftExprBlock . simplify $ Apply "getExternal" [v] loopType
+    _ <- liftExprBlock . simplify $
+      Apply "getExternal" [Var name (typePNode loop)] (typePNode loop)
     return $ case ret of
       Var (Volatile ns depth 0) _ | depth == d ->
-        expr $ return v :: Expression f
+        expr $ Var name <$> loopType :: Expression f
       Index vec [Var (Volatile ns depth 0) _] | depth == d ->
-        expr . floatNode $ Array sh (Lambda dag (Index vec [ref])) loopType
-          where ref = Index v (reverse [Var i t | (i,t) <- ids])
+        expr $ do
+          sh <- shp
+          v <- Var name <$> loopType
+          let ref = Index v (reverse [Var i t | (i,t) <- ids])
+          floatNode $ Array sh (Lambda dag (Index vec [ref])) (typeRef v)
       _ -> error $ "non-trivial transform in joint: "++ show ret
 
 
