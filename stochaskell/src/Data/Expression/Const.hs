@@ -93,12 +93,15 @@ constFuns = Map.fromList
                                      log $ if toBool b then p else 1-p)
   ,("pmf_lpdf",          \[k,ps]  -> log $ toList ps !! (integer k - 1))
   ,("gamma_lpdf",        \[g,a,b] -> real $ lpdfGamma (real g) (real a) (real b))
+  ,("geometric_lpdf",    \[k,p]   -> real $ lpdfGeometric (integer k) (real p))
+  ,("inv_gamma_lpdf",    \[g,a,b] -> real $ lpdfInvGamma (real g) (real a) (real b))
   ,("neg_binomial_lpdf", \[k,a,b] -> real $ lpdfNegBinomial (integer k) (real a) (real b))
   ,("poisson_lpdf",      \[k,l]   -> real $ lpdfPoisson (integer k) (real l))
   ,("normal_lpdf",       \[x,m,s] -> real $ logPdf (Rand.Normal (toDouble m) (toDouble s)) (real x))
   ,("normals_lpdf",      \[x,m,s] -> real . sum $ zipWith3 lpdfNormal (list x) (list m) (list s))
   ,("uniform_lpdf",      \[x,a,b] -> real $ lpdfUniform (toDouble x) (toDouble a) (toDouble b))
   ,("uniform_cdf",       \[x,a,b] -> real $ cdfUniform (toDouble x) (toDouble a) (toDouble b))
+  ,("uniforms_lpdf",     \[x,a,b] -> real . sum $ zipWith3 lpdfUniform (list x) (list a) (list b))
   ,("discreteUniform_lpdf", \[x,a,b] -> real $
      lpdfDiscreteUniform (toInteger x) (toInteger a) (toInteger b))
   ]

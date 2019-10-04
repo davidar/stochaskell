@@ -150,7 +150,8 @@ evalNodeRef env block m | isBlockMatrix m = do
 evalNodeRef env block r@(Cond cvs _) = case sequence (evalNodeRef env block <$> cs) of
   Left e -> Left $ "while evaluating condition of "++ show r ++":\n"++ indent e
   Right cs' | length (filter (1 ==) cs') /= 1 ->
-              Left $ "zero or multiple true conditions in "++ show r ++" ("++ show cs' ++")"
+              Left $ "zero or multiple true conditions in "++ show r ++" ("++ show cs' ++")\n"++
+                     "where env = "++ show env
             | otherwise -> case evalNodeRef env block (fromJust . lookup 1 $ zip cs' vs) of
                 Left e -> Left $ "while evaluating value of "++ show r ++":\n"++ indent e
                 Right x -> Right x
@@ -452,7 +453,7 @@ toConstraint (k,v) = case k of
     e <- toConstraint (l,v)
     return $ notB c ||* e
   LConstr e | p `all` Set.toList (dependsD e)
-            , sizeD e < 3 -> return e -- TODO: sizeD limit is a hack
+            , sizeD e < 10 -> return e -- TODO: sizeD limit is a hack
   _ -> trace ("WARN ignoring constraint " ++ show k) mzero
   where sizeD = length . nodes . topDAG . snd . runDExpr
         p = isSymbol

@@ -1,6 +1,7 @@
 name: stochaskell-exes
 dependencies:
 - base >=4.10 && <5
+- directory
 - stochaskell
 executables:
   autostat-exe:

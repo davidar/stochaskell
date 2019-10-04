@@ -274,7 +274,7 @@ nextLevel (Block ds) = length ds
 lookupBlock :: Id -> Block -> Node
 lookupBlock i@(Internal level ptr) (Block dags)
   | level < length dags =
-  fromMaybe (error $ "internal lookup failure: " ++ show i) $
+  fromMaybe (error $ "internal lookup failure:\n" ++ showBlock dags (show i)) $
     ptr `Bimap.lookupR` bimap (reverse dags !! level)
   | otherwise = error $ "trying to access level "++ show level ++
                         " but block only has "++ show (length dags) ++"\n"++
@@ -801,6 +801,7 @@ compatible s t | s == t = True
 compatible (SubrangeT s _ _) t = compatible s t
 compatible s (SubrangeT t _ _) = compatible s t
 compatible (ArrayT _ sh s) (ArrayT _ sh' t) | length sh == length sh' = compatible s t
+compatible (TupleT s) (TupleT t) = and $ zipWith compatible s t
 compatible _ _ = False
 
 -- | cast a value of one type to another
@@ -1047,7 +1048,8 @@ simplify (Apply "||" [_,Const 1 _] t) = return $ Const 1 t
 simplify (Apply "#>" [_,Const 0 _] t) = return $ Const 0 t
 simplify (Apply "<#" [Const 0 _,_] t) = return $ Const 0 t
 simplify (Apply "replaceIndex" [Const 0 _,_,Const 0 _] t) = return $ Const 0 t
-simplify (Apply "vectorSize" [v] _) | ArrayT _ [(Const 1 _,n)] _ <- typeRef v = return n
+simplify (Apply "vectorSize" [v] _)
+  | ArrayT _ [(Const 1 _,n)] _ <- typeRef v, not (isUnconstrained n) = return n
 simplify (Apply s js t) | s == "+" || s == "+s" = do
   block <- get
   case simplifySum block js of

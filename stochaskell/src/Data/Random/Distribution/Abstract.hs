@@ -74,6 +74,7 @@ instance Distribution InvGamma (Double,Double) IO Double where
       x <- gamma a b
       return (1 / x)
 invGamma a b = sample $ InvGamma (a,b)
+lpdfInvGamma x a b = a * log b + (-a - 1) * log x - b / x - logGamma a
 
 newtype Geometric a = Geometric a
 instance Distribution Geometric Double IO Integer where
@@ -86,6 +87,7 @@ geometric 0 p = sample $ Geometric p
 geometric a p = do
   g <- geometric 0 p
   return (fromInteger a + g)
+lpdfGeometric k p = fromInteger k * log (1-p) + log p
 
 newtype LKJ a = LKJ a
 instance Distribution LKJ (Double, Interval Integer) IO (ShapedMatrix Double) where
