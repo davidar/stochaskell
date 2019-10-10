@@ -184,6 +184,7 @@ stanOperators =
   ,("&&",  "&&")
   ,("||",  "||")
   ,("**",  "^")
+  ,("<\\>", "\\")
   ]
 
 stanMatrixOperators =
@@ -207,6 +208,8 @@ stanNode name (Apply "ifThenElse" [a,b,c] _) =
     name ++" = "++ stanNodeRef a ++" ? "++ stanNodeRef b ++" : "++ stanNodeRef c ++";"
 stanNode name (Apply "tr'" [a] _) =
     name ++" = "++ stanNodeRef a ++"';"
+stanNode name (Apply "eye" [n] _) =
+    name ++" = diag_matrix(rep_vector(1,"++ stanNodeRef n ++"));"
 stanNode name (Apply "zeros" [m,n] _) =
     name ++" = rep_matrix(0, "++ stanNodeRef m ++", "++ stanNodeRef n ++");"
 stanNode name (Apply "findSortedInsertIndex" [x,v] _) =

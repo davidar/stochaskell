@@ -94,7 +94,7 @@ jump (x,d,alpha,beta,y) = do
   d' <- mixture' [(1/2, return (d + 1))
                  ,(1/2, return (if d > 1 then d - 1 else d))]
   let beta0 =    vector [ if i <= (d+1) then beta!i else 0 | i <- 1...(d'+1) ] :: RVec
-  beta' <- joint vector [ normal (beta0!i) (sqrt 10)       | i <- 1...(d'+1) ]
+  beta' <- joint vector [ normal (beta0!i) 1 | i <- 1...(d'+1) ]
   return (x,d',alpha,beta',y)
 
 main :: IO ()
@@ -116,7 +116,8 @@ main = do
   loop (1,d0,alpha0,beta0) $ \(t,d,alpha,beta) -> do
     print (t,d,alpha,beta)
     -- 1000 steps of M-H
-    (_,d',alphaMH,betaMH,_) <- chain 1000 (runStep $ model n `mh'` jump) (xData,d,alpha,beta,yData)
+    (_,d',alphaMH,betaMH,_) <- chain 1000 (runStep $ model n `mh'` jump)
+                                     (xData,d,alpha,beta,yData)
     -- 1000 steps of HMC via Stan
     samples <- hmcStanInit 1000 [ (alpha,beta) | (x,alpha,beta,y) <- poly n d',
                                                  x == xData, y == yData ]
@@ -129,11 +130,11 @@ main = do
 plotPoly :: Int -> Z -> RVec -> RVec -> Z -> [(R,RVec)] -> IO ()
 plotPoly t n xData yData d' samples = do
   createDirectoryIfMissing True "poly-figs"
-  toPNG ("poly-figs/"++ show t) . toRenderable $ do
+  toSVG ("poly-figs/"++ show t) . toRenderable $ do
     plot $ points "data" (list xData `zip` list yData)
-    setColors [black `withOpacity` 0.02]
+    setColors [black `withOpacity` 0.05]
     plot $ line ("posterior d="++ show d') $
-      map (sort . zip (list xData) . list . extract) samples
+      map (sort . zip (list xData) . list . extract) $ (samples !!) <$> [0,10..990]
   where design = matrix [ let p = cast (j-1) in (xData!i)**p
                         | i <- 1...n, j <- 1...(d'+1) ]
         extract (_,beta) = design #> beta

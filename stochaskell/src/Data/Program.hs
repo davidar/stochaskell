@@ -752,8 +752,8 @@ lpdf prog vals = subst (substEEnv env') $ pdfPBlock True env' pb - adjust
         p _ _ = True
         jacobian =
           [ [ derivNodeRef env' block r (Var (Volatile ns 0 i) (typePNode d))
-            | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
-          | r <- rets, typeRef r /= IntT ]
+            | (i,d) <- zip [0..] (reverse acts), not (isDiscrete (typePNode d)) ]
+          | r <- rets, not (isDiscrete (typeRef r)) ]
         isLowerTri = and [ isZ `all` drop i row | (i,row) <- zip [1..] jacobian ]
         diagonal = [ row !! i | (i,row) <- zip [0..] jacobian ]
         adjust | isLowerTri = Expression $ sum (logDet <$> diagonal)
@@ -872,13 +872,13 @@ density prog vals = densityPBlock env' pb / adjust
         env = unifyTuple block rets vals Map.empty
         env' = evalBlock block env
         jacobian = [ [ diffNodeRef env' block r (Volatile ns 0 i) (typePNode d)
-                     | (i,d) <- zip [0..] (reverse acts), typePNode d /= IntT ]
-                   | r <- rets, typeRef r /= IntT ]
-        isLowerTri = and [ isZeros `all` drop i row | (i,row) <- zip [1..] jacobian ]
+                     | (i,d) <- zip [0..] (reverse acts), not (isDiscrete (typePNode d)) ]
+                   | r <- rets, not (isDiscrete (typeRef r)) ]
+        upperTri = [ drop i row | (i,row) <- zip [1..] jacobian ]
         diagonal = [ row !! i | (i,row) <- zip [0..] jacobian ]
         ldet = LF.logToLogFloat . real . logDet :: ConstVal -> LF.LogFloat
-        adjust | isLowerTri = product (map ldet diagonal)
-               | otherwise = error "jacobian is not block triangular"
+        adjust | and (all isZeros <$> upperTri) = product (map ldet diagonal)
+               | otherwise = error $ "jacobian is not block triangular: "++ show upperTri
 
 density' :: (ExprTuple t) => P t -> t -> LF.LogFloat
 density' prog vals = densityPBlock env' pb
@@ -950,6 +950,11 @@ densityPNode env block (Dist "uniform" [a,b] _) x =
   where a' = toDouble . fromRight' $!! evalNodeRef env block a
         b' = toDouble . fromRight' $!! evalNodeRef env block b
         x' = toDouble x
+densityPNode env block (Dist "uniforms" [as,bs] _) xs = product
+    [LF.logFloat $ if a <= x && x <= b then 1/(b - a) else 0 | (a,b,x) <- zip3 as' bs' xs']
+  where as' = map toDouble . toList . fromRight' $!! evalNodeRef env block as
+        bs' = map toDouble . toList . fromRight' $!! evalNodeRef env block bs
+        xs' = map toDouble $ toList xs
 densityPNode env block (Dist "discreteUniform" [a,b] _) x =
     LF.logFloat $ if a' <= x' && x' <= b' then 1/fromInteger (b' - a' + 1) else 0
   where a' = toInteger . fromRight' $!! evalNodeRef env block a
@@ -1248,7 +1253,7 @@ rjmcTransRatio' q x y = lu' - lu + logDet jacobian
           let (rets, pb) = runProgExprs ns (q a)
               EEnv env = solveTuple (definitions pb) rets b emptyEEnv
               p (LVar i@(Volatile ns' _ _)) _
-                | ns' == ns, Just pn' <- pn = allowInt || typePNode pn' /= IntT
+                | ns' == ns, Just pn' <- pn = allowInt || not (isDiscrete (typePNode pn'))
                 where pn = Map.lookup i $ pnodes pb
               p _ _ = False
           in EEnv $ Map.filterWithKey p env
@@ -1258,7 +1263,7 @@ rjmcTransRatio' q x y = lu' - lu + logDet jacobian
           let (_,PBlock _ refs _ ns) = runProgExprs "qx" (q x)
           (i,r) <- [0..] `zip` reverse refs
           let t = typePNode r
-          Monad.guard $ t /= IntT
+          Monad.guard $ not (isDiscrete t)
           return $ Var (Volatile ns 0 i) t
         x' = let (rets, pb) = runProgExprs "qx" (q x)
                  tup = toExprTuple $ reDExpr emptyEEnv (definitions pb) <$> rets :: t

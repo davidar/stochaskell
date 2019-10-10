@@ -34,6 +34,7 @@ module Data.Array.Abstract
 import Control.DeepSeq
 import qualified Data.Array.Unboxed as A
 import Data.Ix
+import Data.Maybe
 import Debug.Trace
 import Foreign.Storable (Storable)
 import GHC.Exts
@@ -322,7 +323,10 @@ class SquareMatrix m e | m -> e where
     logDet :: m -> e
 
 instance SquareMatrix (ShapedMatrix Double) Double where
-    chol   (ShMat r c m) = ShMat r c $ (LA.tr . LA.chol . LA.sym) m
+    chol   (ShMat r c m) = ShMat r c $ (LA.tr . fromMaybe err . LA.mbChol . LA.sym) m
+      where (l,v) = LA.eig m
+            err = error $ "chol error (matrix likely not positive definite); "++
+                          "eigenvalues = "++ show l
     inv    (ShMat r c m) = ShMat r c $ LA.inv m
     det    (ShMat _ _ m) = LA.det m
     logDet (ShMat _ _ m) = log_det

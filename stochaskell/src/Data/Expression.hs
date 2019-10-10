@@ -438,6 +438,11 @@ isArrayT :: Type -> Bool
 isArrayT ArrayT{} = True
 isArrayT _ = False
 
+isDiscrete :: Type -> Bool
+isDiscrete IntT = True
+isDiscrete (SubrangeT t _ _) = isDiscrete t
+isDiscrete _ = False
+
 newtype TypeOf t = TypeIs Type deriving (Show)
 -- | Stochaskell interface for native Haskell types
 class ExprType t where
@@ -1026,6 +1031,7 @@ simplify (Apply "*" [x,Const 1 _] _) = return x
 simplify (Apply "/" [x,Const 1 _] _) = return x
 simplify (Apply "<>" [Const c _,_] t) | isZeros c = return $ Const c t
 simplify (Apply "<>" [_,Const c _] t) | isZeros c = return $ Const c t
+simplify (Apply "<\\>" [_,Const c _] t) | isZeros c = return $ Const c t
 simplify (Apply "+" [Const 0 _,x] _) = return x
 simplify (Apply "+" [x,Const 0 _] _) = return x
 simplify (Apply "+" [Const c _,x] _) | isZeros c, not $ isScalar (typeRef x) = return x
@@ -1066,7 +1072,8 @@ simplify (Apply s js t) | s == "+" || s == "+s" = do
                               , f `elem` ["+","+s"] -> simplifySum block js
             _ -> return ref
 simplify (Apply f args t)
-  | Just f' <- Map.lookup f constFuns
+  | f `notElem` ["eye"]
+  , Just f' <- Map.lookup f constFuns
   , Just args' <- sequence (getConstVal <$> args)
   = return $ Const (f' args') t
 simplify (Case Unconstrained{} _ t) = return $ Unconstrained t

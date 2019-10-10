@@ -7,7 +7,7 @@ Maintainer  : d@vidr.cc
 Stability   : experimental
 -}
 module Language.Stochaskell.Plot
-  ( PlotP(..), ToPNG(..)
+  ( PlotP(..), ToImage(..)
   , kde, kde', kdeplot, kdeplot'
   , plotUnder
   , renderAxis2
@@ -29,7 +29,7 @@ import Control.Monad.State
 import Data.Monoid
 import qualified Data.Vector.Generic as V
 import Data.Vector (Vector)
-import Diagrams.Backend.Cairo
+import Diagrams.Backend.Cairo hiding (SVG)
 import qualified Diagrams.Core
 import qualified Diagrams.Path
 import Diagrams.TwoD
@@ -81,16 +81,21 @@ instance PlotP Double where
                                        , let x' = exp x, let y' = y / x'
                                        , y' > 0.01 / support , y' < 10 / support]
 
-class ToPNG a where
+class ToImage a where
   toPNG :: String -> a -> IO ()
+  toSVG :: String -> a -> IO ()
 
-instance ToPNG (Graphics.Rendering.Chart.Renderable.Renderable a) where
+instance ToImage (Graphics.Rendering.Chart.Renderable.Renderable a) where
   toPNG f r = do
     _ <- renderableToFile def (f ++".png") r
     return ()
+  toSVG f r = do
+    _ <- renderableToFile (FileOptions (450,300) SVG) (f ++".svg") r
+    return ()
 
-instance ToPNG (Diagrams.Core.QDiagram Cairo V2 Double Any) where
+instance ToImage (Diagrams.Core.QDiagram Cairo V2 Double Any) where
   toPNG f = renderCairo (f ++".png") $ mkSizeSpec2D (Just 800) (Just 600)
+  toSVG f = renderCairo (f ++".svg") $ mkSizeSpec2D (Just 450) (Just 300)
 
 kdeplot :: String -> Double -> [Double] -> EC (Layout Double Double) ()
 kdeplot s bw vals = plot $ line s [kde bw vals]

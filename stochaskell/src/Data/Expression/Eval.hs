@@ -262,7 +262,8 @@ evalRec (FixE e) = Fix $ fmap evalRec c
 
 unifyTuple :: (ExprTuple t) => Block -> [NodeRef] -> t
            -> Map LVal (ConstVal, Type) -> Map LVal ConstVal
-unifyTuple block rets vals env = Map.map (fromRight' . evalD (Map.map fst env)) eenv'
+unifyTuple block rets vals env = Map.fromList
+  [ (LVar i, fromRight' $ evalD (Map.map fst env) e) | (LVar i, e) <- Map.toAscList eenv' ]
   where eenv = EEnv $ Map.map (uncurry constDExpr) env
         EEnv eenv' = solveTuple block rets vals eenv
 
@@ -461,11 +462,6 @@ toConstraint (k,v) = case k of
 toConstraints :: EEnv -> [DExpr]
 toConstraints (EEnv env) = Map.toAscList env >>= toConstraint
 
-toConstraints' :: EEnv -> DExpr
-toConstraints' env = case toConstraints env of
-  [] -> true
-  cs -> List.foldl1 (&&*) cs
-
 solveCase :: EEnv -> Block -> NodeRef -> [Lambda NodeRef] -> DExpr -> EEnv
 solveCase env block hd alts val = solveCase' 1 env block hd envs
   where envs = [solveNodeRef env (deriveBlock dag block) ret val
@@ -478,10 +474,10 @@ solveCase' offset env block hd envs = unionsEEnv $ do
       cenv = conditionEEnv True (reDExpr env block hd ==* h) $ aggregateLVals env'
       kenv = solveNodeRef env block hd h
       condk = conds !! k
-      bs = filter (true /=) $ take k conds ++ drop (k+1) conds
-  if condk == true then return cenv else if (condk ==) `any` bs then mzero else
-    return $ cenv `unionEEnv` conditionEEnv False condk kenv
-  where conds = toConstraints' <$> envs
+      bs = filter (not . null) $ take k conds ++ drop (k+1) conds
+  if null condk then return cenv else if (condk ==) `any` bs then mzero else
+    return $ cenv `unionEEnv` conditionEEnv False (foldl1 (&&*) condk) kenv
+  where conds = toConstraints <$> envs
 
 firstDiffD :: Z -> Z -> DExpr -> DExpr -> Z
 firstDiffD n def a b = find' p def $ vector (1...n)
@@ -538,6 +534,10 @@ solveNode env block (Apply "<>" [a,b] _) val | evaluable env block a =
   solveNodeRef env block b (reDExpr env block a <\> val)
 solveNode env block (Apply "<>" [a,b] _) val | evaluable env block b =
   solveNodeRef env block a (tr' $ tr' (reDExpr env block b) <\> tr' val)
+solveNode env block (Apply "<\\>" [a,b] _) val | evaluable env block a =
+  case typeRef b of
+    ArrayT _ [_] _   -> solveNodeRef env block b (reDExpr env block a #> val)
+    ArrayT _ [_,_] _ -> solveNodeRef env block b (reDExpr env block a <> val)
 solveNode env block (Apply "quad_form_diag" [m,v] _) val
   | (ArrayT (Just "corr_matrix") _ _) <- typeRef m
   = solveNodeRef env block m m' `unionEEnv` solveNodeRef env block v v'
@@ -742,6 +742,9 @@ derivNode env block (Apply op [a,b] _) var
         g' = derivNodeRef env block b var
 derivNode env block (Apply "#>" [a,b] _) var | evaluable env' block a =
   reDExpr env block a <> derivNodeRef env block b var
+  where env' = filterEEnv (const . (getId var /=) . getId') env
+derivNode env block (Apply "<\\>" [a,b] _) var | evaluable env' block a =
+  reDExpr env block a <\> derivNodeRef env block b var
   where env' = filterEEnv (const . (getId var /=) . getId') env
 derivNode env block (Apply "deleteIndex" [a,j] _) var =
   deleteIndex (derivNodeRef env block a var) (reDExpr env block j)
