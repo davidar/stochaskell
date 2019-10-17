@@ -745,8 +745,10 @@ pdf p = exp . lpdf p
 lpdf :: (ExprTuple t, Show t) => P t -> t -> R
 lpdf prog vals = subst (substEEnv env') $ pdfPBlock True env' pb - adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "lpdf" prog
-        EEnv env = solveTuple block rets vals emptyEEnv
-        env' = EEnv $ Map.filterWithKey p env
+        dummy = constSymbolLike "lpdf_dummy_input" vals
+        EEnv env = solveTuple block rets dummy emptyEEnv
+        env' = EEnv $ Map.insert (LVar $ Symbol "lpdf_dummy_input" True) (erase $ detuple vals)
+                    $ Map.filterWithKey p env
         p (LVar (Volatile "lpdf" _ _)) _ = True
         p LVar{} _ = False
         p _ _ = True
@@ -769,14 +771,21 @@ lpdf prog vals = subst (substEEnv env') $ pdfPBlock True env' pb - adjust
 lpdfAux :: (ExprTuple t, Show t) => P t -> t -> R
 lpdfAux prog vals = subst (substEEnv env') $ pdfPBlock True env' pb
   where (rets, pb) = runProgExprs "lpdfAux" prog
-        EEnv env = solveTuple (definitions pb) rets vals emptyEEnv
-        env' = EEnv $ Map.filterWithKey p env
+        dummy = constSymbolLike "lpdfAux_dummy_input" vals
+        EEnv env = solveTuple (definitions pb) rets dummy emptyEEnv
+        env' = EEnv $ Map.insert (LVar $ Symbol "lpdfAux_dummy_input" True) (erase $ detuple vals)
+                    $ Map.filterWithKey p env
         p (LVar (Volatile "lpdfAux" _ _)) _ = True
         p LVar{} _ = False
         p _ _ = True
 
 lpdfAuxC :: (Constructor t, Show t) => P (Expression t) -> Expression t -> R
 lpdfAuxC = caseOf . lpdfAux
+
+lpdfCond :: (ExprTuple s, ExprTuple t, Show t) => (s -> P t) -> s -> t -> R
+lpdfCond p v x = subst (substEEnv env) $ (lpdf . p) dummy x
+  where dummy = constSymbolLike "lpdfCond_dummy_input" v
+        env = EEnv $ Map.singleton (LVar $ Symbol "lpdfCond_dummy_input" True) (erase $ detuple v)
 
 pdfPBlock :: Bool -> EEnv -> PBlock -> R
 pdfPBlock lg env pb@(PBlock block refs _ ns) = pdfPNodes (pnodes pb) ns lg env block refs
@@ -1290,10 +1299,12 @@ rjmcTransRatio' q x y = lu' - lu + logDet jacobian
 
 -- | sample probabilistic program via Stochaskell's interpreter
 runStep :: forall t. (ExprTuple t) => (t -> P t) -> t -> IO t
-runStep step = trace (showPBlock stepPB $ show stepRets) $ \m ->
+runStep step = trace (("[runStep]\n"++) . showPBlock stepPB $ show stepRets) $ \m ->
   let env = Map.fromList $ (LVar . Dummy 9 <$> [0..]) `zip` fromRight' (evalTuple emptyEnv m)
   in fromConstVals <$> samplePBlock env stepPB stepRets
   where TypesIs ts = typesOf :: TypesOf t
-        dummy = entuple . expr . return $
+        dummy :: t
+        dummy | [t] <- ts = toExprTuple [DExpr . return $ Var (Dummy 9 0) t]
+              | otherwise = entuple . expr . return $
           Data 0 [Var (Dummy 9 i) t | (i,t) <- zip [0..] ts] (TupleT ts)
         (stepRets, stepPB) = runProgExprs "sim" $ step dummy
