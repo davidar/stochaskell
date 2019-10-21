@@ -131,7 +131,7 @@ stepN' t m k state@(z,a,b,eta,ils,cap,n,s,phi) = do
 mhN :: R -> Z -> Z -> State -> P State
 mhN t m k state = debug "mhN" <$> do
   (alpha,state') <- stepN' t m k state
-  let alpha' = mhRatio (ssgcp t m) (stepN t k) state state'
+  let alpha' = rjmc1Ratio (ssgcp t m) (stepN t k) state state'
   accept <- bernoulli (min' 1 $
     0.5 * (debug "N alpha true" alpha + debug "N alpha auto" alpha'))
   return $ if accept then state' else state
@@ -144,7 +144,7 @@ mhS t m idx state@(z,a,b,eta,ils,cap,n,s,phi) = do
       y  = gpTrigPoly t m eta ils z a b (s!idx)
       y' = gpTrigPoly t m eta ils z a b x
       alpha = sigmoid (-y') / sigmoid (-y)
-      alpha' = mhRatio (ssgcp t m) (stepS idx) state state'
+      alpha' = rjmc1Ratio (ssgcp t m) (stepS idx) state state'
   accept <- bernoulli (min' 1 $
     0.5 * (debug "S alpha true" alpha + debug "S alpha auto" alpha'))
   return $ if accept then state' else state

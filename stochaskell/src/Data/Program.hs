@@ -1185,6 +1185,7 @@ chainRange (lo,hi) f x0 = snd <$> chain (hi-lo+1) g (integer lo, x0)
           y <- f i x
           return (i+1,y)
 
+{-
 -- | Metropolis-Hastings inference
 mh :: (ExprTuple r, Show r) => P r -> (r -> P r) -> r -> IO r
 mh = mhAdjust (const $ LF.logFloat 1)
@@ -1201,20 +1202,20 @@ mhAdjust adjust target proposal x = do
   putStrLn $ "acceptance ratio = "++ show b ++" / "++ show c ++" = "++ show a
   accept <- bernoulli $ if a > 1 then 1 else a
   return $ if accept then y else x
+-}
 
--- | like 'mh' but returns a Stochaskell probabilistic program that can be
--- used with 'Language.Stochaskell.compileCC', etc
-mh' :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t)
+-- | like 'rjmc' but assumes the Jacobian factor is equal to one
+rjmc1 :: (ExprType t, ExprTuple t, IfB t, BooleanOf t ~ B, Show t)
     => P t -> (t -> P t) -> t -> P t
-mh' target proposal x = do
-  let a = mhRatio target proposal
+rjmc1 target proposal x = do
+  let a = rjmc1Ratio target proposal
   y <- debug "proposing" <$> proposal x
   accept <- bernoulli (min' 1 (debug "acceptance ratio" $ a x y))
   return $ ifB accept y x
 
--- | compute the M-H acceptance ratio
-mhRatio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R
-mhRatio target proposal x y = optimiseE 2 . subst (substEEnv substEnv) $
+-- | acceptance ratio for 'rjmc1'
+rjmc1Ratio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R
+rjmc1Ratio target proposal x y = optimiseE 2 . subst (substEEnv substEnv) $
   exp $ f y - f x + q y' x' - q x' y'
   where f = lpdf target
         q = lpdfAux . proposal

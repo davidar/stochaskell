@@ -115,8 +115,8 @@ main = do
   -- run the chain
   loop (1,d0,alpha0,beta0) $ \(t,d,alpha,beta) -> do
     print (t,d,alpha,beta)
-    -- 1000 steps of M-H
-    (_,d',alphaMH,betaMH,_) <- chain 1000 (runStep $ model n `mh'` jump)
+    -- 1000 steps of RJMCMC
+    (_,d',alphaMH,betaMH,_) <- chain 1000 (runStep $ model n `rjmc1` jump)
                                      (xData,d,alpha,beta,yData)
     -- 1000 steps of HMC via Stan
     samples <- hmcStanInit 1000 [ (alpha,beta) | (x,alpha,beta,y) <- poly n d',

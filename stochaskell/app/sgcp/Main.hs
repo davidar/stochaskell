@@ -124,7 +124,7 @@ stepN' t k state@(lsv,lls2,cap,n,s,g,phi) = do
 mhN :: R -> Z -> State -> P State
 mhN t k state = debug "mhN" <$> do
   (alpha,state') <- stepN' t k state
-  let alpha' = mhRatio (sgcp t) (stepN t k) state state'
+  let alpha' = rjmc1Ratio (sgcp t) (stepN t k) state state'
   accept <- bernoulli (min' 1 $
     0.5 * (debug "N alpha true" alpha + debug "N alpha auto" alpha'))
   return $ if accept then state' else state
@@ -138,7 +138,7 @@ mhS t idx state@(lsv,lls2,cap,n,s,g,phi) = do
       g' = g `replaceAt` (idx, z)
       state' = (lsv,lls2,cap,n,s',g',phi)
       alpha = sigmoid (-z) / sigmoid (-(g!idx))
-      alpha' = mhRatio (sgcp t) (stepS idx) state state'
+      alpha' = rjmc1Ratio (sgcp t) (stepS idx) state state'
   accept <- bernoulli (min' 1 $
     0.5 * (debug "S alpha true" alpha + debug "S alpha auto" alpha'))
   return $ if accept then state' else state

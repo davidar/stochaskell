@@ -76,7 +76,7 @@ module Language.Stochaskell
   -- * Sampling
   , compileCC, runCC, runStep, simulate
   -- * Inference
-  , hmcStan, hmcStanInit, mh, mh', mhRatio, rjmc, rjmcC
+  , hmcStan, hmcStanInit, rjmc, rjmcC, rjmc1, rjmc1Ratio
 
   -- * Miscellaneous
   , binarize

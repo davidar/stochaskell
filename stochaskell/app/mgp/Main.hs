@@ -145,7 +145,7 @@ stepHMC t n k lmax s noise (kappa,eta0,etas,cs,mu,gs) = do
 
 stepMH :: R -> Z -> Z -> Int -> RVec -> R -> Model -> IO Model
 stepMH t n k lmax s noise m =
-  prior' t n k lmax s noise `mh'` jump t n k lmax s `runStep` m
+  prior' t n k lmax s noise `rjmc1` jump t n k lmax s `runStep` m
 
 step :: R -> Z -> Z -> Int -> RVec -> R -> Model -> IO Model
 step t n k lmax s noise m = do
@@ -191,7 +191,7 @@ main = do
   writeFile "mgp_prior.svg" svg
   svg <- vizIR (jump t n k lmax s' m')
   writeFile "mgp_jump.svg" svg
-  svg <- vizIR ((prior' t n k lmax s' noise `mh'` jump t n k lmax s') m')
+  svg <- vizIR ((prior' t n k lmax s' noise `rjmc1` jump t n k lmax s') m')
   writeFile "mgp_stepmh.svg" svg
   {-
   let m0 = ( 1, 1
