@@ -35,3 +35,6 @@ jupyter: install
 
 %-ipynb: %.ipynb
 	jupyter nbconvert --to notebook --execute $<
+
+%.md: %.ipynb
+	jupyter nbconvert --to markdown $<

@@ -1,5 +1,6 @@
 module Language.Graphviz where
 
+import Data.Char
 import Data.Expression
 import Data.Expression.Const
 import Data.List
@@ -32,24 +33,31 @@ dotConsts r js = unlines $ do
     _ -> []
   where prefix = " [shape=\"plain\" label=\""
 
+dotApply :: Label -> String -> [NodeRef] -> String
+dotApply name f js =
+  name ++" [shape=\"record\" label=\""++ intercalate "|"
+    (if (not . isAlphaNum) `all` f then (head fields : f' : tail fields)
+                                   else (f' : fields)) ++"\"]"
+  where f' = replace "<" "\\<" $ replace ">" "\\>" $ replace "|" "\\" f
+        fields = do
+          (i,j) <- zip [1..] js
+          return $ case j of
+            Var (Symbol s _) _ -> s
+            Const c _ -> show c
+            _ -> "<f"++ show i ++">"
+
 dotNodeRef :: [Label] -> Label -> NodeRef -> String
-dotNodeRef r name (Index j js) =
-  name ++" [label=\"!\"]\n"++
-  dotConsts (r ++ [name]) (j:js)
+dotNodeRef r name (Index j js) = dotApply name "!" (j:js)
 
 dotNode :: [Label] -> Label -> Node -> String
 dotNode _ _ (Apply "getExternal" _ _) = ""
 dotNode r name (Apply "id" [j] _) = dotNodeRef r name j
-dotNode r name (Apply f js _) =
-  name ++" [label=\""++ f ++"\"]\n"++
-  dotConsts (r ++ [name]) js
+dotNode r name (Apply f js _) = dotApply name f js
 dotNode r name (Array sh (Lambda dag ret) _) =
-  unlines [dotConsts (r' ++ [idx j]) [lo,hi]
-          | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   "subgraph cluster_array_"++ name ++" {\n"++ indent (
     "label=\"array\"\n"++
-    unlines [idx j ++" [shape=\"rectangle\" label=\"index "++ show i ++"\"]"
-            | (i,j) <- [1..] `zip` inputs dag] ++"\n"++
+    unlines [dotApply (idx j) ("index "++ show i) [lo,hi]
+            | (i,j,(lo,hi)) <- zip3 [1..] (inputs dag) sh] ++"\n"++
     dotDAG r' dag (Just ret) ++"\n"++
     name ++ sret ++"style=\"bold\"]"
   ) ++"\n}"
@@ -92,9 +100,7 @@ dotDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
   (if typeNode n == UnknownType then name ++" [color=\"red\"]" else "")
 
 dotPNode :: Label -> PNode -> String
-dotPNode name (Dist f js _) =
-  name ++" [shape=\"rectangle\" label=\""++ f ++"\"]\n"++
-  dotConsts [name] js
+dotPNode name (Dist f js _) = dotApply name ("~"++ f) js
 dotPNode name (HODist f (Dist g js _) js' _) =
   name ++" [shape=\"rectangle\" label=\""++ f ++" "++ g ++"\"]\n"++
   dotConsts [name] (js ++ js')
@@ -134,15 +140,25 @@ edgeNodeRefs r name js = "{"++ unwords (do
     Const c _ -> dotConst (r ++ [name]) c
   ) ++"} -> "++ name ++" [style=\"solid\"]"
 
+edgeApply :: [Label] -> Label -> [NodeRef] -> String
+edgeApply r name js = unlines $ do
+  (i,j) <- zip [1..] js
+  let sj = case j of
+        Var (Symbol s _) _ -> ""
+        Var i _ -> dotId r i
+        Const c _ -> ""
+  if null sj then [] else return $
+    sj ++" -> "++ name ++":f"++ show i ++" [style=\"solid\"]"
+
 edgeNodeRef :: [Label] -> Label -> NodeRef -> String
-edgeNodeRef r name (Index j js) = edgeNodeRefs r name (j:js)
+edgeNodeRef r name (Index j js) = edgeApply r name (j:js)
 
 edgeNode :: [Label] -> Label -> Node -> String
 edgeNode _ _ (Apply "getExternal" _ _) = ""
 edgeNode r name (Apply "id" [j] _) = edgeNodeRef r name j
-edgeNode r name (Apply f js _) = edgeNodeRefs r name js
+edgeNode r name (Apply f js _) = edgeApply r name js
 edgeNode r name (Array sh (Lambda dag ret) _) =
-  unlines [edgeNodeRefs r' (idx j) [lo,hi]
+  unlines [edgeApply r' (idx j) [lo,hi]
           | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   edgeDAG r' dag (Just ret)
   where r' = r ++ [name]
@@ -165,7 +181,7 @@ edgeDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
   in edgeNode r name n
 
 edgePNode :: Label -> PNode -> String
-edgePNode name (Dist f js _) = edgeNodeRefs [name] name js
+edgePNode name (Dist f js _) = edgeApply [name] name js
 edgePNode name (Loop sh (Lambda dag body) _) =
   unlines [edgeNodeRefs r' (dotId r' j) [lo,hi]
           | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
