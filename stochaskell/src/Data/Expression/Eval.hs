@@ -188,8 +188,8 @@ evalNode env block (Apply "poissonProcess_lpdf" [y,_,Var i _,mean] _) = do
   rates <- sequence $ evalFn1 env block lam <$> toList y'
   mean' <- evalNodeRef env block mean
   return $ sum (log <$> rates) - mean'
-evalNode env block (Apply "unfold" [seed] _) = do
-  let lam = head [lam | LUnfold lam <- Map.keys env]
+evalNode env block (Apply s [seed] _) | s `elem` ["fold", "unfold"] = do
+  let [lam] = [lam | LBind name lam <- Map.keys env, name == s]
       f = evalFn1 env block lam
   r <- evalNodeRef env block seed
   f r
@@ -224,8 +224,11 @@ evalNode env block (Case hd alts _) = do
   case rets of
     [ret] -> return ret
     _ -> return $ Tagged 0 rets
-evalNode env block (Unfold lam seed _) = do
-  let env' = Map.insert (LUnfold lam) 0 env
+evalNode env block (RecursionScheme m lam seed _) = do
+  let name = case m of
+        Anamorphism -> "unfold"
+        Catamorphism -> "fold"
+      env' = Map.insert (LBind name lam) 0 env
       f = evalFn1 env' block lam
   r <- evalNodeRef env block seed
   f r

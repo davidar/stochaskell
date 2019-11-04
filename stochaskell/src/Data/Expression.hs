@@ -158,6 +158,7 @@ data Lambda h = Lambda { fDefs :: DAG, fHead :: h } deriving (Eq, Ord, Show)
 
 data FoldOrScan = Fold | Scan | ScanRest deriving (Eq, Ord, Show)
 data LeftRight = Left_ | Right_ deriving (Eq, Ord, Show)
+data Morphism = Anamorphism | Catamorphism deriving (Eq, Ord, Show)
 
 data Node = Apply { fName :: String
                   , fArgs :: [NodeRef]
@@ -179,9 +180,10 @@ data Node = Apply { fName :: String
                   , cAlts :: [Lambda [NodeRef]]
                   , typeNode :: Type
                   }
-          | Unfold
-                  { uFunc :: Lambda NodeRef
-                  , uSeed :: NodeRef
+          | RecursionScheme
+                  { mKind :: Morphism
+                  , mFunc :: Lambda NodeRef
+                  , mSeed :: NodeRef
                   , typeNode :: Type
                   }
           | Function
@@ -229,8 +231,8 @@ instance Show Node where
                     | otherwise = "C"++ show i ++" "++ unwords (map show $ inputs dag)
                 rhs = indent (showLet dag ret)
             return $ lhs ++" ->\n"++ rhs
-  show (Unfold (Lambda dag hd) seed _) =
-    "unfold "++ show seed ++" $ \\"++ show (head $ inputs' dag) ++" ->\n"++
+  show (RecursionScheme k (Lambda dag hd) seed _) =
+    show k ++" "++ show seed ++" $ \\"++ show (head $ inputs' dag) ++" ->\n"++
       indent (showLet dag hd)
   show (Function (Lambda dag hd) _) =
     "\\"++ unwords (show <$> inputs' dag) ++" ->\n"++
@@ -306,7 +308,7 @@ data LVal = LVar Id
           | LField Id Type Tag Int
           | LCond Bool LVal DExpr
           | LConstr DExpr
-          | LUnfold (Lambda NodeRef)
+          | LBind String (Lambda NodeRef)
           deriving (Eq, Ord, Show)
 
 getId' :: LVal -> Maybe Id
@@ -1312,7 +1314,7 @@ stickNode dag a = case a of
     varies dag [sd,ls] || variesLambda dag lam
   Case hd alts _ ->
     varies dag [hd] || variesLambda' dag `any` alts
-  Unfold lam sd _ ->
+  RecursionScheme _ lam sd _ ->
     varies dag [sd] || variesLambda dag lam
   Function lam _ ->
     variesLambda dag lam
