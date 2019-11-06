@@ -75,8 +75,9 @@ data PNode = Dist { dName :: String
                     , cNS :: NS
                     , typePNode :: Type
                     }
-           | UnfoldP
-                    { uAux :: [PNode]
+           | RecursionSchemeP
+                    { uKind :: Morphism
+                    , uAux :: [PNode]
                     , uFunc :: Lambda NodeRef
                     , uSeed :: NodeRef
                     , uNS :: NS
@@ -154,8 +155,8 @@ instance Show PNode where
     "chain "++ show range ++" "++ show x ++" $ \\"++ show i ++" "++ show j ++" ->\n"++
       (indent . showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret)
     where [i,j] = inputs' dag
-  show (UnfoldP refs (Lambda dag ret) seed ns _) =
-    "unfoldP "++ show seed ++" $ \\"++ show i ++" ->\n"++
+  show (RecursionSchemeP k refs (Lambda dag ret) seed ns _) =
+    show k ++"P "++ show seed ++" $ \\"++ show i ++" ->\n"++
       (indent . showLet' dag . showPNodes ns (dagLevel dag) refs $ show ret)
     where [i] = inputs' dag
 
@@ -300,6 +301,30 @@ chainRange' (lo,hi) p x = fmap entuple . dist' $ \ns -> do
 chain' :: (ExprTuple t) => Z -> (t -> P t) -> t -> P t
 chain' n p = chainRange' (1,n) (const p)
 
+foldP :: forall t f.
+  (Traversable f, Constructor (f (FixE f)), ExprTuple t, ExprType (f (FixE f)), ExprType (f t))
+  => (Expression (f t) -> P t) -> FixE' f -> P t
+foldP f r = fmap entuple . dist' $ \ns -> do
+  seed <- fromExpr r
+  block <- get
+  d <- gets nextLevel
+  let i = Dummy 99 0
+      s = typeRef seed
+      g :: FixE f -> P t
+      g x = fmap entuple . dist $ do
+        i <- fromExpr (unfixE x)
+        return $ Dist "fold" [i] RecursiveT
+      q :: P (Expression t)
+      q = do
+        z <- fromCaseP (fmap fromConcrete . traverse g) . expr . return $ Var i s
+        y <- f z
+        return $ detuple y
+      TypeIs t = typeOf :: TypeOf t
+  (lam, racts) <- runLambdaP ns [(i,s)] $ do
+    z <- fromProg q
+    liftExprBlock $ fromExpr z
+  return $ RecursionSchemeP Catamorphism racts lam seed ns t
+
 unfoldP :: forall t f.
   (Traversable f, Constructor (f t), ExprTuple t, ExprType (f (FixE f)), ExprType (f t))
   => (t -> P (Expression (f t))) -> t -> P (FixE' f)
@@ -313,15 +338,15 @@ unfoldP f r = dist' $ \ns -> do
       g x = fmap FixE . dist $ do
         i <- fromExpr (detuple x)
         return $ Dist "unfold" [i] RecursiveT
-      q :: P (Expression (f (FixE f)))
+      q :: P (FixE' f)
       q = do
         y <- f (entuple . expr . return $ Var i s)
         fromCaseP (fmap fromConcrete . traverse g) y
-      TypeIs t = typeOf :: TypeOf (Expression (f (FixE f)))
+      TypeIs t = typeOf :: TypeOf (FixE' f)
   (lam, racts) <- runLambdaP ns [(i,s)] $ do
     z <- fromProg q
     liftExprBlock $ fromExpr z
-  return $ UnfoldP racts lam seed ns t
+  return $ RecursionSchemeP Anamorphism racts lam seed ns t
 
 -- | creates a mixture distribution, eg.
 --
@@ -1110,7 +1135,7 @@ samplePNode ctx (Dist "wishart" [n,v] _) = fromMatrix <$> wishart n' v'
   where n' = toInteger $ evalNodeRef' ctx n
         v' = toMatrix $ evalNodeRef' ctx v
 
-samplePNode ctx@(_,_,Just (ns,refs,lam)) (Dist "unfold" [seed] _) =
+samplePNode ctx@(_,_,Just (ns,refs,lam)) (Dist d [seed] _) | d `elem` ["fold","unfold"] =
   sampleLambda ctx ns refs lam [seed']
   where seed' = evalNodeRef' ctx seed
 
@@ -1141,7 +1166,7 @@ samplePNode ctx (Chain (lo,hi) refs lam x ns _) =
         x' = evalNodeRef' ctx x
         f i x = sampleLambda ctx ns refs lam [i,x]
 
-samplePNode ctx@(env,block,_) (UnfoldP refs lam seed ns _) =
+samplePNode ctx@(env,block,_) (RecursionSchemeP _ refs lam seed ns _) =
   sampleLambda ctx' ns refs lam [seed']
   where seed' = evalNodeRef' ctx seed
         ctx' = (env, block, Just (ns,refs,lam))

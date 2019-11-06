@@ -156,6 +156,7 @@ extractType env block = go where
     UnionT tss -> do
       tss' <- sequence $ mapM go <$> tss
       return $ UnionT tss'
+    RecursiveT -> return RecursiveT
     UnknownType -> return UnknownType
   f :: (Traversable t) => t NodeRef -> State Block (t NodeRef)
   f t = sequence $ extractNodeRef simplifyNodeRef simplify env block <$> t

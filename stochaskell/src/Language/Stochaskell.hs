@@ -67,7 +67,7 @@ module Language.Stochaskell
   , lpdfGamma, lpdfNegBinomial, lpdfNormal, lpdfPoisson
   , lpdfUniform, lpdfDiscreteUniform
   -- ** Transformers
-  , mixture, mixture', truncated, unfoldP
+  , mixture, mixture', truncated, foldP, unfoldP
   -- ** Iteration
   , chain', chainRange'
   -- ** Pre-defined probabilistic programs

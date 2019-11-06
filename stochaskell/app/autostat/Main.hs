@@ -45,27 +45,34 @@ instance (ExprType t) => ExprType    (KernelProposal (Expression t))
 instance (ExprType t) => Constructor (KernelProposal (Expression t))
 type KP = FixE' KernelProposal
 
-proposal :: K -> P KP
-proposal = unfoldP (fromCaseP f) where
+proposalRaise :: K -> P KP
+proposalRaise = unfoldP (fromCaseP f) where
   f :: Kernel (FixE Kernel) -> P (Expression (KernelProposal K))
   f k@(SumK a b) = mixture'
-    [(0.50, resample)
+    [(0.50, return . fromConcrete $ Update (fromConcrete k))
     ,(0.25, return . fromConcrete $ SumLeft  (unfixE a) (unfixE b))
     ,(0.25, return . fromConcrete $ SumRight (unfixE a) (unfixE b))
     ]
   f k@(ProductK a b) = mixture'
-    [(0.50, resample)
+    [(0.50, return . fromConcrete $ Update (fromConcrete k))
     ,(0.25, return . fromConcrete $ ProductLeft  (unfixE a) (unfixE b))
     ,(0.25, return . fromConcrete $ ProductRight (unfixE a) (unfixE b))
     ]
-  f k = resample
-  resample :: P (Expression (KernelProposal K))
-  resample = do
+  f k = return . fromConcrete $ Update (fromConcrete k)
+
+proposalUpdate :: KP -> P KP
+proposalUpdate = foldP (fromCaseP f) where
+  f :: KernelProposal KP -> P KP
+  f Update{} = do
     k <- prior
     return . fromConcrete $ Update k
+  f (SumLeft  a b) = return . fromConcrete $ SumLeft (FixE a) b
+  f (SumRight a b) = return . fromConcrete $ SumRight a (FixE b)
+  f (ProductLeft  a b) = return . fromConcrete $ ProductLeft (FixE a) b
+  f (ProductRight a b) = return . fromConcrete $ ProductRight a (FixE b)
 
-flattenProposal :: KP -> K
-flattenProposal = foldE (fromCase f) where
+proposalLower :: KP -> K
+proposalLower = foldE (fromCase f) where
   f :: KernelProposal K -> K
   f (Update k) = k
   f (SumLeft  a b) = fromConcrete $ SumK (FixE a) (FixE b)
@@ -74,8 +81,11 @@ flattenProposal = foldE (fromCase f) where
   f (ProductRight a b) = fromConcrete $ ProductK (FixE a) (FixE b)
 
 main = do
-  k <- simulate prior
-  print k
-  k' <- simulate (proposal k)
-  print k'
-  print (flattenProposal k')
+  k0 <- simulate prior
+  print k0
+  kp0 <- simulate (proposalRaise k0)
+  print kp0
+  kp1 <- simulate (proposalUpdate kp0)
+  print kp1
+  let k1 = proposalLower kp1
+  print k1
