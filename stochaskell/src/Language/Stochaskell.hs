@@ -87,6 +87,7 @@ module Language.Stochaskell
   , deepseq
   , fromCase
   , fromCaseP
+  , fromCaseP'
   , fromRight'
   , interpolate
   , iterateLimit

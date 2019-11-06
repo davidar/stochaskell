@@ -246,8 +246,8 @@ runLambdaP ns ids s = do
   put $ Block block'
   return (Lambda dag ret, reverse acts)
 
-caseP :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
-caseP n e ps = P $ do
+switch :: Int -> DExpr -> [[DExpr] -> P [DExpr]] -> P [DExpr]
+switch n e ps = P $ do
   k <- liftExprBlock $ fromDExpr e
   case k of
     Data c args _ -> do
@@ -255,10 +255,10 @@ caseP n e ps = P $ do
       let p = ps !! c
           args' = reDExpr emptyEEnv block <$> args
       fromProg $ p args'
-    _ -> fromProg $ caseP' n k ps
+    _ -> fromProg $ switch' n k ps
 
-caseP' :: Int -> NodeRef -> [[DExpr] -> P [DExpr]] -> P [DExpr]
-caseP' n k ps = distDs n $ \ns -> do
+switch' :: Int -> NodeRef -> [[DExpr] -> P [DExpr]] -> P [DExpr]
+switch' n k ps = distDs n $ \ns -> do
   d <- getNextLevel
   let tss = case typeRef k of
         UnionT t -> t
@@ -273,13 +273,30 @@ caseP' n k ps = distDs n $ \ns -> do
   return $ Switch k cases ns (tupleT . foldr1 (zipWith E.coerce) $ map typeRef . fHead . fst <$> cases)
 
 fromCaseP :: forall c t. (Constructor c, ExprTuple t) => (c -> P t) -> Expression c -> P t
-fromCaseP p e = toExprTuple <$> caseP n (erase e)
+fromCaseP p e = toExprTuple <$> switch n (erase e)
   [fmap fromExprTuple . p . construct Expression c | c <- cs]
   where Tags cs = tags :: Tags c
         TupleSize n = tupleSize :: TupleSize t
 
 switchOf :: (Constructor c, ExprTuple t) => (Expression c -> P t) -> Expression c -> P t
 switchOf f = fromCaseP (f . fromConcrete)
+
+caseP :: DExpr -> [[DExpr] -> P [DExpr]] -> P DExpr
+caseP e ps = P $ do
+  k <- liftExprBlock $ fromDExpr e
+  let UnionT tss = typeRef k
+  fromProg $ do
+    cases <- sequence $ do
+      (tag,ts,p) <- zip3 [0..] tss ps
+      let args = [DExpr . return $ Extract k tag j | (j,t) <- zip [0..] ts]
+      return $ p args
+    return $ caseD e (map const cases)
+
+fromCaseP' :: forall c t. (Constructor c, ExprTuple t) => (c -> P t) -> Expression c -> P t
+fromCaseP' p e = toExprTuple . entupleD n <$> caseP (erase e)
+  [fmap fromExprTuple . p . construct Expression c | c <- cs]
+  where Tags cs = tags :: Tags c
+        TupleSize n = tupleSize :: TupleSize t
 
 -- | iterate a Markov chain over the given integer range, eg.
 --
@@ -354,7 +371,7 @@ unfoldP f r = dist' $ \ns -> do
 mixture :: forall t. (ExprTuple t) => [(R, P t)] -> P t
 mixture qps = do
   k <- pmf qv :: P Z
-  toExprTuple <$> caseP n (erase k) (const . fmap fromExprTuple <$> progs)
+  toExprTuple <$> switch n (erase k) (const . fmap fromExprTuple <$> progs)
   where (qs,progs) = unzip qps
         qv = blockVector [cast q | q <- qs] :: RVec
         TupleSize n = tupleSize :: TupleSize t

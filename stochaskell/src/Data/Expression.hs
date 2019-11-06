@@ -910,6 +910,7 @@ dependsNodeRef block ref = dependsType block (typeRef ref) `Set.union` go ref wh
     Set.insert i . dependsNode block $ lookupBlock i block
   go (Var i _) = Set.singleton i
   go (Const _ _) = Set.empty
+  go (Data _ js _) = Set.unions $ go <$> js
   go (BlockArray a _) = Set.unions $ go <$> A.elems a
   go (Index a i) = Set.unions $ go <$> (a:i)
   go (Extract r _ _) = go r
@@ -943,6 +944,7 @@ dependsType block = go where
     go t : [dependsNodeRef block a `Set.union` dependsNodeRef block b | (a,b) <- sh]
   go (TupleT ts) = Set.unions $ go <$> ts
   go (UnionT tss) = Set.unions [go t | ts <- tss, t <- ts]
+  go RecursiveT = Set.empty
   go UnknownType = Set.empty
 
 dependsD :: DExpr -> Set Id
