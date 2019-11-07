@@ -66,6 +66,11 @@ extractNodeRef fNodeRef fNode env block = go where
       v' <- go v
       i' <- sequence $ go <$> i
       fNodeRef $ Index v' i'
+    TagOf d -> do
+      d' <- go d
+      fNodeRef $ case d' of
+        Data k _ _ -> Const (integer k) IntT
+        _ -> TagOf d'
     Extract d c i -> do
       d' <- go d
       fNodeRef $ case d' of

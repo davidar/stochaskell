@@ -375,13 +375,30 @@ aggregateFields (EEnv env) = EEnv $ Map.union env' env
         env' = Map.fromList $ do
           kvs <- kvss
           let id = unreplicate $ mapMaybe (getId' . fst) kvs
-          unless (and [c == 0 | (LField _ _ c _,_) <- kvs]) $ error "not a tuple"
-          if and [i == j | ((LField _ _ _ i,_),j) <- zip kvs [0..]] then
+          if not (and [c == 0 | (LField _ _ c _,_) <- kvs]) then
+            aggregateFields' env id kvs
+          else if and [i == j | ((LField _ _ _ i,_),j) <- zip kvs [0..]] then
             let val = DExpr $ do
                   js <- sequence $ fromDExpr . snd <$> kvs
                   return $ Data 0 js (TupleT $ typeRef <$> js)
             in return (LVar id, val)
           else trace ("WARN missing fields: only have "++ show (fst <$> kvs)) mzero
+
+aggregateFields' env id kvs
+  | null tags = trace ("WARN tag unspecified for "++ show id) mzero
+  | otherwise = return (LVar id, caseD tage (const . return <$> cases)) where
+  tags = [(e,t) | (LTag i t, e) <- Map.toAscList env, i == id]
+  (tage, UnionT ts) = unreplicate tags
+  numAlts = length ts
+  cases = do
+    tag <- [0..numAlts-1]
+    let fields = [kv | kv@(LField _ _ c _,_) <- kvs, c == tag]
+    if and [i == j | ((LField _ _ _ i,_),j) <- zip fields [0..]] then
+      return . DExpr $ do
+        js <- sequence $ fromDExpr . snd <$> fields
+        return $ Data tag js (TupleT $ typeRef <$> js)
+    else trace ("WARN missing fields for tag "++ show tag ++": "++
+                "only have "++ show (fst <$> kvs)) $ return (unconstrained UnknownType)
 
 aggregateConds :: EEnv -> EEnv
 aggregateConds (EEnv env) = EEnv $ Map.union env' env
@@ -437,6 +454,8 @@ solveNodeRef env block (Data c rs _) val = unionsEEnv
   [solveNodeRef env block r $ extractD val c j | (r,j) <- zip rs [0..]]
 solveNodeRef env block (Index (Var i _) js) val | not (isInternal i) =
   EEnv $ Map.singleton (LSub i $ reDExpr env block <$> js) val
+solveNodeRef _ _ (TagOf (Var i t)) val | not (isInternal i) =
+  EEnv $ Map.singleton (LTag i t) val
 solveNodeRef _ _ (Extract (Var i t) c j) val | not (isInternal i) =
   EEnv $ Map.singleton (LField i t c j) val
 solveNodeRef env block (Extract (Var i@Internal{} _) 0 j) val
@@ -605,8 +624,11 @@ solveNode env block (FoldScan ScanRest Left_ (Lambda dag ret) seed ls _) val
         f' x y = let env' = insertEEnv j x env
                  in fromJust . lookupEEnv i $ solveNodeRef env' block' ret y
 solveNode _ _ (FoldScan Fold _ _ _ _ _) _ = trace "WARN assuming fold = val" emptyEEnv
-solveNode env block (Case hd alts _) val | IntT <- typeRef hd, Lambda _ [_] <- head alts =
-  solveCase env block hd [Lambda dag ret | Lambda dag [ret] <- alts] val
+solveNode env block (Case hd alts _) val | Lambda _ [_] <- head alts =
+  case typeRef hd of
+    IntT -> solveCase env block hd [Lambda dag ret | Lambda dag [ret] <- alts] val
+    _ -> solveCase' 0 env block (TagOf hd)
+          [solveNodeRef env (deriveBlock dag block) ret val | Lambda dag [ret] <- alts]
 solveNode _ _ (Apply "findSortedInsertIndex" _ _) _ = emptyEEnv
 solveNode env (Block dags) n v = error $
   "solveNode:\n"++ showBlock dags (show n) ++"\n=\n"++ show v ++"\nwith env:\n"++ show env

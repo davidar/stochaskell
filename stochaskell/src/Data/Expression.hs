@@ -69,6 +69,7 @@ data NodeRef = Var Id Type
              | Data Tag [NodeRef] Type
              | BlockArray (A.Array [Int] NodeRef) Type
              | Index NodeRef [NodeRef]
+             | TagOf NodeRef
              | Extract NodeRef Tag Int
              -- conditions are assumed to be mutually exclusive (ie. unordered)
              | Cond [(NodeRef,NodeRef)] Type
@@ -146,6 +147,7 @@ instance Show NodeRef where
   show i | isBlockMatrix i = "block"++ show (fromBlockMatrix i)
   show (BlockArray a t) = "(block "++ show a ++" :: "++ show t ++")"
   show (Index f js) = intercalate "!" (show f : map show (reverse js))
+  show (TagOf v) = show v ++".?"
   show (Extract v i j) = show v ++"."++ show i ++"_"++ show j
   show (Cond cvs _) = "{ "++ f `commas` cvs ++" }"
     where f (c,v) = show c ++" => "++ show v
@@ -305,6 +307,7 @@ instance Show DExpr where
 
 data LVal = LVar Id
           | LSub Id [DExpr]
+          | LTag Id Type
           | LField Id Type Tag Int
           | LCond Bool LVal DExpr
           | LConstr DExpr
@@ -775,6 +778,8 @@ coerce IntT RealT = RealT
 coerce RealT IntT = RealT
 coerce (SubrangeT s _ _) t = coerce s t
 coerce t (SubrangeT s _ _) = coerce s t
+coerce RecursiveT t@UnionT{} = t
+coerce t@UnionT{} RecursiveT = t
 coerce a@(ArrayT _ _ t) t' | t == t' = a
 coerce t a@(ArrayT _ _ t') | t == t' = a
 coerce (ArrayT Nothing sh t) (ArrayT n sh' t')
@@ -913,6 +918,7 @@ dependsNodeRef block ref = dependsType block (typeRef ref) `Set.union` go ref wh
   go (Data _ js _) = Set.unions $ go <$> js
   go (BlockArray a _) = Set.unions $ go <$> A.elems a
   go (Index a i) = Set.unions $ go <$> (a:i)
+  go (TagOf r) = go r
   go (Extract r _ _) = go r
   go Unconstrained{} = Set.empty
   go r = error $ "dependsNodeRef "++ show r

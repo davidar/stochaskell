@@ -46,8 +46,10 @@ instance (ExprType t) => Constructor (KernelProposal (Expression t))
 type KP = FixE' KernelProposal
 
 proposalRaise :: K -> P KP
-proposalRaise = unfoldP (fromCaseP f) where
-  f :: Kernel (FixE Kernel) -> P (Expression (KernelProposal K))
+proposalRaise = unfoldP proposalRaise'
+
+proposalRaise' :: K -> P (Expression (KernelProposal K))
+proposalRaise' = fromCaseP' f where
   f k@(SumK a b) = mixture'
     [(0.50, return . fromConcrete $ Update (fromConcrete k))
     ,(0.25, return . fromConcrete $ SumLeft  (unfixE a) (unfixE b))
@@ -61,7 +63,10 @@ proposalRaise = unfoldP (fromCaseP f) where
   f k = return . fromConcrete $ Update (fromConcrete k)
 
 proposalUpdate :: KP -> P KP
-proposalUpdate = foldP (fromCaseP f) where
+proposalUpdate = foldP proposalUpdate'
+
+proposalUpdate' :: Expression (KernelProposal KP) -> P KP
+proposalUpdate' = fromCaseP' f where
   f :: KernelProposal KP -> P KP
   f Update{} = do
     k <- prior
@@ -89,3 +94,5 @@ main = do
   print kp1
   let k1 = proposalLower kp1
   print k1
+  print proposalRaise'
+  print $ lpdfAux (proposalRaise' $ symbol "k")
