@@ -9,7 +9,7 @@ Stability   : experimental
 module Language.Stochaskell.Plot
   ( PlotP(..), ToImage(..)
   , kde, kde', kdeplot, kdeplot'
-  , plotUnder
+  , plotHist, plotUnder, plotpdf
   , renderAxis2
   , xlabel, xlim, ylabel, ylim
   -- * Re-exports
@@ -55,16 +55,19 @@ instance PlotP Integer where
     samples <- sequence [simulate p | i <- [1..n]]
     let a = minimum samples
         b = maximum samples
-    return $ do
-      col <- takeColor
-      plot . return . histToPlot $ defaultNormedPlotHist
-        { _plot_hist_title = title
-        , _plot_hist_values = integer <$> samples
-        , _plot_hist_range = Just (integer a, integer b)
-        , _plot_hist_bins = integer (b-a)
-        , _plot_hist_fill_style = FillStyleSolid $ dissolve 0.1 col
-        , _plot_hist_line_style = defaultPlotLineStyle { _line_color = col }
-        }
+    return $ plotHist title (integer <$> samples) (integer a, integer b) 1
+
+plotHist :: String -> [Double] -> (Double, Double) -> Double -> EC (Layout Double Double) ()
+plotHist title vals (a,b) bin = do
+  col <- takeColor
+  plot . return . histToPlot $ defaultNormedPlotHist
+    { _plot_hist_title = title
+    , _plot_hist_values = vals
+    , _plot_hist_range = Just (a,b)
+    , _plot_hist_bins = round ((b - a) / bin)
+    , _plot_hist_fill_style = FillStyleSolid $ dissolve 0.1 col
+    , _plot_hist_line_style = defaultPlotLineStyle { _line_color = col }
+    }
 
 instance PlotP Double where
   plotP p n title = do
@@ -123,6 +126,10 @@ plotUnder title values = do
     plot_lines_title .= title
     plot_lines_values .= [values]
     plot_lines_style . line_color .= col
+
+plotpdf :: String -> P R -> (Double, Double) -> EC (Layout Double Double) ()
+plotpdf title prog (a,b) =
+  plotUnder title [(x, exp . real . lpdf prog $ real x) | x <- linspace (a,b) 256]
 
 renderAxis2 :: State (Axis Cairo V2 Double) ()
             -> Diagrams.Core.QDiagram Cairo V2 Double Any
