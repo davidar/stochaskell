@@ -3,6 +3,7 @@
 module Main where
 import Language.Stochaskell
 import Language.Stochaskell.Plot
+import System.Directory
 
 noise = 1e-3
 
@@ -204,6 +205,8 @@ main = do
       xs = [0.5*x | x <- [0..100]]
   state <- initialise t m dat
   stepMH' <- compileCC $ stepMH t m k
+  --let stepMH' = runStep $ stepMH t m k
+  createDirectoryIfMissing True "ssgcp-figs"
   (_, accum) <- flip (chainRange (1,300)) (state,[]) $ \iter (state, accum) -> do
     putStrLn $ "*** CURRENT STATE: "++ show state
 
