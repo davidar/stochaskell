@@ -419,7 +419,8 @@ aggregateConds' (EEnv env) = EEnv $ Map.union env' env
           kvs <- kvss
           let lval = unreplicate [l | (LCond _ l _,_) <- kvs]
               conds = do
-                kvs' <- groupBy (\a b -> snd a == snd b) kvs
+                kvs' <- groupBy (\a b -> snd a == snd b) $
+                         sortBy (\a b -> snd a `compare` snd b) kvs
                 let val = unreplicate $ snd <$> kvs'
                     cs = [c | (LCond _ _ c,_) <- kvs']
                 return (foldr1 (&&*) cs, val)
