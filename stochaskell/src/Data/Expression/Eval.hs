@@ -194,6 +194,10 @@ evalNode env block (Apply s [seed] _) | s `elem` ["fold", "unfold"] = do
       f = evalFn1 env block lam
   r <- evalNodeRef env block seed
   f r
+evalNode env block n@(Apply fn args _) | fn `elem` ["&&","&&s"] = evalContext (show n) $
+  foldl1 f (evalNodeRef env block <$> args)
+  where f a@Left{} _ = a
+        f (Right a) b = if toBool a then b else Right false
 evalNode env block n@(Apply fn args _) = evalContext (show n) $ do
   js <- sequence (evalNodeRef env block <$> args)
   unsafeCatch $ f js
