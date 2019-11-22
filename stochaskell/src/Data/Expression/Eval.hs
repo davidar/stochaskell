@@ -150,7 +150,8 @@ evalNodeRef env block m | isBlockMatrix m = do
 evalNodeRef env block r@(Cond cvs _) = case sequence (evalNodeRef env block <$> cs) of
   Left e -> Left $ "while evaluating condition of "++ show r ++":\n"++ indent e
   Right cs' | length (filter (1 ==) cs') /= 1 ->
-              Left $ "zero or multiple true conditions in "++ show r ++" ("++ show cs' ++")\n"++
+              Left $ "zero or multiple true conditions ("++ show cs' ++") in "++
+                     showNodeRefDeep block r ++"\n"++
                      "where env = "++ show env
             | otherwise -> case evalNodeRef env block (fromJust . lookup 1 $ zip cs' vs) of
                 Left e -> Left $ "while evaluating value of "++ show r ++":\n"++ indent e

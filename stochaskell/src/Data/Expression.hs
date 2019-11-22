@@ -136,25 +136,35 @@ symbols :: (ExprType t) => String -> [Expression t]
 symbols names = symbol . return <$> names
 
 instance Show NodeRef where
-  --show (Var i t) = "("++ show i ++" :: "++ show t ++")"
-  show (Var i _) = show i
-  show (Const c _) | isInfinite c = show (real c)
-  show (Const c IntT) = show (integer c)
-  show (Const c RealT) = show (real c)
-  --show (Const c t) = "("++ show c ++" :: "++ show t ++")"
-  show (Const c _) = show c
-  show (Data c rs t) = "(C"++ show c ++ show rs ++" :: "++ show t ++")"
-  show i | isBlockMatrix i = "block"++ show (fromBlockMatrix i)
-  show (BlockArray a t) = "(block "++ show a ++" :: "++ show t ++")"
-  show (Index f js) = intercalate "!" (show f : map show (reverse js))
-  show (TagOf v) = show v ++".?"
-  show (Extract v i j) = show v ++"."++ show i ++"_"++ show j
-  show (Cond cvs _) = "{ "++ f `commas` cvs ++" }"
-    where f (c,v) = show c ++" => "++ show v
-  show (Unconstrained _) = "???"
-  show (PartiallyConstrained sh ids kvs _) =
+  show = showNodeRef show
+
+showNodeRef :: (NodeRef -> String) -> NodeRef -> String
+showNodeRef show' = go where
+  --go (Var i t) = "("++ show i ++" :: "++ showType show' t ++")"
+  go (Var i _) = show i
+  go (Const c _) | isInfinite c = show (real c)
+  go (Const c IntT) = show (integer c)
+  go (Const c RealT) = show (real c)
+  --go (Const c t) = "("++ show c ++" :: "++ showType show' t ++")"
+  go (Const c _) = show c
+  go (Data c rs t) = "(C"++ show c ++ unwords (map show' rs) ++" :: "++ showType show' t ++")"
+  go i | isBlockMatrix i = "block"++ show (fromBlockMatrix i)
+  go (BlockArray a t) = "(block "++ show a ++" :: "++ show t ++")"
+  go (Index f js) = intercalate "!" (show' f : map show' (reverse js))
+  go (TagOf v) = show' v ++".?"
+  go (Extract v i j) = show' v ++"."++ show i ++"_"++ show j
+  go (Cond cvs _) = "{ "++ f `commas` cvs ++"}"
+    where f (c,v) = show' c ++" => "++ show' v
+  go (Unconstrained _) = "???"
+  go (PartiallyConstrained sh ids kvs _) =
     "( "++ intercalate ", " [show `commas` k ++" -> "++ show v | (k,v) <- kvs]
     ++" | "++ showParams (map fst ids) sh ++" )"
+
+showNodeRefDeep :: Block -> NodeRef -> String
+showNodeRefDeep block = showNodeRef show'
+  where show' (Var i@Internal{} _) | length (lines s) == 1 = "("++ s ++")"
+          where s = showNode show' (lookupBlock i block)
+        show' r = showNodeRef show' r
 
 data Lambda h = Lambda { fDefs :: DAG, fHead :: h } deriving (Eq, Ord, Show)
 
@@ -206,16 +216,20 @@ showParam i (a,b) = show i ++" <- "++ show a ++"..."++ show b
 showParams is sh = intercalate ", " $ zipWith showParam is sh
 
 instance Show Node where
-  show (Apply f args t)
+  show n = showNode show n ++" :: "++ showType show (typeNode n)
+
+showNode :: (NodeRef -> String) -> Node -> String
+showNode showNodeRef = go where
+  go (Apply f args t)
     | all (not . isAlphaNum) f, [i,j] <- args
-    = show i ++" "++ f ++" "++ show j ++" :: "++ show t
-    | otherwise = f ++" "++ unwords (map show args) ++" :: "++ show t
-  show (Array sh (Lambda dag hd) t) = "\n"++
+    = showNodeRef i ++" "++ f ++" "++ showNodeRef j
+    | otherwise = f ++" "++ unwords (map showNodeRef args)
+  go (Array sh (Lambda dag hd) t) = "\n"++
     "  [ "++ (drop 4 . indent . indent $ showLet dag hd) ++"\n"++
-    "  | "++ showParams (inputs dag) sh ++" ] :: "++ show t
-  show (FoldScan fs lr (Lambda dag hd) seed ls _) =
-    name ++" "++ show seed ++" "++ show ls ++" $ "++
-    "\\"++ show i ++" "++ show j ++" ->\n"++
+    "  | "++ showParams (inputs dag) sh ++" ]"
+  go (FoldScan fs lr (Lambda dag hd) seed ls _) =
+    name ++" "++ showNodeRef seed ++" "++ showNodeRef ls ++" $ "++
+    "\\"++ showNodeRef i ++" "++ showNodeRef j ++" ->\n"++
       indent (showLet dag hd)
     where name = case (fs,lr) of
             (Fold, Right_) -> "foldr"
@@ -226,18 +240,21 @@ instance Show Node where
           [i,j] = case lr of
             Right_ -> inputs' dag
             Left_ -> reverse $ inputs' dag
-  show (Case e alts _) = "case "++ show e ++" of\n"++ indent cases
+  go (Case e alts _) = "case "++ showNodeRef e ++" of\n"++ indent cases
     where cases = unlines $ do
             (i, Lambda dag ret) <- zip [0..] alts
             let lhs | typeRef e == IntT = show (i+1)
                     | otherwise = "C"++ show i ++" "++ unwords (map show $ inputs dag)
                 rhs = indent (showLet dag ret)
             return $ lhs ++" ->\n"++ rhs
-  show (RecursionScheme k (Lambda dag hd) seed _) =
-    show k ++" "++ show seed ++" $ \\"++ show (head $ inputs' dag) ++" ->\n"++
+  go (RecursionScheme k (Lambda dag hd) seed _) =
+    f ++" "++ showNodeRef seed ++" $ \\"++ showNodeRef (head $ inputs' dag) ++" ->\n"++
       indent (showLet dag hd)
-  show (Function (Lambda dag hd) _) =
-    "\\"++ unwords (show <$> inputs' dag) ++" ->\n"++
+    where f = case k of
+            Anamorphism -> "unfold"
+            Catamorphism -> "fold"
+  go (Function (Lambda dag hd) _) =
+    "\\"++ unwords (showNodeRef <$> inputs' dag) ++" ->\n"++
       indent (showLet dag hd)
 
 data DAG = DAG { dagLevel :: Level
@@ -415,17 +432,23 @@ matT t | isScalar t = ArrayT (Just "matrix") [(Const 1 IntT, Unconstrained IntT)
                                              ,(Const 1 IntT, Unconstrained IntT)] t
 
 instance Show Type where
+  show = showType show
+
+showType :: (NodeRef -> String) -> Type -> String
+showType showNodeRef = show where
   show IntT = "Z"
   show RealT = "R"
   show (SubrangeT IntT (Just (Const 0 IntT)) (Just (Const 1 IntT))) = "B"
-  show (SubrangeT t a b) = unwords ["Subrange", show t, show a, show b]
-  show (ArrayT Nothing sh t) = unwords ["Array", show sh, show t]
+  show (SubrangeT t a b) = unwords
+    ["Subrange", show t, maybe "Nothing" showNodeRef a, maybe "Nothing" showNodeRef b]
+  show (ArrayT Nothing sh t) = unwords
+    ["Array", commas id [showNodeRef lo ++"..."++ showNodeRef hi | (lo,hi) <- sh], show t]
   --show (ArrayT (Just name) sh t) = unwords [name, show sh, show t]
   show (ArrayT (Just "vector") _ t) | isScalar t = show t ++"Vec"
   show (ArrayT (Just "matrix") _ t) | isScalar t = show t ++"Mat"
   show (ArrayT (Just name) _ t) = name ++" "++ show t
-  show (TupleT ts) = show ts
-  show (UnionT ts) = "Union"++ show ts
+  show (TupleT ts) = "("++ show `commas` ts ++")"
+  show (UnionT ts) = "Union["++ (show . TupleT) `commas` ts ++"]"
   show RecursiveT = "MU"
   show UnknownType = "???"
 
