@@ -5,19 +5,19 @@ import Language.Stochaskell
 import Language.Stochaskell.Plot
 import System.Directory
 
-noise = 1e-3
+prefix = "ssgcp"
 
-kernelSE' eta ils x y =
-  eta * exp (- ((x - y) * ils)^2 / 2)
-
-gpClassifier :: (R -> R -> R) -> Z -> RVec -> P (RVec,BVec)
-gpClassifier kernel n s = do
-  let mu  = vector [ 0 | _ <- 1...n ] :: RVec
-      cov = matrix [ kernel (s!i) (s!j) + if i == j then noise else 0
-                   | i <- 1...n, j <- 1...n ] :: RMat
-  g <- normalChol n mu cov
-  phi <- joint vector [ bernoulliLogit (g!i) | i <- 1...n ]
-  return (g,phi)
+-- Equivalent covariance function (m -> infinity):
+--   eta * exp (- ((x - y) * ils)^2 / 2)
+gpTrigPoly :: R -> Z -> R -> R -> R -> RVec -> RVec -> R -> R
+gpTrigPoly t m eta ils z a b x = c0 * z + sum' v
+  where sd = t * ils / pi
+        c0 = eta * exp (0.5 * lpdfNormal 0 0 sd)
+        omega = pi * x / t
+        v = vector [ 2 * eta * exp (0.5 * lpdfNormal (cast j) 0 sd)
+                       * ((a!j) * cos (cast j * omega) +
+                          (b!j) * sin (cast j * omega))
+                   | j <- 1...m ]
 
 poissonProcess' :: R -> R -> P (Z,RVec)
 poissonProcess' rate t = do
@@ -35,17 +35,6 @@ canonicalState k (z,a,b,eta,ils,cap,n,s,phi) = (z,a,b,eta,ils,cap,n,s',phi)
   where (s1,s0) = integer k `splitAt` list s
         s0' = sort s0 :: [Double]
         s' = list $ s1 ++ s0' :: RVec
-
--- TODO: generalise to accept concrete types (rather than eval'ing)
-gpTrigPoly :: R -> Z -> R -> R -> R -> RVec -> RVec -> R -> R
-gpTrigPoly t m eta ils z a b x = c0 * z + sum' v
-  where sd = t * ils / pi
-        c0 = eta * exp (0.5 * lpdfNormal 0 0 sd)
-        omega = pi * x / t
-        v = vector [ 2 * eta * exp (0.5 * lpdfNormal (cast j) 0 sd)
-                       * ((a!j) * cos (cast j * omega) +
-                          (b!j) * sin (cast j * omega))
-                   | j <- 1...m ]
 
 ssgcp :: R -> Z -> P State
 ssgcp t m = do
@@ -99,7 +88,6 @@ stepN t k state@(z,a,b,eta,ils,cap,n,s,phi) = mixture'
 stepS :: Z -> State -> P State
 stepS idx (z,a,b,eta,ils,cap,n,s,phi) = do
   x <- normal (s!idx) (1/ils)
-  let kernel = kernelSE' eta ils
   let s' = s `replaceAt` (idx, x)
   return (z,a,b,eta,ils,cap,n,s',phi)
 
@@ -157,12 +145,20 @@ stepMH t m k state = do
   state <- stepCap t state
   return state
 
+stepRJ :: R -> Z -> Z -> State -> P State
+stepRJ t m k state = do
+  state <- chain' 10 (ssgcp t m `rjmc1` stepN t k) state
+  state <- chainRange' (k + 1, dim state) (\idx -> ssgcp t m `rjmc1` stepS idx) state
+  state <- stepCap t state
+  return state
+
 stepGP :: R -> Z -> State -> IO State
 stepGP t m (z,a,b,eta,ils,cap,n,s,phi) = do
   samples <- hmcStanInit 10
-    [ (z',a',b',eta',ils') | (z',a',b',eta',ils',cap',n',s',phi') <- ssgcp t m,
-                             cap' == cap, n' == n, s' == s, phi' == phi ]
-    (z,a,b,eta,ils)
+    [ (z',a',b',eta',ils')
+    | (z',a',b',eta',ils',cap',n',s',phi') <- ssgcp t m,
+      cap' == cap, n' == n, s' == s, phi' == phi
+    ] (z,a,b,eta,ils)
   let (z',a',b',eta',ils') = last samples
   return (z',a',b',eta',ils',cap,n,s,phi)
 
@@ -174,7 +170,7 @@ genData' t = do
   let f = [ 2 * exp (-x/15) + exp (-((x-25)/10)^2) | x <- s ]
   phi <- sequence [ bernoulli (y / cap) | y <- f ]
   let dat = s `selectItems` phi
-  toPNG "ssgcp_data" . toRenderable $ do
+  toPNG (prefix ++"_data") . toRenderable $ do
     plot $ line "truth" [sort $ zip s f]
     plot . points "data" $ zip dat (repeat 1.9)
     plot . points "rejections" $ zip (s `selectItems` map not phi) (repeat 0.1)
@@ -205,8 +201,7 @@ main = do
       xs = [0.5*x | x <- [0..100]]
   state <- initialise t m dat
   stepMH' <- compileCC $ stepMH t m k
-  --let stepMH' = runStep $ stepMH t m k
-  createDirectoryIfMissing True "ssgcp-figs"
+  createDirectoryIfMissing True (prefix ++"-figs")
   (_, accum) <- flip (chainRange (1,300)) (state,[]) $ \iter (state, accum) -> do
     putStrLn $ "*** CURRENT STATE: "++ show state
 
@@ -223,7 +218,7 @@ main = do
     let f = (real cap *) . sigmoid . real . gpTrigPoly t m eta ils z a b . real
         fs = f <$> xs :: [Double]
 
-    toPNG ("ssgcp-figs/"++ show iter) . toRenderable $ do
+    toPNG (prefix ++"-figs/"++ show iter) . toRenderable $ do
       plot $ line "rate" [zip xs fs]
       plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 :: Double | y <- toList phi]
     return ((z,a,b,eta,ils,cap,n,s,phi), fs:accum)
@@ -231,7 +226,7 @@ main = do
   let fmean = mean accum
       fmean2 = mean (map (**2) <$> accum)
       fsd = sqrt <$> fmean2 - map (**2) fmean
-  toPNG "ssgcp_mean" . toRenderable $ do
+  toPNG (prefix ++"_mean") . toRenderable $ do
     plot $ line "mean" [zip (xs :: [Double]) fmean]
     plot $ line "sd" [zip (xs :: [Double]) $ zipWith (+) fmean fsd
                      ,zip (xs :: [Double]) $ zipWith (-) fmean fsd]
