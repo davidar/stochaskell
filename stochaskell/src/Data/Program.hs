@@ -234,7 +234,7 @@ modelSkeleton pb@(PBlock block _ given _) = tparams
 
 evalPBlock :: (ExprTuple t) => PBlock -> [NodeRef] -> Env -> Either String t
 evalPBlock (PBlock block _ given _) rets env = do
-  xs <- sequence (evalNodeRef (Map.union (Map.map fst given) env) block <$> rets)
+  xs <- sequence (evalNodeRef (evalBlock block $ Map.union (Map.map fst given) env) block <$> rets)
   return $ fromConstVals xs
 
 runLambdaP :: NS -> [(Id,Type)] -> State PBlock r -> State Block (Lambda r, [PNode])
