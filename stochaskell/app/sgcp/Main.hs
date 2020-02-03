@@ -48,7 +48,7 @@ sgcp t = do
   (n,s) <- poissonProcess' cap t
   let kernel = kernelSE lsv lls2
   (g,phi) <- gpClassifier kernel n s
-  return (lsv, lls2, cap, n, s, g, phi)
+  return (lsv,lls2,cap,n,s,g,phi)
 
 stepDown' :: Z -> State -> P (Z,Z,RVec,RVec,BVec)
 stepDown' k (lsv,lls2,cap,n,s,g,phi) = do
@@ -70,9 +70,7 @@ stepUp' t k (lsv,lls2,cap,n,s,g,phi) = do
   let kernel = kernelSE lsv lls2
   y <- normalCond n kernel noise s g x
   let n' = n + 1
-      -- i = findSortedInsertIndex x s -- but with restriction i > k
-      f i j = if x <= (s!i) then i else j
-      i = foldrE f (n+1) $ vector [ k + i | i <- 1...(n-k) ]
+      i = findSortedInsertIndexBound (k+1,n) x s
       s' = s `insertAt` (i, x)
       g' = g `insertAt` (i, y)
       phi' = phi `insertAt` (i, false)
@@ -178,7 +176,7 @@ genData' t = do
   let f = [ 2 * exp (-x/15) + exp (-((x-25)/10)^2) | x <- s ]
   phi <- sequence [ bernoulli (y / cap) | y <- f ]
   let dat = s `selectItems` phi
-  toPNG (prefix ++"_data") . toRenderable $ do
+  toSVG (prefix ++"_data") . toRenderable $ do
     plot $ line "truth" [sort $ zip s f]
     plot . points "data" $ zip dat (repeat 1.9)
     plot . points "rejections" $ zip (s `selectItems` map not phi) (repeat 0.1)
@@ -202,6 +200,7 @@ main = do
   let t = 50
   setRandomSeed 3
   dat <- genData' t
+  putStrLn $ "data = "++ show dat
   let k = integer (length dat)
       xs = [0.5*x | x <- [0..100]]
   state <- initialise t dat
@@ -224,15 +223,17 @@ main = do
         f = (real cap *) . sigmoid . interpolate rate
         fs = f <$> xs :: [Double]
 
-    toPNG (prefix ++"-figs/"++ show iter) . toRenderable $ do
+    toSVG (prefix ++"-figs/"++ show iter) . toRenderable $ do
       plot $ line "rate" [zip xs fs]
       plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 :: Double | y <- toList phi]
     return ((lsv,lls2,cap,n,s,g,phi), fs:accum)
 
-  let fmean = mean accum
-      fmean2 = mean (map (**2) <$> accum)
+  let samples = drop 100 accum
+      fmean = mean samples
+      fmean2 = mean (map (**2) <$> samples)
       fsd = sqrt <$> fmean2 - map (**2) fmean
-  toPNG (prefix ++"_mean") . toRenderable $ do
+  print samples
+  toSVG (prefix ++"_mean") . toRenderable $ do
     plot $ line "mean" [zip (xs :: [Double]) fmean]
     plot $ line "sd" [zip (xs :: [Double]) $ zipWith (+) fmean fsd
                      ,zip (xs :: [Double]) $ zipWith (-) fmean fsd]

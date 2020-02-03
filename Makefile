@@ -31,7 +31,7 @@ uninstall:
 	rm -f $(IHASKELL_BIN)
 
 jupyter: install
-	jupyter notebook
+	jupyter notebook --ip=0.0.0.0
 
 %-ipynb: %.ipynb
 	jupyter nbconvert --to notebook --execute $<

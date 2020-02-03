@@ -10,6 +10,9 @@ build: env
 trace: env
 	stack build --interleaved-output $(PROF)
 
+ghci:
+	stack ghci --interleaved-output $(NOPROF)
+
 %-exe: build
 	stack exec $(NOPROF) $@
 

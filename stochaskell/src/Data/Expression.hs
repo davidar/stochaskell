@@ -1451,6 +1451,14 @@ floor' x = apply "floor" IntT [x]
 findSortedInsertIndex :: R -> RVec -> Z
 findSortedInsertIndex = apply2 "findSortedInsertIndex" IntT
 
+-- | like 'findSortedInsertIndex' but with the given bounds on the index
+findSortedInsertIndexBound :: AA.Interval Z -> R -> RVec -> Z
+findSortedInsertIndexBound (a,b) x s =
+  foldrE f (b+1) . AA.vector $ do
+    i <- 1 AA.... (b - (a-1))
+    return $ (a-1) + i
+  where f i j = ifB (x <=* (s!i)) i j
+
 -- | minimum of two values
 min' :: Expression a -> Expression a -> Expression a
 min' = applyClosed2 "min"

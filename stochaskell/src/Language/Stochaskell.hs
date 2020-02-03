@@ -17,7 +17,7 @@ module Language.Stochaskell
   , constSymbol
   , d
   , factorial', logFactorial'
-  , find', findSortedInsertIndex
+  , find', findSortedInsertIndex, findSortedInsertIndexBound
   , floor'
   , min'
   , solve, solveP
