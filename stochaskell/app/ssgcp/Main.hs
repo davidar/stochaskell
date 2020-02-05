@@ -8,16 +8,13 @@ import System.Directory
 prefix = "ssgcp"
 
 -- Equivalent covariance function (m -> infinity):
---   eta * exp (- ((x - y) * ils)^2 / 2)
-gpTrigPoly :: R -> Z -> R -> R -> R -> RVec -> RVec -> R -> R
-gpTrigPoly t m eta ils z a b x = c0 * z + sum' v
-  where sd = t * ils / pi
-        c0 = eta * exp (0.5 * lpdfNormal 0 0 sd)
-        omega = pi * x / t
-        v = vector [ 2 * eta * exp (0.5 * lpdfNormal (cast j) 0 sd)
-                       * ((a!j) * cos (cast j * omega) +
-                          (b!j) * sin (cast j * omega))
-                   | j <- 1...m ]
+--   exp (- ((x - y) * ils)^2 / 2)
+gpTrigPoly :: R -> Z -> P R -> R -> RVec -> RVec -> R -> R
+gpTrigPoly t m sd z a b x = z * amp 0 + 2 * sum' v where
+  amp j = sqrt $ pdf sd (j / (2*t)) / (2*t)
+  v = vector [ let w = 2*pi * x * cast j / (2*t)
+               in amp (cast j) * ((a!j) * cos w + (b!j) * sin w)
+             | j <- 1...m ]
 
 poissonProcess' :: R -> R -> P (Z,RVec)
 poissonProcess' rate t = do
@@ -39,13 +36,14 @@ canonicalState k (z,a,b,eta,ils,cap,n,s,phi) = (z,a,b,eta,ils,cap,n,s',phi)
 ssgcp :: R -> Z -> P State
 ssgcp t m = do
   z <- normal 0 1 :: P R
-  a <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ]) :: P RVec
-  b <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ]) :: P RVec
-  eta <- gamma 1 1
-  ils <- gamma 1 1
+  a <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ])
+  b <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ])
+  eta <- lognormal 0 1
+  ils <- lognormal (log 0.1) 1
   cap <- gamma 1 1
   (n,s) <- poissonProcess' cap t
-  let y i = gpTrigPoly t m eta ils z a b (s!i)
+  let sd = normal 0 (ils / (2*pi))
+      y i = eta * gpTrigPoly t m sd z a b (s!i)
   phi <- joint vector [ bernoulliLogit (y i) | i <- 1...n ]
   return (z,a,b,eta,ils,cap,n,s,phi)
 
@@ -66,9 +64,7 @@ stepUp' :: R -> Z -> State -> P (R,Z,RVec,BVec)
 stepUp' t k (z,a,b,eta,ils,cap,n,s,phi) = do
   x <- uniform 0 t
   let n' = n + 1
-      -- i = findSortedInsertIndex x s -- but with restriction i > k
-      f i j = if x <= (s!i) then i else j
-      i = foldrE f (n+1) $ vector [ k + i | i <- 1...(n-k) ]
+      i = findSortedInsertIndexBound (k+1,n) x s
       s' = s `insertAt` (i, x)
       phi' = phi `insertAt` (i, false)
   return (x,n',s',phi')
@@ -105,7 +101,8 @@ stepN' t m k state@(z,a,b,eta,ils,cap,n,s,phi) = do
   if c then do -- birth
     (x,n',s',phi') <- stepUp' t k state
     let state' = (z,a,b,eta,ils,cap,n',s',phi')
-        y = gpTrigPoly t m eta ils z a b x
+        sd = normal 0 (ils / (2*pi))
+        y = eta * gpTrigPoly t m sd z a b x
         alpha  = t * cap * sigmoid (-y) / cast (n - k + 1)
     return (alpha,state')
   else if n == k then do
@@ -113,7 +110,8 @@ stepN' t m k state@(z,a,b,eta,ils,cap,n,s,phi) = do
   else do -- death
     (i,n',s',phi') <- stepDown' k state
     let state' = (z,a,b,eta,ils,cap,n',s',phi')
-        y = gpTrigPoly t m eta ils z a b (s!i)
+        sd = normal 0 (ils / (2*pi))
+        y = eta * gpTrigPoly t m sd z a b (s!i)
         alpha  = cast (n - k) / (t * cap * sigmoid (-y))
     return (alpha,state')
 
@@ -130,8 +128,9 @@ mhS t m idx state@(z,a,b,eta,ils,cap,n,s,phi) = do
   x <- truncated 0 t $ normal (s!idx) (1/ils)
   let s' = s `replaceAt` (idx, x)
       state' = (z,a,b,eta,ils,cap,n,s',phi)
-      y  = gpTrigPoly t m eta ils z a b (s!idx)
-      y' = gpTrigPoly t m eta ils z a b x
+      sd = normal 0 (ils / (2*pi))
+      y  = eta * gpTrigPoly t m sd z a b (s!idx)
+      y' = eta * gpTrigPoly t m sd z a b x
       alpha = sigmoid (-y') / sigmoid (-y)
       alpha' = rjmc1Ratio (ssgcp t m) (stepS idx) state state'
   accept <- bernoulli (min' 1 $
@@ -168,9 +167,9 @@ genData' t = do
   n <- poisson (t * cap)
   s <- sequence [ uniform 0 t | _ <- [1..n :: Integer] ]
   let f = [ 2 * exp (-x/15) + exp (-((x-25)/10)^2) | x <- s ]
-  phi <- sequence [ bernoulli (y / cap) | y <- f ]
+  phi <- sequence [ bernoulli (y / 2) | y <- f ]
   let dat = s `selectItems` phi
-  toPNG (prefix ++"_data") . toRenderable $ do
+  toSVG (prefix ++"_data") . toRenderable $ do
     plot $ line "truth" [sort $ zip s f]
     plot . points "data" $ zip dat (repeat 1.9)
     plot . points "rejections" $ zip (s `selectItems` map not phi) (repeat 0.1)
@@ -197,6 +196,7 @@ main = do
       m = 20
   setRandomSeed 3
   dat <- genData' t
+  putStrLn $ "data = "++ show dat
   let k = integer (length dat)
       xs = [0.5*x | x <- [0..100]]
   state <- initialise t m dat
@@ -215,18 +215,21 @@ main = do
     state <- stepGP t m state
     let (z,a,b,eta,ils,cap,n,s,phi) = state
 
-    let f = (real cap *) . sigmoid . real . gpTrigPoly t m eta ils z a b . real
+    let sd = normal 0 (ils / (2*pi))
+        f = (real cap *) . sigmoid . real . (eta *) . gpTrigPoly t m sd z a b . real
         fs = f <$> xs :: [Double]
 
-    toPNG (prefix ++"-figs/"++ show iter) . toRenderable $ do
+    toSVG (prefix ++"-figs/"++ show iter) . toRenderable $ do
       plot $ line "rate" [zip xs fs]
       plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 :: Double | y <- toList phi]
     return ((z,a,b,eta,ils,cap,n,s,phi), fs:accum)
 
-  let fmean = mean accum
-      fmean2 = mean (map (**2) <$> accum)
+  let samples = drop 100 accum
+      fmean = mean samples
+      fmean2 = mean (map (**2) <$> samples)
       fsd = sqrt <$> fmean2 - map (**2) fmean
-  toPNG (prefix ++"_mean") . toRenderable $ do
+  print samples
+  toSVG (prefix ++"_mean") . toRenderable $ do
     plot $ line "mean" [zip (xs :: [Double]) fmean]
     plot $ line "sd" [zip (xs :: [Double]) $ zipWith (+) fmean fsd
                      ,zip (xs :: [Double]) $ zipWith (-) fmean fsd]

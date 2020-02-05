@@ -40,7 +40,7 @@ import Graphics.Rendering.Chart.Grid
 import Graphics.Rendering.Chart.Plot.FillBetween
 import Graphics.Rendering.Chart.Plot.Histogram
 import qualified Graphics.Rendering.Chart.Renderable
-import Plots hiding (Plot,AxisStyle,Legend,magma,tan)
+import Plots hiding (Plot,AxisStyle,Legend,magma,pdf,tan)
 import qualified Statistics.Sample.KernelDensity as KD
 import Statistics.Sample.KernelDensity.Simple
 

@@ -24,6 +24,7 @@ import Data.Expression hiding (const)
 import Data.Expression.Const
 import Data.Expression.Eval
 import Data.List.Extra
+import Data.List.Utils
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe
@@ -221,6 +222,8 @@ stanNode name (Apply "findSortedInsertIndex" [x,v] _) =
           i = name ++"_i"
 stanNode name (Apply "*" [i,j] IntT) =
     name ++" = "++ stanNodeRef i ++" * "++ stanNodeRef j ++";"
+stanNode name (Apply f (j:js) _) | endswith "_lpdf" f =
+    name ++" = "++ f ++"("++ stanNodeRef j ++" | "++ stanNodeRef `commas` js ++");"
 stanNode name (Apply op [i,j] _)
   | isJust $ lookup op stanOperators,
     (ArrayT _ [(Const 1 IntT, Const m IntT), (Const 1 IntT, Const 1 IntT)] _) <- typeRef i,
