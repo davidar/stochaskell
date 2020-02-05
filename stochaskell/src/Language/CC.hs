@@ -129,6 +129,8 @@ ccNode _ name (Apply "&&s" js _) =
   name ++" = "++ intercalate " && " (ccNodeRef <$> js) ++";"
 ccNode _ name (Apply "+s" js _) =
   name ++" = "++ intercalate " + " (ccNodeRef <$> js) ++";"
+ccNode _ name (Apply "/" [i,j] RealT) =
+  name ++" = (double) "++ ccNodeRef i ++" / (double) "++ ccNodeRef j ++";"
 ccNode _ name (Apply "==" [u,v] _) | ArrayT{} <- typeRef u =
   name ++" = "++ ccNodeRef u ++".rows() == "++ ccNodeRef v ++".rows() && "++
                  ccNodeRef u ++".cols() == "++ ccNodeRef v ++".cols() && "++

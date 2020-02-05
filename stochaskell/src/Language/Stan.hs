@@ -222,6 +222,8 @@ stanNode name (Apply "findSortedInsertIndex" [x,v] _) =
           i = name ++"_i"
 stanNode name (Apply "*" [i,j] IntT) =
     name ++" = "++ stanNodeRef i ++" * "++ stanNodeRef j ++";"
+stanNode name (Apply "/" [i,j] RealT) =
+    name ++" = to_real("++ stanNodeRef i ++") ./ to_real("++ stanNodeRef j ++");"
 stanNode name (Apply f (j:js) _) | endswith "_lpdf" f =
     name ++" = "++ f ++"("++ stanNodeRef j ++" | "++ stanNodeRef `commas` js ++");"
 stanNode name (Apply op [i,j] _)
@@ -322,6 +324,10 @@ stanDAG whitelist dag = indent $ extract decl ++ extract stanNode
 
 stanProgram :: PBlock -> String
 stanProgram pb@(PBlock block _ given _) =
+    "functions {\n"++
+    "  // https://github.com/stan-dev/stan/issues/452\n"++
+    "  real to_real(real x) { return x; }\n"++
+    "}\n"++
     "data {\n"++ printRefs (\i n ->
         if getId i `elem` map getId' (Map.keys given)
         then stanDecl True (stanNodeRef i) (typePNode n) else "") ++"\n}\n"++
