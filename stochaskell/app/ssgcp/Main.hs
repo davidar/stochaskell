@@ -38,8 +38,8 @@ ssgcp t m = do
   z <- normal 0 1 :: P R
   a <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ])
   b <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ])
-  eta <- lognormal 0 1
-  ils <- lognormal (log 0.1) 1
+  eta <- gamma 1 1
+  ils <- gamma 1 1
   cap <- gamma 1 1
   (n,s) <- poissonProcess' cap t
   let sd = normal 0 (ils / (2*pi))
@@ -81,9 +81,9 @@ stepN t k state@(z,a,b,eta,ils,cap,n,s,phi) = mixture'
                    else stepDown k state)
   ]
 
-stepS :: Z -> State -> P State
-stepS idx (z,a,b,eta,ils,cap,n,s,phi) = do
-  x <- normal (s!idx) (1/ils)
+stepS :: R -> Z -> State -> P State
+stepS t idx (z,a,b,eta,ils,cap,n,s,phi) = do
+  x <- truncated 0 t $ normal (s!idx) (1/ils)
   let s' = s `replaceAt` (idx, x)
   return (z,a,b,eta,ils,cap,n,s',phi)
 
@@ -103,7 +103,7 @@ stepN' t m k state@(z,a,b,eta,ils,cap,n,s,phi) = do
     let state' = (z,a,b,eta,ils,cap,n',s',phi')
         sd = normal 0 (ils / (2*pi))
         y = eta * gpTrigPoly t m sd z a b x
-        alpha  = t * cap * sigmoid (-y) / cast (n - k + 1)
+        alpha = t * cap * sigmoid (-y) / cast (n - k + 1)
     return (alpha,state')
   else if n == k then do
     return (1,state)
@@ -112,7 +112,7 @@ stepN' t m k state@(z,a,b,eta,ils,cap,n,s,phi) = do
     let state' = (z,a,b,eta,ils,cap,n',s',phi')
         sd = normal 0 (ils / (2*pi))
         y = eta * gpTrigPoly t m sd z a b (s!i)
-        alpha  = cast (n - k) / (t * cap * sigmoid (-y))
+        alpha = cast (n - k) / (t * cap * sigmoid (-y))
     return (alpha,state')
 
 mhN :: R -> Z -> Z -> State -> P State
@@ -132,7 +132,7 @@ mhS t m idx state@(z,a,b,eta,ils,cap,n,s,phi) = do
       y  = eta * gpTrigPoly t m sd z a b (s!idx)
       y' = eta * gpTrigPoly t m sd z a b x
       alpha = sigmoid (-y') / sigmoid (-y)
-      alpha' = rjmc1Ratio (ssgcp t m) (stepS idx) state state'
+      alpha' = rjmc1Ratio (ssgcp t m) (stepS t idx) state state'
   accept <- bernoulli (min' 1 $
     0.5 * (debug "S alpha true" alpha + debug "S alpha auto" alpha'))
   return $ if accept then state' else state
@@ -147,13 +147,13 @@ stepMH t m k state = do
 stepRJ :: R -> Z -> Z -> State -> P State
 stepRJ t m k state = do
   state <- chain' 10 (ssgcp t m `rjmc1` stepN t k) state
-  state <- chainRange' (k + 1, dim state) (\idx -> ssgcp t m `rjmc1` stepS idx) state
+  state <- chainRange' (k + 1, dim state) (\idx -> ssgcp t m `rjmc1` stepS t idx) state
   state <- stepCap t state
   return state
 
 stepGP :: R -> Z -> State -> IO State
 stepGP t m (z,a,b,eta,ils,cap,n,s,phi) = do
-  samples <- hmcStanInit 10
+  samples <- hmcStanInit 1
     [ (z',a',b',eta',ils')
     | (z',a',b',eta',ils',cap',n',s',phi') <- ssgcp t m,
       cap' == cap, n' == n, s' == s, phi' == phi
@@ -163,7 +163,7 @@ stepGP t m (z,a,b,eta,ils,cap,n,s,phi) = do
 
 genData' :: Double -> IO [Double]
 genData' t = do
-  let cap = 2
+  let cap = 2 * 5
   n <- poisson (t * cap)
   s <- sequence [ uniform 0 t | _ <- [1..n :: Integer] ]
   let f = [ 2 * exp (-x/15) + exp (-((x-25)/10)^2) | x <- s ]
@@ -184,7 +184,7 @@ initialise t m dat = do
   let eta = 1
       ils = 10 / t
       cap = real (2 * k / t)
-      n = k + 10
+      n = k * 2
   rej <- sequence [ uniform 0 (real t) | _ <- [1..(n-k)] ]
   let s = fromList $ dat ++ sort rej :: RVec
       phi = fromList $ replicate k True ++ replicate (n-k) False :: BVec
@@ -194,15 +194,16 @@ main :: IO ()
 main = do
   let t = 50
       m = 20
-  setRandomSeed 3
+  --setRandomSeed 3
   dat <- genData' t
   putStrLn $ "data = "++ show dat
   let k = integer (length dat)
       xs = [0.5*x | x <- [0..100]]
   state <- initialise t m dat
   stepMH' <- compileCC $ stepMH t m k
+  --let stepMH' = runStep $ stepMH t m k
   createDirectoryIfMissing True (prefix ++"-figs")
-  (_, accum) <- flip (chainRange (1,300)) (state,[]) $ \iter (state, accum) -> do
+  (_, accum) <- flip (chainRange (1,100)) (state,[]) $ \iter (state, accum) -> do
     putStrLn $ "*** CURRENT STATE: "++ show state
 
     state <- canonicalState k <$> stepMH' state
@@ -224,7 +225,7 @@ main = do
       plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 :: Double | y <- toList phi]
     return ((z,a,b,eta,ils,cap,n,s,phi), fs:accum)
 
-  let samples = drop 100 accum
+  let samples = drop 50 accum
       fmean = mean samples
       fmean2 = mean (map (**2) <$> samples)
       fsd = sqrt <$> fmean2 - map (**2) fmean
@@ -233,4 +234,6 @@ main = do
     plot $ line "mean" [zip (xs :: [Double]) fmean]
     plot $ line "sd" [zip (xs :: [Double]) $ zipWith (+) fmean fsd
                      ,zip (xs :: [Double]) $ zipWith (-) fmean fsd]
+    let f = [ 5 * (2 * exp (-x/15) + exp (-((x-25)/10)^2)) | x <- xs ]
+    plot $ line "true" [zip (xs :: [Double]) f]
   return ()
