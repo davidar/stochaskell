@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc=4:7.3.* \
     git=1:2.17.* \
     gnupg=2.2.* \
+    graphviz=2.40.* \
     libblas-dev=3.7.* \
     libc6-dev=2.27-* \
     libcairo2-dev=1.15.* \
