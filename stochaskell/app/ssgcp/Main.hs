@@ -10,7 +10,7 @@ prefix = "ssgcp"
 -- Equivalent covariance function (m -> infinity):
 --   exp (- ((x - y) * ils)^2 / 2)
 gpTrigPoly :: R -> Z -> P R -> R -> RVec -> RVec -> R -> R
-gpTrigPoly t m sd z a b x = z * amp 0 + 2 * sum' v where
+gpTrigPoly t m sd z a b x = z * amp 0 + sqrt 2 * sum' v where
   amp j = sqrt $ pdf sd (j / (2*t)) / (2*t)
   v = vector [ let w = 2*pi * x * cast j / (2*t)
                in amp (cast j) * ((a!j) * cos w + (b!j) * sin w)
@@ -38,8 +38,8 @@ ssgcp t m = do
   z <- normal 0 1 :: P R
   a <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ])
   b <- normals (vector [ 0 | j <- 1...m ]) (vector [ 1 | j <- 1...m ])
-  eta <- gamma 1 1
-  ils <- gamma 1 1
+  eta <- lognormal 0 1
+  ils <- lognormal (log 0.1) 1
   cap <- gamma 1 1
   (n,s) <- poissonProcess' cap t
   let sd = normal 0 (ils / (2*pi))
