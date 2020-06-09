@@ -329,7 +329,7 @@ ccDAG r dag = indent . unlines . flip map (nodes dag) $ \(i,n) ->
         _ -> Var (Internal (dagLevel dag) i) (typeNode n)
       name = ccNodeRef ref
       msg = name ++" = "++ (replace "\n" "\\n" . replace "\\" "\\\\" $ show n) ++" = "
-      wrapTry s 
+      wrapTry s
         | dagLevel dag == 0 || length (nodes dag) > 10 =
           "try { "++
             s ++" "++ (if debugRef ref then ccDebug msg [ref] ++" " else "") ++

@@ -168,13 +168,12 @@ stepGP t (lsv,lls2,cap,n,s,g,phi) = do
   let (lsv',lls2',g') = last samples
   return (lsv',lls2',cap,n,s,g',phi)
 
-genData' :: Double -> IO [Double]
-genData' t = do
-  let cap = 2
+genData' :: Double -> Double -> IO [Double]
+genData' t cap = do
   n <- poisson (t * cap)
   s <- sequence [ uniform 0 t | _ <- [1..n :: Integer] ]
   let f = [ 2 * exp (-x/15) + exp (-((x-25)/10)^2) | x <- s ]
-  phi <- sequence [ bernoulli (y / cap) | y <- f ]
+  phi <- sequence [ bernoulli (y / 2) | y <- f ]
   let dat = s `selectItems` phi
   toSVG (prefix ++"_data") . toRenderable $ do
     plot $ line "truth" [sort $ zip s f]
@@ -197,16 +196,18 @@ initialise t dat = do
 
 main :: IO ()
 main = do
-  let t = 50
-  setRandomSeed 3
-  dat <- genData' t
+ let t = 50
+ --setRandomSeed 3
+ forM_ [2,4,6,8,10] $ \capTrue -> do
+  dat <- genData' t capTrue
   putStrLn $ "data = "++ show dat
   let k = integer (length dat)
       xs = [0.5*x | x <- [0..100]]
   state <- initialise t dat
   stepMH' <- compileCC $ stepMH t k
   createDirectoryIfMissing True (prefix ++"-figs")
-  (_, accum) <- flip (chainRange (1,300)) (state,[]) $ \iter (state, accum) -> do
+  timeStart <- tic
+  (_, accum) <- flip (chainRange (1,100)) (state,[]) $ \iter (state, accum) -> do
     putStrLn $ "*** CURRENT STATE: "++ show state
 
     state <- canonicalState k <$> stepMH' state
@@ -227,8 +228,10 @@ main = do
       plot $ line "rate" [zip xs fs]
       plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 :: Double | y <- toList phi]
     return ((lsv,lls2,cap,n,s,g,phi), fs:accum)
+  timeSpent <- toc timeStart
+  putStrLn $ "cap = "++ show capTrue ++";\ttime = "++ show timeSpent
 
-  let samples = drop 100 accum
+  let samples = drop 50 accum
       fmean = mean samples
       fmean2 = mean (map (**2) <$> samples)
       fsd = sqrt <$> fmean2 - map (**2) fmean

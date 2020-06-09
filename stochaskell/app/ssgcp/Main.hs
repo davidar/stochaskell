@@ -161,9 +161,8 @@ stepGP t m (z,a,b,eta,ils,cap,n,s,phi) = do
   let (z',a',b',eta',ils') = last samples
   return (z',a',b',eta',ils',cap,n,s,phi)
 
-genData' :: Double -> IO [Double]
-genData' t = do
-  let cap = 2 * 5
+genData' :: Double -> Double -> IO [Double]
+genData' t cap = do
   n <- poisson (t * cap)
   s <- sequence [ uniform 0 t | _ <- [1..n :: Integer] ]
   let f = [ 2 * exp (-x/15) + exp (-((x-25)/10)^2) | x <- s ]
@@ -192,10 +191,11 @@ initialise t m dat = do
 
 main :: IO ()
 main = do
-  let t = 50
-      m = 20
-  --setRandomSeed 3
-  dat <- genData' t
+ let t = 50
+     m = 20
+ --setRandomSeed 3
+ forM_ [2,4,6,8,10] $ \capTrue -> do
+  dat <- genData' t capTrue
   putStrLn $ "data = "++ show dat
   let k = integer (length dat)
       xs = [0.5*x | x <- [0..100]]
@@ -203,6 +203,7 @@ main = do
   stepMH' <- compileCC $ stepMH t m k
   --let stepMH' = runStep $ stepMH t m k
   createDirectoryIfMissing True (prefix ++"-figs")
+  timeStart <- tic
   (_, accum) <- flip (chainRange (1,100)) (state,[]) $ \iter (state, accum) -> do
     putStrLn $ "*** CURRENT STATE: "++ show state
 
@@ -224,6 +225,8 @@ main = do
       plot $ line "rate" [zip xs fs]
       plot . points "data" $ zip (list s) [if y then 0.9 else 0.1 :: Double | y <- toList phi]
     return ((z,a,b,eta,ils,cap,n,s,phi), fs:accum)
+  timeSpent <- toc timeStart
+  putStrLn $ "cap = "++ show capTrue ++";\ttime = "++ show timeSpent
 
   let samples = drop 50 accum
       fmean = mean samples
