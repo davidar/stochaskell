@@ -9,7 +9,7 @@ Stability   : experimental
 module Language.Stochaskell.Plot
   ( PlotP(..), ToImage(..)
   , kde, kde', kdeplot, kdeplot'
-  , plotHist, plotUnder, plotpdf
+  , plotHist, plotUnder, plotpdf, plotStep
   , renderAxis2
   , xlabel, xlim, ylabel, ylim
   -- * Re-exports
@@ -44,10 +44,12 @@ import Plots hiding (Plot,AxisStyle,Legend,magma,pdf,tan)
 import qualified Statistics.Sample.KernelDensity as KD
 import Statistics.Sample.KernelDensity.Simple
 
+type ChartPlot = EC (Layout Double Double) ()
+
 class PlotP t where
-  plotP :: P (Expression t) -> Int -> String -> IO (EC (Layout Double Double) ())
+  plotP :: P (Expression t) -> Int -> String -> IO ChartPlot
   -- | restricted to positive domain
-  plotP' :: P (Expression t) -> Int -> String -> IO (EC (Layout Double Double) ())
+  plotP' :: P (Expression t) -> Int -> String -> IO ChartPlot
   plotP' = plotP
 
 instance PlotP Integer where
@@ -57,7 +59,7 @@ instance PlotP Integer where
         b = maximum samples
     return $ plotHist title (integer <$> samples) (integer a, integer b) 1
 
-plotHist :: String -> [Double] -> (Double, Double) -> Double -> EC (Layout Double Double) ()
+plotHist :: String -> [Double] -> (Double, Double) -> Double -> ChartPlot
 plotHist title vals (a,b) bin = do
   col <- takeColor
   plot . return . histToPlot $ defaultNormedPlotHist
@@ -100,10 +102,10 @@ instance ToImage (Diagrams.Core.QDiagram Cairo V2 Double Any) where
   toPNG f = renderCairo (f ++".png") $ mkSizeSpec2D (Just 800) (Just 600)
   toSVG f = renderCairo (f ++".svg") $ mkSizeSpec2D (Just 450) (Just 300)
 
-kdeplot :: String -> Double -> [Double] -> EC (Layout Double Double) ()
+kdeplot :: String -> Double -> [Double] -> ChartPlot
 kdeplot s bw vals = plot $ line s [kde bw vals]
 
-kdeplot' :: String -> [Double] -> EC (Layout Double Double) ()
+kdeplot' :: String -> [Double] -> ChartPlot
 kdeplot' s vals = plot $ line s [kde' vals]
 
 kde :: Double -> [Double] -> [(Double,Double)]
@@ -116,7 +118,7 @@ kde' :: [Double] -> [(Double,Double)]
 kde' vals = V.toList x `zip` V.toList y
   where (x,y) = KD.kde 256 (V.fromList vals :: Vector Double)
 
-plotUnder :: String -> [(Double,Double)] -> EC (Layout Double Double) ()
+plotUnder :: String -> [(Double,Double)] -> ChartPlot
 plotUnder title values = do
   col <- takeColor
   plot . liftEC $ do
@@ -127,9 +129,14 @@ plotUnder title values = do
     plot_lines_values .= [values]
     plot_lines_style . line_color .= col
 
-plotpdf :: String -> P R -> (Double, Double) -> EC (Layout Double Double) ()
+plotpdf :: String -> P R -> (Double, Double) -> ChartPlot
 plotpdf title prog (a,b) =
   plotUnder title [(x, exp . real . lpdf prog $ real x) | x <- linspace (a,b) 256]
+
+plotStep :: String -> (Double,Double) -> [Double] -> ChartPlot
+plotStep title (lo,hi) steps = plotUnder title $ zip xs ys
+  where xs = [lo] ++ concatMap (replicate 2) steps ++ [hi]
+        ys = concatMap (replicate 2) [0..]
 
 renderAxis2 :: State (Axis Cairo V2 Double) ()
             -> Diagrams.Core.QDiagram Cairo V2 Double Any
