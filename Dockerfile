@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtinfo-dev=6.1-* \
     libzmq3-dev=4.2.* \
     make=4.1-* \
+    netbase=5.4 \
     python-dev=2.7.* \
     python3-pip=9.0.* \
     python3-setuptools=39.0.* \
