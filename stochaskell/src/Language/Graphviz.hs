@@ -101,16 +101,18 @@ dotDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
 
 dotPNode :: Label -> PNode -> String
 dotPNode name (Dist f js _) = dotApply name ("~"++ f) js
-dotPNode name (HODist f (Dist g js _) js' _) =
-  name ++" [shape=\"rectangle\" label=\""++ f ++" "++ g ++"\"]\n"++
-  dotConsts [name] (js ++ js')
+dotPNode name (HODist "orderedSample" body [n] _) =
+  "subgraph cluster_order_"++ name ++" {\n"++ indent (
+    "label=\"ordered sample\"\n"++
+    dotApply (name ++"_index") "index" [Const 1 IntT,n] ++"\n"++
+    dotPNode name body ++"\n"++
+    name ++" [style=\"bold\"]"
+  ) ++"\n}"
 dotPNode name (Loop sh (Lambda dag body) _) =
-  unlines [dotConsts (r' ++ [dotId r' j]) [lo,hi]
-          | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   "subgraph cluster_loop_"++ name ++" {\n"++ indent (
     "label=\"joint\"\n"++
-    unlines [dotId r' j ++" [shape=\"rectangle\" label=\"index "++ show i ++"\"]"
-            | (i,j) <- [1..] `zip` inputs dag] ++"\n"++
+    unlines [dotApply (dotId r' j) ("index "++ show i) [lo,hi]
+            | (i,j,(lo,hi)) <- zip3 [1..] (inputs dag) sh] ++"\n"++
     dotDAG r' dag Nothing ++"\n"++
     dotPNode name body ++"\n"++
     name ++" [style=\"bold\"]"
@@ -182,13 +184,15 @@ edgeDAG r dag mr = unlines . flip map (nodes dag) $ \(i,n) ->
 
 edgePNode :: Label -> PNode -> String
 edgePNode name (Dist f js _) = edgeApply [name] name js
+edgePNode name (HODist "orderedSample" body [n] _) =
+  edgeApply [name] (name ++"_index") [Const 1 IntT,n] ++"\n"++
+  edgePNode name body
 edgePNode name (Loop sh (Lambda dag body) _) =
-  unlines [edgeNodeRefs r' (dotId r' j) [lo,hi]
+  unlines [edgeApply r' (dotId r' j) [lo,hi]
           | (j,(lo,hi)) <- inputs dag `zip` sh] ++"\n"++
   edgeDAG r' dag Nothing ++"\n"++
   edgePNode name body
   where r' = [name]
-edgePNode name (HODist f n js _) = edgePNode name n ++"\n"++ edgeNodeRefs [name] name js
 
 edgePNodes :: Map Id PNode -> String
 edgePNodes pn =
@@ -204,7 +208,7 @@ edgePBlock pb@(PBlock block _ _ _) =
 
 graphviz :: (ExprTuple t) => P t -> String
 graphviz prog = "/*\n"++ showPBlock pb (show rets) ++"\n*/\n\n"++
-  "strict digraph {\n"++ indent (
+  "digraph {\n"++ indent (
     "compound=\"true\"\n"++
     --"concentrate=\"true\"\n"++
     dotPBlock pb rets ++"\n"++
