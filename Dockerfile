@@ -89,4 +89,5 @@ RUN make install && stack clean && rm -rf .stack/indices
 ENV STOCHASKELL_DIRECTORY ${HOME}/stochaskell
 
 COPY --chown=1000 *.ipynb LICENSE ./
+RUN jupyter trust *.ipynb
 CMD ["jupyter", "notebook", "--ip", "0.0.0.0"]
