@@ -47,6 +47,7 @@ ccNodeRef :: NodeRef -> String
 ccNodeRef (Var s _) = ccId s
 ccNodeRef (Const c _) | dimension c == 0 = show c
 ccNodeRef (Const c _) | dimension c == 1 = "{"++ show `commas` toList c ++"}"
+ccNodeRef (Const c t) | isZeros c = ccType t ++"::Zero("++ show `commas` snd (bounds c) ++")"
 ccNodeRef (Index f js) = ccNodeRef f `ccIndex` reverse js
 ccNodeRef (Data _ js _) = "make_tuple("++ ccNodeRef `commas` js ++")"
 ccNodeRef (Extract r 0 i) = "get<"++ show i ++">("++ ccNodeRef r ++")"
@@ -264,6 +265,7 @@ ccNode _ name (Case e alts t) =
   where cases = unlines $ do
           (i, Lambda dag ret) <- zip [0..] alts
           let lhs | typeRef e == IntT = show (i+1)
+                  | otherwise = error "ADT case not yet supported"
               rhs = unlines
                 [ccDAG Map.empty dag
                 ,name ++" = "++ ccNodeRef (Data 0 ret t) ++";"

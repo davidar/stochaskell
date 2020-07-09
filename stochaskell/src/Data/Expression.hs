@@ -1069,7 +1069,7 @@ simplify (Apply "+" [Const 0 _,x] _) = return x
 simplify (Apply "+" [x,Const 0 _] _) = return x
 simplify (Apply "+" [Const c _,x] _) | isZeros c, not $ isScalar (typeRef x) = return x
 simplify (Apply "+" [x,Const c _] _) | isZeros c, not $ isScalar (typeRef x) = return x
-simplify (Apply "-" [x,Const 0 _] _) = return x
+simplify (Apply "-" [x,Const c _] _) | isZeros c = return x
 simplify (Apply "*" [Const (-1) _,x] t) = simplify (Apply "negate" [x] t)
 simplify (Apply "*" [x,Const (-1) _] t) = simplify (Apply "negate" [x] t)
 simplify (Apply "-" [Const 0 _,x] t) = simplify (Apply "negate" [x] t)
@@ -1095,15 +1095,15 @@ simplify (Apply s js t) | s == "+" || s == "+s" = do
     [a] -> return a
     [a,b] -> liftcons (Apply "+" [a,b] t)
     js' -> liftcons (Apply "+s" js' t)
-  where constpart = sum . catMaybes $ getConstVal <$> js
-        constpart' = if isZeros constpart then [] else [Const constpart t]
-        simplifySum block refs = (constpart' ++) . sort $ do
+  where simplifySum block refs = (constpart' ++) . sort $ do
           ref <- refs
           case ref of
             Const{} -> mzero
             Var i@Internal{} _ | Apply f js _ <- lookupBlock i block
                               , f `elem` ["+","+s"] -> simplifySum block js
             _ -> return ref
+         where constpart = sum . catMaybes $ getConstVal <$> refs
+               constpart' = if isZeros constpart then [] else [Const constpart t]
 simplify (Apply f args t)
   | f `notElem` ["eye"]
   , Just f' <- Map.lookup f constFuns
@@ -1170,6 +1170,11 @@ simplify' block (Apply "exp" [Var i@Internal{} _] _)
   | (Apply "log" [j] _) <- lookupBlock i block = Right $ return j
 simplify' block (Apply "log" [Var i@Internal{} _] _)
   | (Apply "exp" [j] _) <- lookupBlock i block = Right $ return j
+simplify' block (Apply "log" [Var i@Internal{} _] t)
+  | (Apply "/" [a,b] _) <- lookupBlock i block = Right $ do
+      loga <- simplify $ Apply "log" [a] t
+      logb <- simplify $ Apply "log" [b] t
+      simplify $ Apply "-" [loga, logb] t
 simplify' block (Apply "det" [Var i@Internal{} _] t)
   | (Apply "eye" _ _) <- lookupBlock i block = Right . return $ Const 1 t
 simplify' block (Apply "log_det" [Var i@Internal{} _] t)
@@ -1178,6 +1183,11 @@ simplify' block (Apply "log_det" [Var i@Internal{} _] t)
   | (Apply "*" [a,b] _) <- lookupBlock i block, isScalar (typeRef a) = Right $ do
       loga <- simplify $ Apply "log" [a] t
       logb <- simplify $ Apply "log_det" [b] t
+      simplify $ Apply "+" [loga, logb] t
+simplify' block (Apply "log_det" [Var i@Internal{} _] t)
+  | (Apply "*" [a,b] _) <- lookupBlock i block, isScalar (typeRef b) = Right $ do
+      loga <- simplify $ Apply "log_det" [a] t
+      logb <- simplify $ Apply "log" [b] t
       simplify $ Apply "+" [loga, logb] t
 simplify' block (Apply "log_det" [Var i@Internal{} _] t)
   | (Apply "/" [a,b] _) <- lookupBlock i block, isScalar (typeRef b) = Right $ do

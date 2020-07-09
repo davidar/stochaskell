@@ -44,7 +44,6 @@ numelType env block (ArrayT _ sh _) = product $ map f sh'
   where sh' = evalShape env block sh
         f (lo,hi) = hi - lo + 1
 
--- TODO: mark individual symbols as evaluable, even when not set in env
 evaluable :: EEnv -> Block -> NodeRef -> Bool
 evaluable (EEnv env) block ref =
   deps `Set.isSubsetOf` (Set.fromList . mapMaybe getId' . Set.toList $ Map.keysSet env)

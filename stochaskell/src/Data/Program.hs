@@ -785,11 +785,14 @@ pdf p = exp . lpdf p
 
 -- | compute log pdf of distribution represented by probabilistic program
 lpdf :: (ExprTuple t, Show t) => P t -> t -> R
-lpdf prog vals = subst (substEEnv env') $ pdfPBlock True env' pb - adjust
+lpdf = lpdf' True
+
+lpdf' :: (ExprTuple t, Show t) => Bool -> P t -> t -> R
+lpdf' dummy prog vals = subst (substEEnv env') $ pdfPBlock True env' pb - adjust
   where (rets, pb@(PBlock block acts _ ns)) = runProgExprs "lpdf" prog
-        dummy = constSymbolLike "lpdf_dummy_input" vals
-        EEnv env = solveTuple block rets dummy emptyEEnv
-        env' = EEnv $ Map.insert (LVar $ Symbol "lpdf_dummy_input" True) (erase $ detuple vals)
+        EEnv env = solveTuple block rets
+                      (if dummy then constSymbolLike "lpdf_dummy_input" vals else vals) emptyEEnv
+        env' = EEnv $ (if dummy then Map.insert (LVar $ Symbol "lpdf_dummy_input" True) (erase $ detuple vals) else id)
                     $ Map.filterWithKey p env
         p (LVar (Volatile "lpdf" _ _)) _ = True
         p LVar{} _ = False
@@ -811,11 +814,14 @@ lpdf prog vals = subst (substEEnv env') $ pdfPBlock True env' pb - adjust
 
 -- | compute joint pdf of primitive random variables within the given program
 lpdfAux :: (ExprTuple t, Show t) => P t -> t -> R
-lpdfAux prog vals = subst (substEEnv env') $ pdfPBlock True env' pb
+lpdfAux = lpdfAux' True
+
+lpdfAux' :: (ExprTuple t, Show t) => Bool -> P t -> t -> R
+lpdfAux' dummy prog vals = subst (substEEnv env') $ pdfPBlock True env' pb
   where (rets, pb) = runProgExprs "lpdfAux" prog
-        dummy = constSymbolLike "lpdfAux_dummy_input" vals
-        EEnv env = solveTuple (definitions pb) rets dummy emptyEEnv
-        env' = EEnv $ Map.insert (LVar $ Symbol "lpdfAux_dummy_input" True) (erase $ detuple vals)
+        EEnv env = solveTuple (definitions pb) rets
+                      (if dummy then constSymbolLike "lpdfAux_dummy_input" vals else vals) emptyEEnv
+        env' = EEnv $ (if dummy then Map.insert (LVar $ Symbol "lpdfAux_dummy_input" True) (erase $ detuple vals) else id)
                     $ Map.filterWithKey p env
         p (LVar (Volatile "lpdfAux" _ _)) _ = True
         p LVar{} _ = False
@@ -1259,8 +1265,8 @@ rjmc1 target proposal x = do
 rjmc1Ratio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R
 rjmc1Ratio target proposal x y = optimiseE 2 . subst (substEEnv substEnv) $
   exp $ f y - f x + q y' x' - q x' y'
-  where f = lpdf target
-        q = lpdfAux . proposal
+  where f = lpdf' False target
+        q = lpdfAux' False . proposal
         x' = constSymbolLike "mhx" x
         y' = constSymbolLike "mhy" y
         substEnv = EEnv $ Map.fromList
@@ -1283,11 +1289,11 @@ rjmcC target proposal = switchOf $ \x -> do
   accept <- bernoulli . min' 1 . exp $
     f y - f x + optimiseE 2 (rjmcTransRatio' (fromCaseP proposal) x y)
   return $ ifB accept y x
-  where f = lpdfAux target -- TODO: jacobian adjustment for transformed dist
+  where f = lpdfAux' False target -- TODO: jacobian adjustment for transformed dist
 
 rjmcRatio :: (ExprTuple t, Show t) => P t -> (t -> P t) -> t -> t -> R
 rjmcRatio target proposal x y = exp $ f y - f x + rjmcTransRatio proposal x y
-  where f = lpdfAux target -- TODO: jacobian adjustment for transformed dist
+  where f = lpdfAux' False target -- TODO: jacobian adjustment for transformed dist
 
 rjmcTransRatio :: (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
 rjmcTransRatio q x y = optimiseE 2 . subst (substEEnv substEnv) $
@@ -1299,8 +1305,8 @@ rjmcTransRatio q x y = optimiseE 2 . subst (substEEnv substEnv) $
 
 rjmcTransRatio' :: forall t. (ExprTuple t, Show t) => (t -> P t) -> t -> t -> R
 rjmcTransRatio' q x y = lu' - lu + logDet jacobian
-  where lu  = q x `lpdfAux` y
-        lu' = q y `lpdfAux` x
+  where lu  = lpdfAux' False (q x) y
+        lu' = lpdfAux' False (q y) x
         getAux ns a b allowInt =
           let (rets, pb) = runProgExprs ns (q a)
               EEnv env = solveTuple (definitions pb) rets b emptyEEnv
