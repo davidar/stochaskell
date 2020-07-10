@@ -481,7 +481,7 @@ compileCC prog = do
     writeFile srcname code
     let cxx = "g++"
         args = ["-std=c++11"
-               ,"-Ibackward-cpp", "-Ieigen", "-Ivariant/include"
+               ,"-Ibackward-cpp", "-Iboost", "-Ieigen", "-Ivariant/include"
                ,"-DBACKWARD_HAS_BFD=1"
                ,"-g", "-rdynamic"
                ,srcname
