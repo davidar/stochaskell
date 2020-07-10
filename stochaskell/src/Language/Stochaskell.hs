@@ -61,7 +61,7 @@ module Language.Stochaskell
   , LKJ
   , corrLKJ
   -- ** Logarithmic probability density functions
-  , lpdf, lpdfAux, lpdfCond
+  , lpdf, lpdfAux, lpdfAuxC, lpdfCond
   , pdf
   , density, density'
   -- *** Primitives

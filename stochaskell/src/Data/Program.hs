@@ -828,7 +828,7 @@ lpdfAux' dummy prog vals = subst (substEEnv env') $ pdfPBlock True env' pb
         p _ _ = True
 
 lpdfAuxC :: (Constructor t, Show t) => P (Expression t) -> Expression t -> R
-lpdfAuxC = caseOf . lpdfAux
+lpdfAuxC = caseOf . lpdfAux' False
 
 lpdfCond :: (ExprTuple s, ExprTuple t, Show t) => (s -> P t) -> s -> t -> R
 lpdfCond p v x = subst (substEEnv env) $ (lpdf . p) dummy x
