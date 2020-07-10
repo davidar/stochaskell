@@ -1,6 +1,7 @@
 FROM ubuntu:18.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    binutils-dev=2.30-* \
     curl=7.58.* \
     g++=4:7.3.* \
     gcc=4:7.3.* \
