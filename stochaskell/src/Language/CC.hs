@@ -470,8 +470,10 @@ compileCC prog = do
 
   pwd <- getCurrentDirectory
   let hash = toHex . SHA1.hash $ C.pack code
-      exename = pwd ++"/cache/cc/sampler_"++ hash
+      cacheDir = pwd ++"/cache/cc"
+      exename = cacheDir ++"/sampler_"++ hash
       srcname = exename ++".cc"
+  createDirectoryIfMissing True cacheDir
   exeExists <- doesFileExist exename
 
   unless exeExists $ do
