@@ -1,5 +1,5 @@
 name: stochaskell
-version: '0.1.0'
+version: '1.0.0'
 synopsis: A probabilistic programming language
 description: An embedded domain-specific language for specifying probabilistic
   programs that can be compiled to multiple existing probabilistic programming

@@ -26,12 +26,12 @@ packages:
   original:
     hackage: diagrams-cairo-1.4.1
 - completed:
-    hackage: glib-0.13.7.0@sha256:25f62eb48d104342537dd1c724f07355d56226ca595ce6f1848415fbb7f59fa7,3120
+    hackage: glib-0.13.7.1@sha256:b517bbbc46f8bd72a8c97fb1d6769705a9b0d006f7cff8b3dc85948511817b11,3120
     pantry-tree:
       size: 1625
-      sha256: 3c465a6ff9d66eeff421271202e5f2537babf865d38541fed78b983317698c71
+      sha256: d7218c2ed9890d7b07030601980f62a57d5e888f656db5f32c3017ec7551a0d2
   original:
-    hackage: glib-0.13.7.0
+    hackage: glib-0.13.7.1
 - completed:
     hackage: gtk2hs-buildtools-0.13.5.0@sha256:a765766c4208a3e4def319ebf280fbb9e7d0a3f28d15922db36970404fb1daee,5238
     pantry-tree:
@@ -47,12 +47,12 @@ packages:
   original:
     hackage: lazy-csv-0.5.1
 - completed:
-    hackage: pango-0.13.6.0@sha256:ed8d300945bea97ccb652efc73d159634aefebff8c64f60eef6b6ac5ecebc4ae,3881
+    hackage: pango-0.13.6.1@sha256:177c9b6d865dc8f1634742497c6807a7c37a11e86c0dc93fbc047981d546738a,3881
     pantry-tree:
       size: 1506
-      sha256: 4563a04bbeac051cb257534bce68240956868936d64bf1b81c377aae0c98f9b1
+      sha256: 216bb39cdc265804f6ddd30c00c82ab156c17dcf8577b85527c287a21b4cb9fb
   original:
-    hackage: pango-0.13.6.0
+    hackage: pango-0.13.6.1
 - completed:
     hackage: plots-0.1.1.2@sha256:01f2ba7ca0c1e00b5231a81b44a3b8b9fd21b49bc333ff4cef880e31c5332935,2034
     pantry-tree:

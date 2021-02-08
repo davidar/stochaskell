@@ -33,12 +33,12 @@ packages:
   original:
     hackage: lazy-csv-0.5.1
 - completed:
-    hackage: glib-0.13.7.0@sha256:25f62eb48d104342537dd1c724f07355d56226ca595ce6f1848415fbb7f59fa7,3120
+    hackage: glib-0.13.7.1@sha256:b517bbbc46f8bd72a8c97fb1d6769705a9b0d006f7cff8b3dc85948511817b11,3120
     pantry-tree:
       size: 1625
-      sha256: 3c465a6ff9d66eeff421271202e5f2537babf865d38541fed78b983317698c71
+      sha256: d7218c2ed9890d7b07030601980f62a57d5e888f656db5f32c3017ec7551a0d2
   original:
-    hackage: glib-0.13.7.0
+    hackage: glib-0.13.7.1
 - completed:
     hackage: gtk2hs-buildtools-0.13.5.0@sha256:a765766c4208a3e4def319ebf280fbb9e7d0a3f28d15922db36970404fb1daee,5238
     pantry-tree:
@@ -47,12 +47,12 @@ packages:
   original:
     hackage: gtk2hs-buildtools-0.13.5.0
 - completed:
-    hackage: pango-0.13.6.0@sha256:ed8d300945bea97ccb652efc73d159634aefebff8c64f60eef6b6ac5ecebc4ae,3881
+    hackage: pango-0.13.6.1@sha256:177c9b6d865dc8f1634742497c6807a7c37a11e86c0dc93fbc047981d546738a,3881
     pantry-tree:
       size: 1506
-      sha256: 4563a04bbeac051cb257534bce68240956868936d64bf1b81c377aae0c98f9b1
+      sha256: 216bb39cdc265804f6ddd30c00c82ab156c17dcf8577b85527c287a21b4cb9fb
   original:
-    hackage: pango-0.13.6.0
+    hackage: pango-0.13.6.1
 - completed:
     hackage: plots-0.1.1.2@sha256:01f2ba7ca0c1e00b5231a81b44a3b8b9fd21b49bc333ff4cef880e31c5332935,2034
     pantry-tree:
@@ -64,9 +64,6 @@ packages:
     size: 753659
     subdir: .
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 6498
-      sha256: 0cf0a6b76891b364754475d61f8d01bbfcef03fa7f0abaf572807450d0f719ab
     name: ihaskell
     version: 0.10.0.0
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -80,9 +77,6 @@ packages:
     size: 753659
     subdir: ipython-kernel
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 2802
-      sha256: 47de9a6de7a8c3f139176ae1ef48a1acd851164d9fa9f8212b31335bace62ad5
     name: ipython-kernel
     version: 0.10.0.0
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -96,9 +90,6 @@ packages:
     size: 753659
     subdir: ghc-parser
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 1092
-      sha256: 494041ba5cc28768c7b7e8ff6fefa0da4eebef73a51d760f7c8835ef95ebb153
     name: ghc-parser
     version: 0.2.0.3
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -112,9 +103,6 @@ packages:
     size: 753659
     subdir: ihaskell-display/ihaskell-aeson
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 2046
-      sha256: a17c90a4fdde49ff3a4b52234b845512115ef72d8340902d15ef2d0bf249ec81
     name: ihaskell-aeson
     version: 0.3.0.1
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -128,9 +116,6 @@ packages:
     size: 753659
     subdir: ihaskell-display/ihaskell-blaze
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 2103
-      sha256: 9270098ff961df4f08b4fec0afc94d4790d97cb5f1eae222afed1e11b6ab306a
     name: ihaskell-blaze
     version: 0.3.0.1
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -144,9 +129,6 @@ packages:
     size: 753659
     subdir: ihaskell-display/ihaskell-charts
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 2068
-      sha256: ab6632e6b8ee0dbe99e14f90b0021d1d7aa257e7a906cda15df67079dafbaf95
     name: ihaskell-charts
     version: 0.3.0.1
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -160,9 +142,6 @@ packages:
     size: 753659
     subdir: ihaskell-display/ihaskell-diagrams
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 2411
-      sha256: b31d53e32f964793f3a2f5ab6b1379f5b12bb8e149faff6feee312014688dbde
     name: ihaskell-diagrams
     version: 0.3.2.1
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -176,9 +155,6 @@ packages:
     size: 753659
     subdir: ihaskell-display/ihaskell-gnuplot
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 2068
-      sha256: 87cb4896f6ebad4fec068b66a0997392eb209d648ab0ace4c40703f39205406f
     name: ihaskell-gnuplot
     version: 0.1.0.1
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -192,9 +168,6 @@ packages:
     size: 753659
     subdir: ihaskell-display/ihaskell-hatex
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 661
-      sha256: f7e7d6e80b3802a2471fefe6ab4dcbc86f2c5f05cb049ef650c129b0b54c4b82
     name: ihaskell-hatex
     version: 0.2.1.1
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -208,9 +181,6 @@ packages:
     size: 753659
     subdir: ihaskell-display/ihaskell-juicypixels
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 2566
-      sha256: 609252090633984401c494f0cee58335d14d3ec5fb4401c61a6674e3ecd25780
     name: ihaskell-juicypixels
     version: 1.1.0.1
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da
@@ -224,9 +194,6 @@ packages:
     size: 753659
     subdir: ihaskell-display/ihaskell-magic
     url: https://github.com/gibiansky/IHaskell/archive/ac0882dc39d27fbb7f068834f5f111ad1b2cd340.tar.gz
-    cabal-file:
-      size: 2226
-      sha256: a0b073620c3072813a02dba13038ac4b10d61c0f54453ba6cfea4299c6a3f8e7
     name: ihaskell-magic
     version: 0.3.0.1
     sha256: 38b70982559a9238a1ccd5671ad8ac8792ad34d472d262907ea3570a2641c1da

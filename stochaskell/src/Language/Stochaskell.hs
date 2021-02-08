@@ -1,6 +1,6 @@
 {-|
 Description : Stochaskell main module
-Copyright   : (c) David A Roberts, 2015-2020
+Copyright   : (c) David A Roberts, 2015-2021
 License     : GPL-3
 Maintainer  : d@vidr.cc
 Stability   : experimental
@@ -150,7 +150,7 @@ stochaskell :: IO ()
 stochaskell = do
   putStr $ unlines
     [ "Stochaskell, version "++ showVersion version
-    , "Copyright (C) 2015-2020 David A Roberts"
+    , "Copyright (C) 2015-2021 David A Roberts"
     , "This program comes with ABSOLUTELY NO WARRANTY."
     , "This is free software, and you are welcome to redistribute it"
     , "under certain conditions; see the LICENSE for details."
