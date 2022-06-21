@@ -4,7 +4,7 @@ functools32==3.2.3.post2
 h5py==2.7.0
 joblib==0.11
 matplotlib==2.0.2
-numpy==1.14.5
+numpy==1.22.0
 pandas==0.20.3
 patsy==0.4.1
 pkg-resources==0.0.0
