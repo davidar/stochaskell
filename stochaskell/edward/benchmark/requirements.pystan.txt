@@ -1,4 +1,4 @@
 Cython==0.29.13
-numpy==1.14.5
+numpy==1.22.0
 pkg-resources==0.0.0
 pystan==2.16.0.0
